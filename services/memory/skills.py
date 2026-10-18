@@ -698,15 +698,18 @@ class SkillsManager:
             # A stale published record must not remain injectable after an
             # audit has recorded a failure. Inconclusive is not a failure.
             audit_verdict = str(s.get("audit_verdict") or "").lower()
-            if audit_verdict in {"needs_work", "fail"}:
+            # Barvis: config-managed skills skip the audit gates (src/skill_invocation.py)
+            from src.skill_invocation import is_managed_skill
+            _managed = is_managed_skill(s)
+            if audit_verdict in {"needs_work", "fail"} and not _managed:
                 continue
-            if s.get("source") != "builtin" and auto_approve:
+            if s.get("source") != "builtin" and auto_approve and not _managed:
                 if status != "published" or audit_verdict != "pass":
                     continue
                 if _to_float(s.get("confidence"), 0.0) < min_confidence:
                     continue
             necessity = s.get("necessity") or {}
-            if isinstance(necessity, dict) and necessity.get("necessary") is False:
+            if isinstance(necessity, dict) and necessity.get("necessary") is False and not _managed:
                 continue
             # Platform gating
             if platform and s.get("platforms") and platform not in s["platforms"]:
