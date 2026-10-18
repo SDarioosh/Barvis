@@ -14506,7 +14506,9 @@ def _build_system_prompt(
             for skill in SkillsManager(DATA_DIR).load(owner=owner):
                 if skill.get("name") in active_lookup:
                     relevant_tools.add("manage_skills")
-                    relevant_tools.update(skill.get("requires_toolsets") or [])
+                    # Barvis: expand mcp:<server> entries (src/skill_mcp_toolsets.py)
+                    from src.skill_mcp_toolsets import expand_skill_toolsets
+                    relevant_tools.update(expand_skill_toolsets(skill.get("requires_toolsets")))
         except Exception:
             logger.debug("active skill toolset expansion skipped", exc_info=True)
 
@@ -15282,6 +15284,9 @@ def _build_base_prompt(
             from src.constants import DATA_DIR
             _sm = SkillsManager(DATA_DIR)
             active_tools = list(set(TOOL_SECTIONS.keys()) - set(disabled or []))
+            # Barvis: skills needing mcp:<server> stay listed while it is usable (src/skill_mcp_toolsets.py)
+            from src.skill_mcp_toolsets import with_mcp_toolsets
+            active_tools = list(with_mcp_toolsets(active_tools))
             skill_idx = _sm.index_for(
                 owner=owner,
                 active_toolsets=active_tools,
@@ -22733,14 +22738,16 @@ async def stream_agent_loop(
                     # TOOL_SECTIONS — code-nav tools (grep/glob/ls) ship as
                     # schemas without a prompt-prose section.
                     _known = known_tool_names()
+                    # Barvis: MCP entries in requires_toolsets (src/skill_mcp_toolsets.py)
+                    from src.skill_mcp_toolsets import expand_skill_toolsets, with_mcp_toolsets
                     for _sk in _sm.get_relevant_skills(
                         _retrieval_query, skills=_owner_skills,
                         threshold=0.25, max_items=3,
-                        available_toolsets=(set(_known) - set(disabled_tools or [])),
+                        available_toolsets=with_mcp_toolsets(set(_known) - set(disabled_tools or [])),
                     ):
                         _relevant_tools.update(
-                            t for t in (_sk.get("requires_toolsets") or [])
-                            if t in _known
+                            t for t in expand_skill_toolsets(_sk.get("requires_toolsets"))
+                            if (t in _known or t.startswith("mcp__")) and t not in set(disabled_tools or [])
                         )
         except Exception as _e:
             logger.debug(f"[tool-rag] skill-aware tool include skipped: {_e}")
@@ -33884,11 +33891,13 @@ async def stream_agent_loop(
                         from src.constants import DATA_DIR as _DD
                         from src.tool_policy import known_tool_names as _ktn
                         _known = _ktn()
+                        # Barvis: expand mcp:<server> entries (src/skill_mcp_toolsets.py)
+                        from src.skill_mcp_toolsets import expand_skill_toolsets
                         for _sk in _SkM(_DD).load(owner=owner):
                             if _sk.get("name") == _ms_name:
                                 _new = {
-                                    t for t in (_sk.get("requires_toolsets") or [])
-                                    if t in _known and t not in _relevant_tools
+                                    t for t in expand_skill_toolsets(_sk.get("requires_toolsets"))
+                                    if (t in _known or t.startswith("mcp__")) and t not in _relevant_tools
                                 }
                                 if _new:
                                     _relevant_tools.update(_new)

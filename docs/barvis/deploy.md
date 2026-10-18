@@ -61,21 +61,45 @@ Production keeps every Odysseus feature. `scripts/barvis_setup.py` (run by `depl
 - leaves the tool toggles in Settings > Tools alone;
 - sets the default chat model to "Auto" tool mode;
 - lists the MCP servers and warns if `convo` (or each `--module`) is missing or
-  disconnected.
+  disconnected;
+- creates or updates the slash-command skills `/sound` and `/context` (below).
 
 `--trim` turns off every built-in except a small keep-list and sets "Regular tools"
 (the old memory-only setup); `--untrim` turns everything back on.
 `--model-mode auto|full|unchanged` overrides the tool mode. Put the flags in
 `BARVIS_SETUP_ARGS` to make `deploy` use them.
 
-**Known gap (2026-10-18).** With every Odysseus tool on, module tools don't reach the
-model yet. "Auto" picks tools per turn and doesn't pick module MCP tools (recording
-questions go to the calendar or get no tool), and "Regular tools" sends all ~130 tool
-schemas (~35k tokens) with every request. Sandbox numbers:
-[sandbox.md](sandbox.md#all-odysseus-tools-on-2026-10-18). The fix is a Barvis routing
-change that always offers trusted module tools in "Auto" ([roadmap.md](roadmap.md)).
-Until it lands, `BARVIS_SETUP_ARGS=--trim` is the setup in which barvis-sound answers
-work, at the cost of the other features.
+**Asking a module: `/sound` and `/context`.** With every Odysseus tool on and "Auto",
+a plain question doesn't reach module tools: per-turn selection picks built-ins
+(calendar, files) instead. Start the message with a slash command to ask the modules:
+
+```
+/sound what did Alice say about the budget?
+/context what did I tell Emily I'd do last Wednesday?
+```
+
+- `/sound` offers barvis-sound's tools (`mcp:convo`); `/context` offers the tools of
+  every server in `ODYSSEUS_TRUSTED_READONLY_MCP`. That message gets only those tools
+  plus `ask_user`/`update_plan` (~10 instead of ~130), so a small model finds them.
+- It applies to that one message. The next message without a slash command is routed
+  normally; a follow-up needs the command again.
+- Read-only module tools run without approval (trusted server); write tools
+  (`update_action_item`, `name_speaker`) still ask.
+- The model gets today's date on every turn (Odysseus' "Current date and time"
+  context), so "last Wednesday" becomes a date.
+- Both are skills (Settings > Skills, category `barvis`) with `source: managed`:
+  `barvis_setup.py` creates and updates them, and they need no skill audit. `/sound`'s
+  procedure is the Custom preset's text (barvis-sound's `INSTRUCTIONS`): edit the
+  preset and rerun setup; don't edit the skill by hand. `--no-skills` skips them;
+  `--module-skill NAME=SERVER`, `--skill-text NAME=FILE`, `--context-skill NAME` and
+  `--trusted a,b` change them.
+- `barvis_setup.py` runs outside the container, so it can't see the container's
+  `ODYSSEUS_TRUSTED_READONLY_MCP`. Without `--trusted` or that variable in its own
+  environment, `/context` covers the `--module` list (default `convo`).
+- If a module's server is down, the slash message answers that its tools are
+  unavailable (`unavailable: mcp:convo`) instead of guessing.
+- Works in "Auto". In "Regular tools" every enabled tool is sent anyway, so with all
+  tools on it still overflows a 32k context; use `--trim` there.
 
 A module plugs in as an MCP server ([modules.md](modules.md#registering-a-module-in-barvis)).
 For barvis-sound on this server:

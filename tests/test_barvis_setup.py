@@ -15,8 +15,19 @@ barvis_setup = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(barvis_setup)
 
 
+PRESET_TEXT = ("These tools search the user's own recorded conversations.\n\n"
+               "Ground every claim in tool results and include the link given with it.")
+
+
+@pytest.fixture(autouse=True)
+def _no_trusted_env(monkeypatch):
+    monkeypatch.delenv(barvis_setup.TRUSTED_ENV, raising=False)
+
+
 class FakeApi:
-    def __init__(self, servers=None):
+    def __init__(self, servers=None, skills=None, preset_text=PRESET_TEXT):
+        self.skills = skills if skills is not None else []
+        self.preset_text = preset_text
         self.calls: list[tuple[str, str, object]] = []
         self.servers = servers if servers is not None else [
             {"name": "convo", "status": "connected", "is_enabled": True,
@@ -39,13 +50,23 @@ class FakeApi:
             ])
         if path == "/api/mcp/servers":
             return httpx.Response(200, json=self.servers)
+        if path == "/api/skills" and request.method == "GET":
+            return httpx.Response(200, json={"skills": self.skills, "count": len(self.skills)})
+        if path == "/api/presets":
+            return httpx.Response(200, json={"custom": {"system_prompt": self.preset_text}})
         if path == "/api/default-chat":
             return httpx.Response(200, json={"endpoint_id": "ep1", "model": "qwen3.5-35b"})
         return httpx.Response(200, json={"ok": True})
 
     def writes(self):
+        """Tool and model writes (skill writes: skill_writes)."""
         return [(m, p, b) for m, p, b in self.calls
-                if m in {"POST", "PATCH"} and p != "/api/auth/login"]
+                if m in {"POST", "PATCH"} and p != "/api/auth/login"
+                and not p.startswith("/api/skills")]
+
+    def skill_writes(self):
+        return [(m, p, b) for m, p, b in self.calls
+                if m in {"POST", "PUT"} and p.startswith("/api/skills")]
 
 
 def _run(tmp_path, argv, api=None):
@@ -108,3 +129,68 @@ def test_missing_module_server_is_reported(tmp_path, capsys):
 def test_keep_without_trim_is_rejected(tmp_path):
     with pytest.raises(SystemExit):
         barvis_setup.parse_args(["--password-file", "x", "--keep", "web_search"])
+
+
+def test_default_creates_sound_and_context_skills(tmp_path):
+    api = _run(tmp_path, [])
+    writes = api.skill_writes()
+    assert [(m, p) for m, p, _ in writes] == [("POST", "/api/skills/add")] * 2
+    sound, context = (b for _, _, b in writes)
+    assert sound["name"] == "sound"
+    assert sound["requires_toolsets"] == ["mcp:convo"]
+    # The procedure is the Custom preset's text (the module's instructions), one step per paragraph.
+    assert sound["procedure"] == PRESET_TEXT.split("\n\n")
+    assert sound["source"] == "managed" and sound["status"] == "published"
+    assert context["name"] == "context"
+    assert context["requires_toolsets"] == ["mcp:convo"]
+    assert any("link" in step for step in context["procedure"])
+
+
+def test_context_skill_uses_trusted_env(tmp_path, monkeypatch):
+    monkeypatch.setenv(barvis_setup.TRUSTED_ENV, "convo, notes")
+    api = _run(tmp_path, [])
+    context = api.skill_writes()[-1][2]
+    assert context["requires_toolsets"] == ["mcp:convo", "mcp:notes"]
+
+
+def test_module_skill_text_file_and_names(tmp_path):
+    text = tmp_path / "instr.txt"
+    text.write_text("- search first\n- cite the link\n")
+    api = _run(tmp_path, ["--module-skill", "notes=notes", "--skill-text", f"notes={text}",
+                          "--context-skill", "all", "--trusted", "convo,notes"])
+    notes, all_skill = (b for _, _, b in api.skill_writes())
+    assert notes["name"] == "notes" and notes["requires_toolsets"] == ["mcp:notes"]
+    assert notes["procedure"] == ["search first", "cite the link"]
+    assert all_skill["name"] == "all"
+    assert all_skill["requires_toolsets"] == ["mcp:convo", "mcp:notes"]
+    assert not any(p == "/api/presets" for _, p, _ in api.calls)
+
+
+def test_existing_managed_skill_is_updated(tmp_path):
+    api = _run(tmp_path, [], FakeApi(skills=[{"name": "sound", "source": "managed"}]))
+    assert [(m, p) for m, p, _ in api.skill_writes()] == [
+        ("PUT", "/api/skills/sound"), ("POST", "/api/skills/add")]
+    assert api.skill_writes()[0][2]["requires_toolsets"] == ["mcp:convo"]
+
+
+def test_someone_elses_skill_is_left_alone(tmp_path, capsys):
+    api = _run(tmp_path, [], FakeApi(skills=[{"name": "sound", "source": "user"}]))
+    assert [b["name"] for _, _, b in api.skill_writes()] == ["context"]
+    assert "skill 'sound' exists and isn't managed" in capsys.readouterr().err
+
+
+def test_no_skills_and_dry_run_write_no_skills(tmp_path, capsys):
+    assert _run(tmp_path, ["--no-skills"]).skill_writes() == []
+    api = _run(tmp_path, ["--dry-run"])
+    assert api.skill_writes() == []
+    out = capsys.readouterr().out
+    assert "skill /sound: create" in out and '"skills"' in out
+
+
+def test_bad_module_skill_is_rejected():
+    with pytest.raises(SystemExit):
+        barvis_setup.parse_args(["--password-file", "x", "--module-skill", "sound"])
+
+
+def test_procedure_steps_splits_paragraphs_and_lists():
+    assert barvis_setup.procedure_steps("a\nb\n\n1. c\n2) d\n\n") == ["a b", "c", "d"]

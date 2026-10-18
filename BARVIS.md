@@ -37,11 +37,14 @@ possible, small hooks in core files, no renames or reformatting.
 | **Web-intent routing.** Questions with words like "latest" or "recommend" no longer get an instant "Web access is disabled" reply when trusted read-only MCP tools are available. | hook in `src/agent_loop.py` (`_web_search_unavailable_for_turn`) | yes |
 | **Env reference entry.** Upstream's `tests/test_env_reference.py` requires every `ODYSSEUS_*` variable the code reads to have a note, so `ODYSSEUS_TRUSTED_READONLY_MCP` has one and `website/configuration-reference.md` is regenerated with it. | hook in `scripts/generate_env_reference.py` (`VARIABLE_NOTES`), generated `website/configuration-reference.md` | with the trusted read-only change |
 | **HTTP MCP servers keep tool annotations.** `_connect_http` dropped each tool's `annotations` (stdio and SSE kept them), so `readOnlyHint` was lost for Streamable HTTP servers: trusted read-only tools still needed approval, and plan mode fell back to the name heuristic. Now stored the same way as stdio/SSE. General bug, not Barvis-specific. | one line in `src/mcp_manager.py` (`_connect_http`); test `tests/test_mcp_http_annotations.py` (new) | yes (issue to file) |
-| **Setup.** Keeps every Odysseus feature: leaves the tool toggles alone, sets the default model to "Auto" tool mode, and checks that module MCP servers are connected. `--trim` turns off the built-ins a memory-only setup doesn't use, hides the built-in email/browser/image MCP tools and sets "Regular tools"; `--untrim` turns them back on. Configuration through the admin API, not code. Known gap: with every tool on, "Auto" doesn't offer module tools yet ([roadmap](docs/barvis/roadmap.md)). | `scripts/barvis_setup.py` (new) | no |
+| **MCP tools in skill `requires_toolsets`.** A skill can require `mcp:<server name or id>` (every enabled tool of a connected server) or a qualified `mcp__<server>__<tool>`. They expand to the real tool names wherever `requires_toolsets` is checked or applied: skill matching, the skill index's visibility gate, active skills, and skills the model loads with `manage_skills view`. Only connected servers and enabled tools count; write tools keep their approval. | `src/skill_mcp_toolsets.py` (new), 4 hooks in `src/agent_loop.py` | yes (issue draft in SDarioosh/Barvis#9) |
+| **Slash-invoked skills bring their tools.** In "Auto", the route's turn contract chose tools from the message words and replaced what the agent loop added for a skill, so `/<skill>` got its `requires_toolsets` only when the SKILL.md text named the tool, and the SKILL.md text in the composed message could itself be misread (a "search skills" request, refused). The invoke route's message is now recognized server-side; the skill is looked up in the sender's own invokable skills and the turn is offered exactly its declared tools plus `ask_user`/`update_plan`. Current message only, no state. | `src/skill_invocation.py` (new), hook in `routes/chat_routes.py` (after `resolve_turn_contract`) | yes |
+| **Managed skills.** Skills with `source: managed` (created by `barvis_setup.py`) are slash-invokable without the LLM skill audit that "Auto-approve skills" requires, and an audit verdict doesn't hide them. Only the owner's own skills are affected. | hook in `services/memory/skills.py` (`index_for`), check in `src/skill_invocation.py` | with discussion |
+| **Setup.** Keeps every Odysseus feature: leaves the tool toggles alone, sets the default model to "Auto" tool mode, checks that module MCP servers are connected, and creates or updates the `/sound` skill (requires `mcp:convo`, procedure = the module's instructions from the Custom preset) and `/context` (requires every server in `ODYSSEUS_TRUSTED_READONLY_MCP`). `--trim` turns off the built-ins a memory-only setup doesn't use, hides the built-in email/browser/image MCP tools and sets "Regular tools"; `--untrim` turns them back on. Configuration through the admin API, not code. Untagged questions in "Auto" still don't reach module tools; use `/sound` or `/context` ([roadmap](docs/barvis/roadmap.md)). | `scripts/barvis_setup.py` (new) | no |
 | **Deployment.** Production runs the locally built `barvis:<commit>` image with Docker Compose; one command builds, backs up data, switches, health-checks and rolls back. | `scripts/barvis_deploy.sh`, `docker/barvis.override.yml` (new); [docs/barvis/deploy.md](docs/barvis/deploy.md) | no |
 
 Tests: `tests/test_mcp_trust.py`, `tests/test_mcp_http_annotations.py`,
-`tests/test_barvis_setup.py`.
+`tests/test_barvis_setup.py`, `tests/test_skill_mcp_toolsets.py`.
 
 ## Setup
 
@@ -49,8 +52,9 @@ Tests: `tests/test_mcp_trust.py`, `tests/test_mcp_http_annotations.py`,
    [docs/barvis/deploy.md](docs/barvis/deploy.md). Every Odysseus feature stays
    available; modules add to it.
 2. Register each module: add its MCP server, add its name to
-   `ODYSSEUS_TRUSTED_READONLY_MCP`, run `scripts/barvis_setup.py`, and put its
-   instructions in a Custom preset. Steps:
+   `ODYSSEUS_TRUSTED_READONLY_MCP`, put its instructions in a Custom preset, and run
+   `scripts/barvis_setup.py` (it also creates the module's slash skill, e.g. `/sound`,
+   and `/context`). Steps:
    [docs/barvis/modules.md](docs/barvis/modules.md#registering-a-module-in-barvis);
    barvis-sound specifics:
    [docs/barvis/modules/barvis-sound.md](docs/barvis/modules/barvis-sound.md#connect-it).

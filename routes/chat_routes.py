@@ -3706,6 +3706,9 @@ def setup_chat_routes(
                 warm_tools=_warm_tools,
                 message=message, history=getattr(sess, "history", []) or [],
             )
+            # Barvis: a slash-invoked skill pins its requires_toolsets for this message (src/skill_invocation.py)
+            from src.skill_invocation import pin_skill_contract
+            _turn_contract = pin_skill_contract(_turn_contract, message=message, owner=_user, schemas=_contract_schemas, policy=_contract_policy)
             _request_authority = _request_authority.restrict(_contract_policy)
             # Resolution already applies user, owner, and global policy. An
             # admitted tool must not later be rejected by the stale
