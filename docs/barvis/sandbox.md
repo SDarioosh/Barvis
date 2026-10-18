@@ -16,7 +16,7 @@ Hugging Face, npm and GitHub reachable; `cmake`, `gcc`, `ffmpeg`, Node 22, Pytho
 | Unit tests, lint, everything with fakes | the real model (`qwen3.5-35b` on the RTX 3060) |
 | Running the whole chain: seed data → barvis-sound → MCP → Barvis → eval | the score that counts (target ≥ 15/20) |
 | Before/after comparisons on the same small model | real devices, real audio, Tailscale |
-| Reproducing bugs in gating, routing, MCP, links | anything touching the owner's Odysseus install |
+| Reproducing bugs in gating, routing, MCP, links | anything touching production (port 7000) |
 
 Small-model scores are **not comparable** to the server scores (3/20, 9/20, 15/20). Compare
 sandbox runs only with other sandbox runs.
@@ -124,7 +124,8 @@ curl -s -b $J -X POST $B/api/model-endpoints -F name=sandbox-llama \
   -F base_url=http://127.0.0.1:8082/v1 -F supports_tools=true
 curl -s -b $J -X POST $B/api/mcp/servers -F name=convo -F transport=http \
   -F "url=http://127.0.0.1:8001/mcp?access_token=$CONVO_MCP_TOKEN"
-venv/bin/python scripts/barvis_setup.py --url http://$B --password-file $SBX/admin.txt
+# --trim: the tool set of all earlier sandbox runs; see "All Odysseus tools on" for why
+venv/bin/python scripts/barvis_setup.py --url http://$B --password-file $SBX/admin.txt --trim
 INSTR=$(cd $SOUND/server && .venv/bin/python -c \
   "import json; from convo_server.mcp_server import INSTRUCTIONS; print(json.dumps(INSTRUCTIONS))")
 curl -s -b $J -X POST $B/api/presets/custom -H 'content-type: application/json' \
@@ -167,6 +168,21 @@ made Barvis redo the model round that produced the call (~1–2 min on CPU), whi
 the time went. Question 16 fails in both runs: the 4B model answers without calling a
 tool. Small runs vary: the same questions scored 1/3 in the first baseline.
 
+### All Odysseus tools on, 2026-10-18
+
+Same stack and seed, questions 1, 4, 16, one Barvis instance; only `barvis_setup.py`
+changed between runs. 89 built-ins plus the built-in MCP servers and `convo`.
+
+| Setup | score | convo tools called | approvals | time | what happened |
+|---|---|---|---|---|---|
+| A: `--trim`, "Regular tools" (old default) | 1/3 | Q1, Q4 | 0 | 683 s | Q16: no tool call (as before) |
+| B: every tool on, "Regular tools" | 0/3 | none | 0 | 2 s | every request was 34.7–36.8k tokens, over the 32k context: llama-server returned HTTP 400 before the model ran (132 tool schemas sent) |
+| C: every tool on, "Auto" (new default) | 0/3 | none | 1 | 299 s | per-turn selection offered `ask_user`/`python`/`read_file` (Q1, Q16) and `manage_calendar` (Q4); no convo tool was offered |
+
+So with every tool on, module tools don't reach the model in either mode. That is the
+next fix ([roadmap.md](roadmap.md)). `barvis_setup.py` now defaults to "Auto" (B can't
+work at 32k), and `--trim` keeps the setup that answers recording questions.
+
 ## Findings from the first sandbox run
 
 These are real bugs, not sandbox quirks. 1–3 and 5 are Barvis bugs (tracked in
@@ -207,6 +223,7 @@ answers, devices or deployment has a **Server verification** section listing:
 - the result to expect (e.g. "score ≥ previous 9/20");
 - anything that needs a real device, with the steps.
 
-Agents never run these themselves and never touch the owner's Odysseus install
-(`/home/steam/models/odysseus`, port 7000). The owner pastes the result into the PR; the
-agent continues from there.
+Agents never run these themselves. Production (`/home/steam/models/odysseus`, port
+7000) is changed only by the owner with `scripts/barvis_deploy.sh`
+([deploy.md](deploy.md)); a Server verification may end with that deploy step. The owner
+pastes the result into the PR; the agent continues from there.

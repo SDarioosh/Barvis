@@ -18,7 +18,7 @@ flowchart LR
 
   subgraph Server["Ubuntu server, RTX 3060 12 GB"]
     barvis["Barvis test instance<br/>127.0.0.1:7010"]
-    odysseus["Owner's Odysseus install<br/>Docker, :7000"]
+    prod["Barvis production<br/>Docker, :7000"]
     subgraph sound["Module: barvis-sound"]
       api["convo-server serve<br/>:8000"]
       mcp["convo-server mcp<br/>stdio / HTTP :8001"]
@@ -37,13 +37,14 @@ flowchart LR
   api --> llama
   api --> db
   mcp --> db
+  prod -- MCP --> mcp
+  prod --> llama
   barvis -- MCP --> mcp
   barvis --> llama
-  odysseus --> llama
-  phone -- chat --> barvis
-  mac -- chat --> barvis
+  phone -- chat --> prod
+  mac -- chat --> prod
   phone -- "transcript links /view/…" --> api
-  barvis -. "notifications (planned)" .-> ntfy
+  prod -. "notifications (planned)" .-> ntfy
 ```
 
 Dotted lines are planned. Development and testing happen in a cloud sandbox that runs the
@@ -74,10 +75,10 @@ owner's server.
 | whisper-server (whisper.cpp) | `127.0.0.1:8178` | running, not a system service yet | used by barvis-sound |
 | barvis-sound API + worker (`convo-server serve`) | port 8000 | running (test server), not a system service yet | ingestion, read API, `/view/` transcript links |
 | barvis-sound MCP over HTTP (`convo-server mcp --http`) | `CONVO_MCP_HOST:CONVO_MCP_PORT`, default `127.0.0.1:8001` | available; started on demand | stdio (`convo-server mcp`) needs no port |
-| Owner's Odysseus install (Docker) | port 7000, `/home/steam/models/odysseus` | running | **agents never modify it** |
+| Barvis production (Docker, image `barvis:<commit>`; was upstream Odysseus until 2026-10-18) | port 7000, `/home/steam/models/odysseus` | running | the owner deploys it with `scripts/barvis_deploy.sh` ([deploy.md](deploy.md)); agents never run anything on it |
 | Barvis isolated test instance | `127.0.0.1:7010` | running on demand (`~/.hermes/cache/scratch/barvis-run.sh`) | use for all tests and evals |
-| Odysseus ChromaDB | port 8100 | part of the owner's install | must not be reachable from outside |
-| ntfy | port 8091 | part of the owner's install; status not verified | Barvis notifications planned |
+| Odysseus ChromaDB | port 8100 | part of production's Compose stack | must not be reachable from outside |
+| ntfy | port 8091 | part of production's Compose stack; status not verified | Barvis notifications planned |
 | Embeddings llama-server (`--embeddings`) | e.g. `127.0.0.1:8083` | planned, optional | `CONVO_EMBED_BASE_URL` in barvis-sound |
 | Hermes Agent | — | installed | used by the barvis-sound eval as a comparison frontend |
 

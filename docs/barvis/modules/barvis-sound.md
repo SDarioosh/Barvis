@@ -79,9 +79,10 @@ but every call then fails in Barvis; see
 
 Then, per [../modules.md](../modules.md#registering-a-module-in-barvis):
 
-1. `ODYSSEUS_TRUSTED_READONLY_MCP=convo`, restart Barvis.
+1. `ODYSSEUS_TRUSTED_READONLY_MCP=convo`, restart Barvis (production: already in
+   `docker-compose.override.yml`, see [../deploy.md](../deploy.md#features-and-modules)).
 2. `python scripts/barvis_setup.py --url http://127.0.0.1:7010 --password-file <file>`
-   (sandbox, or the server's test instance).
+   (sandbox, or the server's test instance; on production `barvis_deploy.sh` runs it).
 3. Paste the server's `INSTRUCTIONS` text (top of `mcp_server.py`) into a Custom preset
    system prompt.
 

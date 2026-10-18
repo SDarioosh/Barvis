@@ -91,8 +91,8 @@ name heuristic. So:
 ## Registering a module in Barvis
 
 Do this in the sandbox stack first ([sandbox.md](sandbox.md)); the owner repeats it on
-the server's test instance (`127.0.0.1:7010`). Never on the owner's real install
-(port 7000) unless the owner asks.
+the server's test instance (`127.0.0.1:7010`), then on production (port 7000) per
+[deploy.md](deploy.md#features-and-modules).
 
 1. **Start the module's MCP server**, HTTP bound to loopback / the Docker bridge /
    Tailscale. Use HTTP: stdio servers added over the API currently fail on every call
@@ -101,12 +101,13 @@ the server's test instance (`127.0.0.1:7010`). Never on the owner's real install
    name (barvis-sound: `convo`). HTTP URL form: `http://<host>:<port>/mcp?access_token=<token>`.
 3. **Trust its read-only tools:** add the server name to `ODYSSEUS_TRUSTED_READONLY_MCP`
    (comma separated, e.g. `ODYSSEUS_TRUSTED_READONLY_MCP=convo,<next>`) in `.env` or
-   docker-compose, then restart. Write tools keep normal approval. Known bug: Barvis
-   drops annotations for HTTP servers, so their read-only tools still ask for approval
-   until that is fixed ([sandbox.md](sandbox.md#findings-from-the-first-sandbox-run)).
-4. **Trim tools:** run `scripts/barvis_setup.py` (it disables built-ins outside its
-   keep-list and sets "Regular tools" mode; in "Auto" mode non-Odysseus models are never
-   offered MCP tools). Use `--dry-run` first.
+   `docker-compose.override.yml` (production), then restart. Write tools keep normal
+   approval.
+4. **Run `scripts/barvis_setup.py`** (`--dry-run` first). It checks that the module's
+   server is connected and sets "Auto" tool mode, leaving every Odysseus tool on.
+   `--trim` gives the old memory-only tool set with "Regular tools". Known gap: with
+   every tool on, "Auto" doesn't offer module tools yet, and "Regular tools" overflows
+   a 32k context ([sandbox.md](sandbox.md#all-odysseus-tools-on-2026-10-18)).
 5. **Add instructions to the preset:** paste the module's usage instructions (its MCP
    `instructions` text) into a Custom preset system prompt, because Odysseus doesn't
    forward them.
