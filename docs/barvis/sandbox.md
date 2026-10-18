@@ -144,8 +144,17 @@ Results go to `server/eval/results/<frontend>.jsonl`. They hold only fictional d
 data, so they can be pasted into PRs. Barvis' log (`$SBX/logs/barvis.log`) shows each
 tool call, approval and MCP error.
 
-Sandbox baseline (2026-10-18, questions 1, 4, 16): raw 1/3, Barvis over HTTP 1/3. Audio
-check: Silero VAD found 8.1 s of speech in the JFK clip and whisper.cpp transcribed it.
+Sandbox runs on questions 1, 4, 16 (one run each, so ±1 is noise at this size):
+
+| Date | Barvis | Score | Approvals for read-only tools |
+|---|---|---|---|
+| 2026-10-18 | baseline (`barvis` before the annotations fix) | 1/3, then 2/3 on a rerun | 1 per question that called a tool |
+| 2026-10-18 | HTTP annotations fix | 3/3 | 0 |
+
+Raw (no Barvis) baseline: 1/3. With the fix, question 4 took 197 s instead of 971 s:
+no approval round trip, and the model needed fewer rounds.
+
+Audio check (2026-10-18): Silero VAD found 8.1 s of speech in the JFK clip and whisper.cpp transcribed it.
 
 ## Findings from the first sandbox run
 
@@ -157,6 +166,8 @@ These are real bugs, not sandbox quirks. 1–3 are Barvis bugs (tracked in
    `src/mcp_trust.py` sees no `readOnlyHint`, and every read-only call over HTTP needs
    approval ("Exact approval required before tool start"). The owner's Docker setup
    uses HTTP, so this affects the server too. General fix, offer upstream.
+   **Fixed** (one line in `_connect_http`, test `tests/test_mcp_http_annotations.py`):
+   in the sandbox, read-only barvis-sound tools over HTTP now run with no approval.
 2. **Stdio MCP servers added over the API fail on every call** in the sandbox:
    `MCP tool call failed: <name>:` with an empty message and `exit_code=1`, while the
    same server works from the same `mcp` client library outside Barvis. Use HTTP until
