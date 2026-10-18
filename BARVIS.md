@@ -1,13 +1,25 @@
 # Barvis
 
-Barvis is a fork of [Odysseus](https://github.com/odysseus-dev/odysseus) used as the
-chat frontend for [convo-ai](https://github.com/SDarioosh/barvis-ai), a private
-system that records conversations from wearables, transcribes and summarizes
-them on a local server, and exposes them through an MCP server. Everything runs
-locally; no audio, transcripts or summaries leave the owner's network.
+Barvis is a fork of [Odysseus](https://github.com/odysseus-dev/odysseus) and the hub of
+a personal, fully local AI system: the one chat and agent interface. Separate
+**modules** plug into it over MCP. The first is
+[barvis-sound](https://github.com/SDarioosh/barvis-sound) (formerly convo-ai), which
+records conversations from wearables, transcribes and summarizes them on a local
+server, and exposes them through an MCP server. Everything runs locally; no audio,
+transcripts or summaries leave the owner's network.
 
 Upstream's README still describes the app itself. This file only covers what the
-fork changes and how it stays in sync.
+fork changes. More:
+
+- [AGENTS.md](AGENTS.md): instructions for coding agents (fork rules, tests, git rules).
+- [docs/barvis/architecture.md](docs/barvis/architecture.md): hub, modules, devices,
+  models, ports.
+- [docs/barvis/modules.md](docs/barvis/modules.md): the module contract and how to
+  register a module.
+- [docs/barvis/modules/barvis-sound.md](docs/barvis/modules/barvis-sound.md): the first
+  module.
+- [docs/barvis/upstream-sync.md](docs/barvis/upstream-sync.md): weekly upstream merge.
+- [docs/barvis/roadmap.md](docs/barvis/roadmap.md): status and next work.
 
 ## Changes from upstream
 
@@ -26,31 +38,25 @@ Tests: `tests/test_mcp_trust.py`.
 ## Setup
 
 1. Run Odysseus as usual (see upstream README).
-2. Add the convo MCP server in Settings > MCP (or `POST /api/mcp/servers`), named
-   `convo`. Stdio: command `convo-server`, args `["mcp"]`, with the convo server's
-   `CONVO_*` environment. HTTP: `http://<host>:8001/mcp?access_token=<CONVO_MCP_TOKEN>`.
-3. Set `ODYSSEUS_TRUSTED_READONLY_MCP=convo` in the environment (`.env` or
-   docker-compose) and restart.
-4. Run `python scripts/barvis_setup.py --url http://127.0.0.1:7000 --password-file <file>`.
-   Re-run it after each upstream merge: new upstream tools are off unless added
-   to its keep-list.
-5. Put the convo MCP server's instructions in a Custom preset system prompt;
-   Odysseus doesn't forward MCP server instructions to the model.
+2. Register each module: add its MCP server, add its name to
+   `ODYSSEUS_TRUSTED_READONLY_MCP`, run `scripts/barvis_setup.py`, and put its
+   instructions in a Custom preset. Steps:
+   [docs/barvis/modules.md](docs/barvis/modules.md#registering-a-module-in-barvis);
+   barvis-sound specifics:
+   [docs/barvis/modules/barvis-sound.md](docs/barvis/modules/barvis-sound.md#connect-it).
+3. Re-run `scripts/barvis_setup.py` after each upstream merge: new upstream tools are
+   on until it disables them.
 
 ## Branches and upstream sync
 
-- `dev` mirrors upstream `dev` and is never committed to directly.
-- `barvis` is upstream plus the patches above, and is the default branch.
-  Feature branches open PRs into `barvis`.
-- Weekly: `git fetch upstream && git checkout barvis && git merge upstream/dev`,
-  run `tests/test_mcp_trust.py` plus the upstream tests touching the hooked files
-  (`tests/test_request_authority.py`, `tests/test_tool_policy.py`), and the convo
-  side-by-side check (`server/eval/bakeoff.py --frontend odysseus` in convo-ai).
-- Expect occasional conflicts in `src/agent_loop.py` and the agent runtime, which
-  upstream is refactoring.
+`dev` mirrors upstream `dev` and is never committed to; `barvis` is upstream plus the
+patches above and is the default branch; PRs go into `barvis`. The weekly merge,
+conflict hot spots and post-merge checks are in
+[docs/barvis/upstream-sync.md](docs/barvis/upstream-sync.md).
 
 ## License
 
 AGPL-3.0, same as upstream. If others use a deployed Barvis over a network they
-must be offered its source; this public repository does that. The convo server
-is a separate program reached over MCP and is not covered by this license.
+must be offered its source; this public repository does that. Modules such as
+barvis-sound are separate programs reached over MCP and are not covered by this
+license.
