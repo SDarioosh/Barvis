@@ -51,7 +51,8 @@ Odysseus is large (~478k lines of Python) and fast-moving. Start from these file
 | Upstream's own rules | `CONTRIBUTING.md`, `SECURITY.md`, `THREAT_MODEL.md` |
 
 Barvis code so far: `src/mcp_trust.py`, `scripts/barvis_setup.py`,
-`tests/test_mcp_trust.py`, and the hooks listed in [BARVIS.md](BARVIS.md).
+`scripts/barvis_deploy.sh`, `docker/barvis.override.yml`, their tests, and the hooks
+listed in [BARVIS.md](BARVIS.md).
 
 ## Fork rules (merge-friendly)
 
@@ -120,11 +121,14 @@ the two PRs to each other.
   [docs/barvis/sandbox.md](docs/barvis/sandbox.md#server-verification).
 - The owner runs it and pastes the result into the PR. Continue from that result; you
   don't run anything on the server.
-- On the server there are two Odysseus instances. The **owner's real install** (Docker,
-  `/home/steam/models/odysseus`, port 7000) is never modified by anyone working on
-  Barvis: never write commands or steps that edit, restart, rebuild or reconfigure it.
-  The **isolated test instance** (`127.0.0.1:7010`, started with
-  `~/.hermes/cache/scratch/barvis-run.sh`, log
+- On the server there are two Barvis instances ([docs/barvis/deploy.md](docs/barvis/deploy.md)).
+  **Production** (Docker, `/home/steam/models/odysseus`, port 7000) is the owner's daily
+  install, with all Odysseus features. Only the owner changes it, and only with
+  `scripts/barvis_deploy.sh` after the PR is merged and verified on the test instance.
+  Never write verification steps that edit, restart, rebuild or reconfigure production
+  in any other way; a PR may end its Server verification with "deploy:
+  `scripts/barvis_deploy.sh deploy`" for the owner to run. The **isolated test instance**
+  (`127.0.0.1:7010`, started with `~/.hermes/cache/scratch/barvis-run.sh`, log
   `~/.hermes/cache/scratch/bakeoff/barvis.log`) is what verification steps target.
 - Server clones: `~/projects/barvis` (this repo) and `~/projects/barvis-ai-wt/*`
   (barvis-sound worktrees; the folder may be renamed).

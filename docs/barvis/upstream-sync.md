@@ -63,8 +63,7 @@ When resolving:
    failures caused by Barvis matter. 23 tests already fail upstream
    (`tests/test_null_owner_gates.py`, `tests/test_runtime_evidence_contract.py`).
 3. Bring up the sandbox stack ([sandbox.md](sandbox.md)) on the merged code and re-run
-   `scripts/barvis_setup.py` against it: new upstream tools are on until the script
-   disables them. Check its output for new tools worth keeping.
+   `scripts/barvis_setup.py` against it. Check that module servers still connect.
 4. Run each module's eval in the sandbox (barvis-sound:
    `server/eval/bakeoff.py --frontend odysseus --only 1 4 16`) and compare with the last
    sandbox run. Put both numbers in the PR.
@@ -72,7 +71,8 @@ When resolving:
    `barvis_setup.py` there, and run the full eval. The owner runs it; the server score
    must not drop.
 
-Never update or restart the owner's real install (port 7000) as part of a sync.
+Production (port 7000) is updated only by the owner, after the sync PR is merged:
+`scripts/barvis_deploy.sh deploy` ([deploy.md](deploy.md)).
 
 ## Sending fixes upstream
 

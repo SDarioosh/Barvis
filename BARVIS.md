@@ -21,6 +21,8 @@ fork changes. More:
 - [docs/barvis/upstream-sync.md](docs/barvis/upstream-sync.md): weekly upstream merge.
 - [docs/barvis/sandbox.md](docs/barvis/sandbox.md): running the whole system in a cloud
   sandbox, and the Server verification steps for the owner.
+- [docs/barvis/deploy.md](docs/barvis/deploy.md): production on the server: deploy,
+  update, rollback.
 - [docs/barvis/roadmap.md](docs/barvis/roadmap.md): status and next work.
 
 ## Changes from upstream
@@ -35,21 +37,24 @@ possible, small hooks in core files, no renames or reformatting.
 | **Web-intent routing.** Questions with words like "latest" or "recommend" no longer get an instant "Web access is disabled" reply when trusted read-only MCP tools are available. | hook in `src/agent_loop.py` (`_web_search_unavailable_for_turn`) | yes |
 | **Env reference entry.** Upstream's `tests/test_env_reference.py` requires every `ODYSSEUS_*` variable the code reads to have a note, so `ODYSSEUS_TRUSTED_READONLY_MCP` has one and `website/configuration-reference.md` is regenerated with it. | hook in `scripts/generate_env_reference.py` (`VARIABLE_NOTES`), generated `website/configuration-reference.md` | with the trusted read-only change |
 | **HTTP MCP servers keep tool annotations.** `_connect_http` dropped each tool's `annotations` (stdio and SSE kept them), so `readOnlyHint` was lost for Streamable HTTP servers: trusted read-only tools still needed approval, and plan mode fell back to the name heuristic. Now stored the same way as stdio/SSE. General bug, not Barvis-specific. | one line in `src/mcp_manager.py` (`_connect_http`); test `tests/test_mcp_http_annotations.py` (new) | yes (issue to file) |
-| **Tool set.** Turns off the built-ins Barvis doesn't use (tasks, calendar and notes too, until action items sync into them), hides the built-in email/browser/image MCP tools, and sets the model to "Regular tools". Configuration through the admin API, not code. | `scripts/barvis_setup.py` (new) | no |
+| **Setup.** Keeps every Odysseus feature: leaves the tool toggles alone, sets the default model to "Auto" tool mode, and checks that module MCP servers are connected. `--trim` turns off the built-ins a memory-only setup doesn't use, hides the built-in email/browser/image MCP tools and sets "Regular tools"; `--untrim` turns them back on. Configuration through the admin API, not code. Known gap: with every tool on, "Auto" doesn't offer module tools yet ([roadmap](docs/barvis/roadmap.md)). | `scripts/barvis_setup.py` (new) | no |
+| **Deployment.** Production runs the locally built `barvis:<commit>` image with Docker Compose; one command builds, backs up data, switches, health-checks and rolls back. | `scripts/barvis_deploy.sh`, `docker/barvis.override.yml` (new); [docs/barvis/deploy.md](docs/barvis/deploy.md) | no |
 
-Tests: `tests/test_mcp_trust.py`, `tests/test_mcp_http_annotations.py`.
+Tests: `tests/test_mcp_trust.py`, `tests/test_mcp_http_annotations.py`,
+`tests/test_barvis_setup.py`.
 
 ## Setup
 
-1. Run Odysseus as usual (see upstream README).
+1. Run it with Docker Compose using the Barvis image and override:
+   [docs/barvis/deploy.md](docs/barvis/deploy.md). Every Odysseus feature stays
+   available; modules add to it.
 2. Register each module: add its MCP server, add its name to
    `ODYSSEUS_TRUSTED_READONLY_MCP`, run `scripts/barvis_setup.py`, and put its
    instructions in a Custom preset. Steps:
    [docs/barvis/modules.md](docs/barvis/modules.md#registering-a-module-in-barvis);
    barvis-sound specifics:
    [docs/barvis/modules/barvis-sound.md](docs/barvis/modules/barvis-sound.md#connect-it).
-3. Re-run `scripts/barvis_setup.py` after each upstream merge: new upstream tools are
-   on until it disables them.
+3. Update with `scripts/barvis_deploy.sh deploy`; it re-runs `scripts/barvis_setup.py`.
 
 ## Branches and upstream sync
 
