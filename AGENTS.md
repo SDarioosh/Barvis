@@ -100,31 +100,34 @@ merge conflict.
 If a feature needs both repos, do the module side first, then the Barvis side, and link
 the two PRs to each other.
 
-## Run the isolated test instance
+## Where you work: the cloud sandbox
 
-There are two Odysseus instances on the owner's server:
+- You work in a cloud sandbox, **not on the owner's server**. Never assume access to the
+  server, its services, its data or Tailscale.
+- The sandbox can build and run the whole system with small CPU models and fictional
+  data: llama-server, whisper-server, barvis-sound, its MCP server, Barvis on
+  `127.0.0.1:7010`, and the eval. Steps, timings and known issues:
+  [docs/barvis/sandbox.md](docs/barvis/sandbox.md).
+- Small-model scores are only comparable with other sandbox runs. The real score
+  (`qwen3.5-35b`, target ≥ 15/20) is measured by the owner on the server.
+- Use only fictional data (`seed_demo.py`). Sandbox tokens and passwords are throwaway
+  placeholders.
 
-- **Owner's real install:** Docker, `/home/steam/models/odysseus`, port 7000. **Never
-  modify it**: don't edit its files, restart, rebuild or reconfigure its containers,
-  call its admin API, or point `barvis_setup.py` at it. Read-only inspection only, and
-  only when asked.
-- **Isolated test instance:** this fork's code on `127.0.0.1:7010`. Start it with
-  `~/.hermes/cache/scratch/barvis-run.sh`; the log is
-  `~/.hermes/cache/scratch/bakeoff/barvis.log`. Use it for every manual and eval run.
+### Server verification (owner)
 
-Local clones on the server: `~/projects/barvis` (this repo) and
-`~/projects/barvis-ai-wt/*` (barvis-sound worktrees; the folder may be renamed).
-
-Configure the test instance (never the real one) after a fresh start or an upstream
-merge:
-
-```bash
-python scripts/barvis_setup.py --url http://127.0.0.1:7010 --password-file <file> --dry-run
-python scripts/barvis_setup.py --url http://127.0.0.1:7010 --password-file <file>
-```
-
-Module registration and `ODYSSEUS_TRUSTED_READONLY_MCP`:
-[docs/barvis/modules.md](docs/barvis/modules.md#registering-a-module-in-barvis).
+- Every PR that can change answers, devices or deployment has a **Server verification**
+  section: the exact commands, the expected result, and any real-device steps. Format:
+  [docs/barvis/sandbox.md](docs/barvis/sandbox.md#server-verification).
+- The owner runs it and pastes the result into the PR. Continue from that result; you
+  don't run anything on the server.
+- On the server there are two Odysseus instances. The **owner's real install** (Docker,
+  `/home/steam/models/odysseus`, port 7000) is never modified by anyone working on
+  Barvis: never write commands or steps that edit, restart, rebuild or reconfigure it.
+  The **isolated test instance** (`127.0.0.1:7010`, started with
+  `~/.hermes/cache/scratch/barvis-run.sh`, log
+  `~/.hermes/cache/scratch/bakeoff/barvis.log`) is what verification steps target.
+- Server clones: `~/projects/barvis` (this repo) and `~/projects/barvis-ai-wt/*`
+  (barvis-sound worktrees; the folder may be renamed).
 
 ## Tests
 
@@ -136,9 +139,12 @@ python -m py_compile app.py routes/*.py src/*.py
 node --check static/js/<file-you-changed>.js
 ```
 
-Setup for a full run is in `tests/KNOWN_FAILURES.md`. For changes that affect answers,
-also run the module evals against the test instance
-([modules.md](docs/barvis/modules.md#eval-harness)).
+Install first (`uv venv -p 3.11 venv && uv pip install -p venv/bin/python -r
+requirements.txt -r requirements-dev.txt && mkdir -p data`); the three files above run
+281 tests in ~30 s. Setup for a full run is in `tests/KNOWN_FAILURES.md`. For changes
+that affect answers, also run the module evals in the sandbox stack
+([sandbox.md](docs/barvis/sandbox.md#run-the-eval)) and add a Server verification
+section to the PR.
 
 ### Known upstream failures
 
@@ -172,8 +178,8 @@ also run the module evals against the test instance
 ## Device code
 
 Barvis has no device code; devices belong to modules. If a change can't be verified on
-real hardware, list what still needs real-device testing in the PR description and the
-module's `PROGRESS.md`.
+real hardware, list what still needs real-device testing in the PR's Server verification
+section and the module's `PROGRESS.md`.
 
 ## Tool-specific files
 

@@ -60,11 +60,8 @@ Environment for the MCP server (read from the environment or `server/.env`):
 | `CONVO_MCP_TOKEN` | HTTP only; ≥ 16 chars, separate from the ingest token |
 | `CONVO_MCP_HOST`, `CONVO_MCP_PORT` | HTTP only; default `127.0.0.1`, `8001` |
 
-**stdio** (Barvis running natively, e.g. the test instance): in Settings > MCP add a
-stdio server named `convo`, command `<barvis-sound>/server/.venv/bin/convo-server`, args
-`["mcp"]`, with the `CONVO_*` environment above.
-
-**Streamable HTTP** (Barvis in Docker):
+**Streamable HTTP** (use this; it is what the sandbox stack and the owner's Docker setup
+use):
 
 ```bash
 cd server
@@ -72,12 +69,19 @@ CONVO_MCP_TOKEN=... CONVO_MCP_HOST=172.17.0.1 .venv/bin/convo-server mcp --http 
 ```
 
 Then add an HTTP server named `convo` with URL
-`http://host.docker.internal:8001/mcp?access_token=<CONVO_MCP_TOKEN>`.
+`http://host.docker.internal:8001/mcp?access_token=<CONVO_MCP_TOKEN>` (Barvis in Docker)
+or `http://127.0.0.1:8001/mcp?access_token=<CONVO_MCP_TOKEN>` (Barvis native, e.g. the
+sandbox).
+
+**stdio** (`convo-server mcp`, args `["mcp"]`, with the `CONVO_*` environment) connects,
+but every call then fails in Barvis; see
+[../sandbox.md](../sandbox.md#findings-from-the-first-sandbox-run).
 
 Then, per [../modules.md](../modules.md#registering-a-module-in-barvis):
 
 1. `ODYSSEUS_TRUSTED_READONLY_MCP=convo`, restart Barvis.
-2. `python scripts/barvis_setup.py --url http://127.0.0.1:7010 --password-file <file>`.
+2. `python scripts/barvis_setup.py --url http://127.0.0.1:7010 --password-file <file>`
+   (sandbox, or the server's test instance).
 3. Paste the server's `INSTRUCTIONS` text (top of `mcp_server.py`) into a Custom preset
    system prompt.
 
@@ -92,6 +96,8 @@ Then, per [../modules.md](../modules.md#registering-a-module-in-barvis):
   `ODYSSEUS_PASSWORD`, `ODYSSEUS_PASSWORD_FILE` or `ODYSSEUS_API_TOKEN`; optional
   `ODYSSEUS_PRESET` (default `custom`) and `ODYSSEUS_APPROVAL`.
 - Results: `server/eval/results/odysseus.jsonl` (gitignored).
+- Sandbox (Qwen3-4B on CPU, questions 1, 4, 16; not comparable with the table below):
+  raw 1/3, Barvis over HTTP 1/3. Steps: [../sandbox.md](../sandbox.md#run-the-eval).
 
 | Frontend (same model, same MCP server) | Score |
 |---|---|
@@ -104,7 +110,9 @@ link, and 2 replies that were just "Done." because the model returned empty text
 its tool calls. Full analysis: barvis-sound
 [docs/frontend-decision.md](https://github.com/SDarioosh/barvis-sound/blob/main/docs/frontend-decision.md).
 
-## Known gaps against the contract
+## Known gaps
 
 - No test yet asserts the annotation of every tool (required by
   [../modules.md](../modules.md#interface-mcp-server)).
+- Barvis drops annotations for HTTP MCP servers, so `convo`'s read-only tools still ask
+  for approval over HTTP ([../sandbox.md](../sandbox.md#findings-from-the-first-sandbox-run)).

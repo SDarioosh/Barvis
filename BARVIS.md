@@ -19,6 +19,8 @@ fork changes. More:
 - [docs/barvis/modules/barvis-sound.md](docs/barvis/modules/barvis-sound.md): the first
   module.
 - [docs/barvis/upstream-sync.md](docs/barvis/upstream-sync.md): weekly upstream merge.
+- [docs/barvis/sandbox.md](docs/barvis/sandbox.md): running the whole system in a cloud
+  sandbox, and the Server verification steps for the owner.
 - [docs/barvis/roadmap.md](docs/barvis/roadmap.md): status and next work.
 
 ## Changes from upstream
