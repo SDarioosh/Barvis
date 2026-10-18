@@ -13,13 +13,13 @@ _Last updated: 2026-10-18_
 | 2 | Agent and module docs | merged (SDarioosh/Barvis#2) | `AGENTS.md`, `docs/barvis/` |
 | 3 | barvis-sound eval ≥ 15/20 | 9/20 (right fact 18/20, link cited 9/20) | [modules/barvis-sound.md](modules/barvis-sound.md#eval-and-current-score) |
 | 4 | Sandbox stack (whole system on CPU in the cloud sandbox) | working; baseline raw 1/3, Barvis 1/3 | [sandbox.md](sandbox.md) |
+| 5 | HTTP MCP servers keep tool annotations (no approvals for trusted reads over HTTP) | PR open; sandbox 2/3 → 2/3, approvals 2 → 0; awaiting Server verification | [sandbox.md](sandbox.md#http-annotation-fix-finding-1-2026-10-18) |
 
 ## Next
 
-1. **Fix the MCP bugs the sandbox found** ([sandbox.md](sandbox.md#findings-from-the-first-sandbox-run)):
-   HTTP servers lose tool annotations in `src/mcp_manager.py` (`_connect_http`), so
-   trusted read-only tools still need approval over HTTP; and stdio servers added over
-   the API fail on every call. The first is a small, general fix to offer upstream.
+1. **Fix the remaining MCP bug the sandbox found** ([sandbox.md](sandbox.md#findings-from-the-first-sandbox-run)):
+   stdio servers added over the API fail on every call. (The HTTP annotation bug is
+   item 5 above; its upstream issue is drafted in that PR, for the owner to file.)
 2. **Citations to ≥ 15/20.** Most remaining failures have the right fact and no
    transcript link. Two replies were just "Done." because the model returned empty text
    after its tool calls. Find why Barvis turns that into "Done." and why links get
