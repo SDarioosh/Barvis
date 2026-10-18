@@ -20,13 +20,28 @@ picking a built-in (tasks, calendar, chat search) over a module tool.
 Don't combine "Regular tools" with every tool on: all ~230 tool schemas go into
 each request (~35k tokens), more than a 32k context holds.
 
+Slash-command skills: ``/sound <question>`` offers barvis-sound's tools for that
+one message, and ``/context <question>`` the tools of every trusted module. This
+script creates or updates those skills through the skills API (source
+``managed``, so they need no skill audit; see src/skill_invocation.py):
+
+* one per ``--module-skill NAME=SERVER`` (default ``sound=convo``), requiring
+  ``mcp:SERVER``; its procedure is the module's usage instructions, read from
+  ``--skill-text NAME=FILE`` or else from the Custom preset's system prompt (the
+  module doc says to paste the same text there);
+* ``--context-skill`` (default ``context``), requiring ``mcp:<server>`` for each
+  server in ``--trusted`` (default: ``ODYSSEUS_TRUSTED_READONLY_MCP``, else the
+  ``--module`` list). ``--no-skills`` skips both.
+
 Trusting a module's read-only tools is not done here; that is the
 ``ODYSSEUS_TRUSTED_READONLY_MCP`` environment variable (see src/mcp_trust.py).
 
 Usage:
     python scripts/barvis_setup.py --url http://127.0.0.1:7000 \
         --user admin --password-file ~/.config/barvis/admin.txt \
-        [--trim [--keep a,b] | --untrim] [--model-mode auto|full|unchanged] [--dry-run]
+        [--trim [--keep a,b] | --untrim] [--model-mode auto|full|unchanged]
+        [--module-skill sound=convo] [--skill-text sound=FILE] [--context-skill context]
+        [--trusted convo,...] [--no-skills] [--dry-run]
 
 Re-run after each upgrade. With --trim, new upstream tools are turned off unless
 added to KEEP or --keep.
@@ -36,6 +51,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
 import sys
 from pathlib import Path
 
@@ -52,6 +69,21 @@ KEEP = {
 # Built-in MCP servers whose tools --trim hides from the model.
 BUILTIN_MCP_OFF = {"email", "builtin_browser", "image_gen"}
 MODEL_MODES = {"full": "full", "auto": "", "unchanged": None}
+TRUSTED_ENV = "ODYSSEUS_TRUSTED_READONLY_MCP"
+MANAGED_SOURCE = "managed"  # src/skill_invocation.py: skips the skill audit gates
+CONTEXT_PROCEDURE = [
+    ("Answer from the user's own data in the connected modules (recorded conversations "
+     "and any other module listed in requires_toolsets), not from general knowledge."),
+    ("Resolve relative dates (\"last Wednesday\", \"yesterday\") against the current date "
+     "in context and pass them as YYYY-MM-DD dates to the module tools."),
+    ("Search every module whose tools you were given: call each module's search tool "
+     "with the people, topic and dates from the request. Open the best hits "
+     "(get_conversation / get_transcript or the module's equivalent) when the search "
+     "result is not enough."),
+    ("Answer briefly. Put the source link from the tool result next to each fact you use, "
+     "exactly as the tool returned it. Never invent a link."),
+    "If no module has an answer, say so plainly; do not guess.",
+]
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -72,6 +104,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                     help="same as --model-mode unchanged (kept for old scripts)")
     ap.add_argument("--module", action="append", default=None,
                     help="MCP server name a module registers (default: convo); repeatable")
+    ap.add_argument("--module-skill", action="append", default=None, metavar="NAME=SERVER",
+                    help="slash skill offering one module's tools (default: sound=convo); "
+                         "repeatable")
+    ap.add_argument("--skill-text", action="append", default=[], metavar="NAME=FILE",
+                    help="procedure text for a module skill (default: the Custom preset's "
+                         "system prompt)")
+    ap.add_argument("--context-skill", default="context",
+                    help="slash skill offering every trusted module's tools (default: context)")
+    ap.add_argument("--trusted", default=None,
+                    help=f"comma-separated servers for the context skill (default: ${TRUSTED_ENV}, "
+                         "else the --module list)")
+    ap.add_argument("--no-skills", action="store_true", help="don't create or update skills")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args(argv)
     if args.no_model_modes:
@@ -82,7 +126,98 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ap.error("--keep only applies with --trim")
     if args.module is None:
         args.module = ["convo"]
+    if args.module_skill is None:
+        args.module_skill = ["sound=convo"]
+    try:
+        args.module_skill = [_pair(p, "--module-skill") for p in args.module_skill]
+        args.skill_text = dict(_pair(p, "--skill-text") for p in args.skill_text)
+    except ValueError as exc:
+        ap.error(str(exc))
+    if args.trusted is None:
+        args.trusted = os.environ.get(TRUSTED_ENV, "") or ",".join(args.module)
+    args.trusted = [t.strip() for t in args.trusted.split(",") if t.strip()]
     return args
+
+
+def _pair(text: str, flag: str) -> tuple[str, str]:
+    name, sep, value = text.partition("=")
+    if not sep or not name.strip() or not value.strip():
+        raise ValueError(f"{flag} expects NAME=VALUE, got {text!r}")
+    return name.strip(), value.strip()
+
+
+def procedure_steps(text: str) -> list[str]:
+    """Split instructions into procedure steps: one per paragraph or list item."""
+    steps = []
+    for block in re.split(r"\n\s*\n", text.strip()):
+        lines = [ln.strip() for ln in block.splitlines() if ln.strip()]
+        if lines and all(re.match(r"^([-*]|\d+[.)])\s+", ln) for ln in lines):
+            steps += [re.sub(r"^([-*]|\d+[.)])\s+", "", ln) for ln in lines]
+        elif lines:
+            steps.append(" ".join(lines))
+    return steps
+
+
+def skill_specs(c: httpx.Client, args: argparse.Namespace) -> list[dict]:
+    """The skills to create or update, as skills-API bodies."""
+    specs = []
+    preset_text = None
+    for name, server in args.module_skill:
+        if name in args.skill_text:
+            text = Path(args.skill_text[name]).expanduser().read_text()
+        else:
+            if preset_text is None:
+                presets = c.get("/api/presets").json()
+                preset_text = str((presets.get("custom") or {}).get("system_prompt") or "")
+            text = preset_text
+        steps = procedure_steps(text)
+        if not steps:
+            print(f"warning: no instructions for skill {name!r} (empty Custom preset; "
+                  f"use --skill-text {name}=FILE)", file=sys.stderr)
+            steps = [(f"Use the {server} module's tools to answer from the user's data, "
+                      "and cite the link each result gives next to each fact.")]
+        specs.append({
+            "name": name,
+            "description": f"Use the {server} module's tools for this message",
+            "category": "barvis",
+            "requires_toolsets": [f"mcp:{server}"],
+            "procedure": steps,
+        })
+    if args.context_skill and args.trusted:
+        specs.append({
+            "name": args.context_skill,
+            "description": "Search every connected module for this message: "
+                           + ", ".join(args.trusted),
+            "category": "barvis",
+            "requires_toolsets": [f"mcp:{s}" for s in args.trusted],
+            "procedure": list(CONTEXT_PROCEDURE),
+        })
+    return specs
+
+
+def apply_skills(c: httpx.Client, specs: list[dict], dry_run: bool) -> list[str]:
+    """Create or update managed skills; never overwrite a skill someone else made."""
+    existing = {s.get("name"): s for s in c.get("/api/skills").json().get("skills", [])}
+    warnings = []
+    for spec in specs:
+        name = spec["name"]
+        current = existing.get(name)
+        if current is not None and current.get("source") != MANAGED_SOURCE:
+            warnings.append(f"skill {name!r} exists and isn't managed by this script; "
+                            f"left alone (rename or delete it, then rerun)")
+            continue
+        action = "update" if current is not None else "create"
+        print(f"skill /{name}: {action}, requires {spec['requires_toolsets']}, "
+              f"{len(spec['procedure'])} procedure steps")
+        if dry_run:
+            continue
+        if current is None:
+            c.post("/api/skills/add", json={**spec, "status": "published",
+                                            "source": MANAGED_SOURCE,
+                                            "confidence": 1.0}).raise_for_status()
+        else:
+            c.put(f"/api/skills/{name}", json={**spec, "status": "published"}).raise_for_status()
+    return warnings
 
 
 def trimmed_tools(c: httpx.Client, keep: set[str]) -> tuple[list[str], list[str]]:
@@ -153,6 +288,11 @@ def run(c: httpx.Client, args: argparse.Namespace) -> int:
             print("no default chat model; skipping tool mode", file=sys.stderr)
 
     warnings = report_modules(c, args.module)
+    if not args.no_skills:
+        specs = skill_specs(c, args)
+        plan["skills"] = [{"name": s["name"], "requires_toolsets": s["requires_toolsets"]}
+                          for s in specs]
+        warnings += apply_skills(c, specs, args.dry_run)
     for w in warnings:
         print(f"warning: {w}", file=sys.stderr)
 
