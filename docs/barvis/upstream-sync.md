@@ -36,6 +36,7 @@ Merge, don't rebase: `barvis` is shared history.
   `effect_adapters.py` (`classify`). Upstream is refactoring the agent runtime, so these
   move most.
 - `src/tool_capabilities.py`: hook in `ToolRunSecurityContext`.
+- `src/mcp_manager.py`: one line in `_connect_http` that keeps tool `annotations`.
 
 Find every hook with `git grep -n "mcp_trust"` (and `git grep -n "Barvis:"` for newer
 hooks). The full list is the "Changes from upstream" table in [../../BARVIS.md](../../BARVIS.md).
@@ -78,8 +79,9 @@ Production (port 7000) is updated only by the owner, after the sync PR is merged
 
 Offer a change upstream when it is a general fix or feature, not Barvis-specific. Current
 candidates (marked "Upstreamable: yes" in [../../BARVIS.md](../../BARVIS.md)): trusted
-read-only MCP servers, trusted reads not counted as external effects, and the
-web-intent routing fix.
+read-only MCP servers, trusted reads not counted as external effects, the
+web-intent routing fix, and HTTP MCP servers keeping tool annotations (the smallest one;
+a good first issue to file).
 
 - Upstream asks LLM agents to **open an issue first** instead of a PR
   (`CONTRIBUTING.md`). So: an agent drafts the issue text (problem, repro, proposed fix,
