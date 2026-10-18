@@ -107,3 +107,21 @@ def test_web_disabled_shortcut_yields_to_trusted_tools(manager, monkeypatch):
     trusted = mcp_trust.trusted_readonly_mcp_tools()
     assert _web_search_unavailable_for_turn({"web"}, disabled | trusted,
                                             "What's the latest on the move?", None, None) == baseline
+
+
+def _mcp_capture(tool):
+    from src.agent_runtime.effect_adapters import DispatchCapture
+    from src.agent_runtime.remote_resources import BoundBackendOperation
+    from src.agent_runtime.resources import ExternalResource
+    resource = ExternalResource("mcp", "endpoint", "srv1", tool, "incarnation")
+    return DispatchCapture(backend=BoundBackendOperation(resource, "req", "alice", "s", tool, "{}"))
+
+
+def test_trusted_read_is_not_an_unverified_external_effect(manager, monkeypatch):
+    """Otherwise the answer gets 'External operation ... not independently verified'."""
+    from src.agent_runtime.effect_adapters import classify
+    monkeypatch.setenv(mcp_trust.TRUSTED_READONLY_MCP_ENV, "convo")
+    assert classify(_mcp_capture(SEARCH)) is None
+    assert classify(_mcp_capture("mcp__srv1__name_speaker"))["external"] is True
+    monkeypatch.delenv(mcp_trust.TRUSTED_READONLY_MCP_ENV)
+    assert classify(_mcp_capture(SEARCH))["external"] is True

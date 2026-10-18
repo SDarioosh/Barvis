@@ -230,6 +230,12 @@ def classify(capture: DispatchCapture) -> dict[str, Any] | None:
     if capture.backend is not None:
         from src.agent_runtime.resources import ExternalResource
         if isinstance(capture.backend.resource, ExternalResource):
+            # An admin-trusted read-only MCP tool (src/mcp_trust.py) is an
+            # admitted read, not an external effect awaiting verification.
+            from src.mcp_trust import is_trusted_readonly_mcp_tool
+            if (not impact and not dependencies
+                    and is_trusted_readonly_mcp_tool(getattr(capture.backend, "transport_tool", None))):
+                return None
             external = True
             impact = (*impact, resource_ref(capture.backend.resource, "backend"))
     return {"impact_scope": impact, "dependencies": dependencies, "obligations": obligations, "external": external}
