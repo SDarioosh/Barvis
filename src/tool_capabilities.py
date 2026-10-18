@@ -833,6 +833,9 @@ class ToolRunSecurityContext:
             return ToolGateDecision(True)
         if isinstance(tool_name, str) and tool_name in self.unattended_tools:
             return ToolGateDecision(True)
+        from src.mcp_trust import is_trusted_readonly_mcp_tool
+        if is_trusted_readonly_mcp_tool(tool_name):
+            return ToolGateDecision(True)
         if not self.external_untrusted_context_seen:
             return ToolGateDecision(True)
 
