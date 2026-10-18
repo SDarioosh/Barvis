@@ -34,9 +34,10 @@ possible, small hooks in core files, no renames or reformatting.
 | **Trusted reads aren't external effects.** The evidence ledger counted every MCP call as an unverified external change, which appended "External operation … not independently verified" to answers and sometimes replaced the answer with it. Trusted read-only calls are now admitted reads. | hook in `src/agent_runtime/effect_adapters.py` (`classify`) | yes |
 | **Web-intent routing.** Questions with words like "latest" or "recommend" no longer get an instant "Web access is disabled" reply when trusted read-only MCP tools are available. | hook in `src/agent_loop.py` (`_web_search_unavailable_for_turn`) | yes |
 | **Env reference entry.** Upstream's `tests/test_env_reference.py` requires every `ODYSSEUS_*` variable the code reads to have a note, so `ODYSSEUS_TRUSTED_READONLY_MCP` has one and `website/configuration-reference.md` is regenerated with it. | hook in `scripts/generate_env_reference.py` (`VARIABLE_NOTES`), generated `website/configuration-reference.md` | with the trusted read-only change |
+| **HTTP MCP servers keep tool annotations.** `_connect_http` dropped each tool's `annotations` (stdio and SSE kept them), so `readOnlyHint` was lost for Streamable HTTP servers: trusted read-only tools still needed approval, and plan mode fell back to the name heuristic. Now stored the same way as stdio/SSE. General bug, not Barvis-specific. | one line in `src/mcp_manager.py` (`_connect_http`); test `tests/test_mcp_http_annotations.py` (new) | yes (issue to file) |
 | **Tool set.** Turns off the built-ins Barvis doesn't use (tasks, calendar and notes too, until action items sync into them), hides the built-in email/browser/image MCP tools, and sets the model to "Regular tools". Configuration through the admin API, not code. | `scripts/barvis_setup.py` (new) | no |
 
-Tests: `tests/test_mcp_trust.py`.
+Tests: `tests/test_mcp_trust.py`, `tests/test_mcp_http_annotations.py`.
 
 ## Setup
 

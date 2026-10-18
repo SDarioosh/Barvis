@@ -395,6 +395,8 @@ class McpManager:
                     "name": tool.name,
                     "description": tool.description or "",
                     "input_schema": tool.inputSchema if hasattr(tool, "inputSchema") else {},
+                    # Same as stdio/SSE: keep readOnlyHint / destructiveHint.
+                    "annotations": getattr(tool, "annotations", None),
                 })
 
             self._sessions[server_id] = session
