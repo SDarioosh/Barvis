@@ -90,24 +90,28 @@ name heuristic. So:
 
 ## Registering a module in Barvis
 
-Do this on the isolated test instance (`127.0.0.1:7010`) first, never on the owner's
-real install (port 7000) unless the owner asks.
+Do this in the sandbox stack first ([sandbox.md](sandbox.md)); the owner repeats it on
+the server's test instance (`127.0.0.1:7010`). Never on the owner's real install
+(port 7000) unless the owner asks.
 
-1. **Start the module's MCP server** (stdio command, or HTTP bound to loopback / the
-   Docker bridge / Tailscale).
+1. **Start the module's MCP server**, HTTP bound to loopback / the Docker bridge /
+   Tailscale. Use HTTP: stdio servers added over the API currently fail on every call
+   in Barvis ([sandbox.md](sandbox.md#findings-from-the-first-sandbox-run)).
 2. **Add it to Barvis:** Settings > MCP, or `POST /api/mcp/servers`. Give it a short
    name (barvis-sound: `convo`). HTTP URL form: `http://<host>:<port>/mcp?access_token=<token>`.
 3. **Trust its read-only tools:** add the server name to `ODYSSEUS_TRUSTED_READONLY_MCP`
    (comma separated, e.g. `ODYSSEUS_TRUSTED_READONLY_MCP=convo,<next>`) in `.env` or
-   docker-compose, then restart. Write tools keep normal approval.
+   docker-compose, then restart. Write tools keep normal approval. Known bug: Barvis
+   drops annotations for HTTP servers, so their read-only tools still ask for approval
+   until that is fixed ([sandbox.md](sandbox.md#findings-from-the-first-sandbox-run)).
 4. **Trim tools:** run `scripts/barvis_setup.py` (it disables built-ins outside its
    keep-list and sets "Regular tools" mode; in "Auto" mode non-Odysseus models are never
    offered MCP tools). Use `--dry-run` first.
 5. **Add instructions to the preset:** paste the module's usage instructions (its MCP
    `instructions` text) into a Custom preset system prompt, because Odysseus doesn't
    forward them.
-6. **Run the module's eval** against the instance (see "Eval harness") and record the score in the
-   module doc.
+6. **Run the module's eval** (see "Eval harness"): a few questions in the sandbox, the
+   full run by the owner on the server. Record the server score in the module doc.
 7. **Document it:** add `docs/barvis/modules/<name>.md` (copy the structure of
    [barvis-sound.md](modules/barvis-sound.md)), a row in the table at the top of this
    file, and its services in [architecture.md](architecture.md).
@@ -125,6 +129,10 @@ real install (port 7000) unless the owner asks.
   tuned Hermes Agent reached).
 - Rerun the eval after: any change to the module's tool contract, any Barvis change to
   MCP gating/routing/presets, and every upstream merge.
+- Agents run it in the sandbox stack with a small model and a few questions
+  ([sandbox.md](sandbox.md#run-the-eval)); those scores only compare with other sandbox
+  runs. The target score is measured by the owner on the server, from the PR's Server
+  verification section.
 
 ## Versioning
 
@@ -146,8 +154,9 @@ For a breaking change:
 1. Open the module PR first. Its description lists the contract change.
 2. Open a Barvis PR that updates the module doc (and preset text, setup or trust config if
    needed). Link the two PRs to each other.
-3. Rerun the module eval with `--frontend odysseus` against the test instance with both
-   changes in place. Put the score in both PRs.
+3. Rerun the module eval with `--frontend odysseus` in the sandbox stack with both
+   changes in place, and list the full server run under Server verification. Put the
+   scores in both PRs.
 4. The owner merges the module PR first, then the Barvis PR.
 
 Bump the version string the module's MCP server reports (barvis-sound: `version="0.1.0"`
@@ -166,7 +175,7 @@ in `build_mcp`) on every contract change.
 - [ ] Every result fact has a source link; non-empty results carry the citation rule.
 - [ ] Eval script with fictional seed data, a `--frontend odysseus` mode and a target
       score.
-- [ ] Registered on the test instance: MCP server added, name in
+- [ ] Registered in the sandbox stack, then on the server's test instance: MCP server added, name in
       `ODYSSEUS_TRUSTED_READONLY_MCP`, `barvis_setup.py` run, preset instructions added.
 - [ ] Eval run against Barvis; score recorded.
 - [ ] `docs/barvis/modules/<name>.md`, the table above, and

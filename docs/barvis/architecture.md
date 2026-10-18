@@ -46,7 +46,9 @@ flowchart LR
   barvis -. "notifications (planned)" .-> ntfy
 ```
 
-Dotted lines are planned.
+Dotted lines are planned. Development and testing happen in a cloud sandbox that runs the
+same services on CPU with small models ([sandbox.md](sandbox.md)); this diagram is the
+owner's server.
 
 ## Pieces
 
