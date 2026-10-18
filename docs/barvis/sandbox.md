@@ -54,11 +54,12 @@ curl -sSL -o models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf \
 curl -sSL -o models/ggml-base.en.bin \
   https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
 
-# Same ports as production
-nohup $SBX/llama.cpp/build/bin/llama-server -m $SBX/models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf \
-  --alias qwen3-4b --host 127.0.0.1 --port 8082 --jinja -c 32768 -t 4 > $SBX/logs/llama.log 2>&1 &
-nohup $SBX/whisper.cpp/build/bin/whisper-server -m $SBX/models/ggml-base.en.bin \
-  --host 127.0.0.1 --port 8178 -t 2 > $SBX/logs/whisper.log 2>&1 &
+# Same ports as production. Start long-running services with setsid so they survive
+# the shell that started them (plain `cmd &` inside a compound command can die with it).
+setsid nohup $SBX/llama.cpp/build/bin/llama-server -m $SBX/models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf \
+  --alias qwen3-4b --host 127.0.0.1 --port 8082 --jinja -c 32768 -t 4 > $SBX/logs/llama.log 2>&1 < /dev/null &
+setsid nohup $SBX/whisper.cpp/build/bin/whisper-server -m $SBX/models/ggml-base.en.bin \
+  --host 127.0.0.1 --port 8178 -t 2 > $SBX/logs/whisper.log 2>&1 < /dev/null &
 ```
 
 ### barvis-sound
@@ -75,11 +76,23 @@ export CONVO_PUBLIC_URL=http://127.0.0.1:8000
 export CONVO_MCP_TOKEN=sandbox-mcp-token-0123456789abcdef
 EOF
 cd $SOUND/server
-uv venv -p 3.11 .venv && uv pip install -p .venv/bin/python -e ".[dev]"
+uv venv -p 3.11 .venv
+# The vad extra pulls in torch; use the CPU wheel index (the default wheel is the CUDA build)
+uv pip install -p .venv/bin/python --index-url https://download.pytorch.org/whl/cpu \
+  --extra-index-url https://pypi.org/simple --index-strategy unsafe-best-match -e ".[vad,dev]"
 . $SBX/convo.env && mkdir -p $CONVO_DATA_DIR
 .venv/bin/python scripts/seed_demo.py                      # 8 fictional conversations
-nohup .venv/bin/convo-server serve > $SBX/logs/convo.log 2>&1 &          # :8000, links
-nohup .venv/bin/convo-server mcp --http > $SBX/logs/mcp-http.log 2>&1 &  # :8001
+setsid nohup .venv/bin/convo-server serve > $SBX/logs/convo.log 2>&1 < /dev/null &          # :8000
+setsid nohup .venv/bin/convo-server mcp --http > $SBX/logs/mcp-http.log 2>&1 < /dev/null &  # :8001
+```
+
+Audio path check (public-domain JFK clip shipped with whisper.cpp; diarization is off in
+the sandbox because it needs the SpeechBrain model):
+
+```bash
+.venv/bin/python scripts/smoke_upload.py --token "$CONVO_INGEST_TOKEN" --device smoke \
+  --session smoke-jfk $SBX/whisper.cpp/samples/jfk.wav
+# then: GET /v1/conversations, and /v1/conversations/<id>/transcript shows the text
 ```
 
 The tokens are sandbox-only placeholders; never reuse them anywhere real.
@@ -92,7 +105,7 @@ uv venv -p 3.11 venv && uv pip install -p venv/bin/python -r requirements.txt -r
 mkdir -p data $SBX/barvis-data
 echo sandbox-admin-password > $SBX/admin.txt
 ODYSSEUS_DATA_DIR=$SBX/barvis-data ODYSSEUS_TRUSTED_READONLY_MCP=convo \
-  nohup venv/bin/python -m uvicorn app:app --host 127.0.0.1 --port 7010 > $SBX/logs/barvis.log 2>&1 &
+  setsid nohup venv/bin/python -m uvicorn app:app --host 127.0.0.1 --port 7010 > $SBX/logs/barvis.log 2>&1 < /dev/null &
 ```
 
 ChromaDB isn't running, so the log shows `VectorRAG init failed` and
@@ -131,11 +144,13 @@ Results go to `server/eval/results/<frontend>.jsonl`. They hold only fictional d
 data, so they can be pasted into PRs. Barvis' log (`$SBX/logs/barvis.log`) shows each
 tool call, approval and MCP error.
 
-Sandbox baseline (2026-10-18, questions 1, 4, 16): raw 1/3, Barvis over HTTP 1/3.
+Sandbox baseline (2026-10-18, questions 1, 4, 16): raw 1/3, Barvis over HTTP 1/3. Audio
+check: Silero VAD found 8.1 s of speech in the JFK clip and whisper.cpp transcribed it.
 
 ## Findings from the first sandbox run
 
-These are Barvis bugs, not sandbox quirks. They are tracked in [roadmap.md](roadmap.md).
+These are real bugs, not sandbox quirks. 1–3 are Barvis bugs (tracked in
+[roadmap.md](roadmap.md)); 4 is a barvis-sound bug (tracked in its `PROGRESS.md`).
 
 1. **HTTP MCP servers lose their annotations.** `_connect_http` in `src/mcp_manager.py`
    stores each tool without `annotations` (the stdio and SSE paths keep them). So
@@ -148,6 +163,10 @@ These are Barvis bugs, not sandbox quirks. They are tracked in [roadmap.md](road
    this is understood.
 3. **Empty answers:** some Barvis replies are empty after tool calls (question 16 in the
    HTTP run). That matches the "Done." replies in the server eval.
+4. **barvis-sound: failed summaries are never retried.** If llama-server is down when a
+   conversation is summarized, it is marked `failed`, and `convo-server summarize-pending`
+   only retries `pending` conversations (`Pipeline.summarize_pending`). The conversation
+   keeps its transcript but never gets a summary, title or action items.
 
 ## Server verification
 
