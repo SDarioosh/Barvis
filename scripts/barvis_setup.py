@@ -30,15 +30,17 @@ from pathlib import Path
 
 import httpx
 
-# Built-ins Barvis uses. Everything else is disabled; re-enable in Settings > Tools.
-# search_chats / list_sessions are off on purpose: for "what's the latest on X"
-# the model picks chat-history search over the conversation store.
+# Built-ins Barvis uses. Everything else is disabled; re-enable in Settings > Tools
+# or with --keep.
+# - search_chats / list_sessions: for "what's the latest on X" the model picks
+#   chat-history search over the conversation store.
+# - manage_tasks / manage_calendar / manage_notes: off until convo action items
+#   sync into them (fork plan step 4). While they're empty, the model asks them
+#   "when is my next appointment?" instead of the conversation store. Add them
+#   back with --keep manage_tasks,manage_calendar,manage_notes.
 KEEP = {
     "ask_user",
     "update_plan",
-    "manage_tasks",     # action items -> tasks
-    "manage_calendar",  # action items with dates -> calendar (CalDAV)
-    "manage_notes",
 }
 # Built-in MCP servers whose tools are hidden from the model.
 BUILTIN_MCP_OFF = {"email", "builtin_browser", "image_gen"}
