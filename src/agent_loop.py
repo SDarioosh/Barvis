@@ -9087,6 +9087,12 @@ def _web_search_unavailable_for_turn(
     """
     if "web" not in set(intent_domains or ()):
         return False
+    # Words like "latest" or "recommend" classify as web intent, but an
+    # admin-trusted local knowledge server (src/mcp_trust.py) may answer them.
+    # Let the model try those tools instead of refusing without a model call.
+    from src.mcp_trust import trusted_readonly_mcp_tools
+    if trusted_readonly_mcp_tools() - set(disabled_tools or ()):
+        return False
     # Mentioning web only to forbid its use is not affirmative web demand.
     # Keep the web tools disabled, but let the normal model-only path answer
     # instead of claiming the request cannot proceed without web access.
