@@ -492,6 +492,13 @@ VARIABLE_NOTES: dict[str, tuple[str, str, str]] = {
         "tools that execute code, mutate state or cause external side effects need "
         "a separate approval. Set to 0 to opt out.",
     ),
+    # Barvis: trusted read-only MCP servers (src/mcp_trust.py)
+    "ODYSSEUS_TRUSTED_READONLY_MCP": (
+        "Agent loop and tool execution", USER,
+        "Security-relevant. Comma-separated MCP server names or ids whose tools "
+        "declare `readOnlyHint: true` run without per-call approval. Empty by "
+        "default.",
+    ),
     "ODYSSEUS_MCP_ALLOWED_COMMANDS": (
         "Agent loop and tool execution", USER,
         "Security-relevant. Comma-separated allowlist of MCP launcher basenames the "
