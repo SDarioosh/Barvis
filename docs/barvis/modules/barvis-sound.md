@@ -1,0 +1,110 @@
+# Module: barvis-sound
+
+- Repo: [SDarioosh/barvis-sound](https://github.com/SDarioosh/barvis-sound) (renamed from
+  `barvis-ai`; older docs call it "convo-ai"). Default branch `main`.
+- Agent guide: [AGENTS.md](https://github.com/SDarioosh/barvis-sound/blob/main/AGENTS.md).
+  Server docs: [server/README.md](https://github.com/SDarioosh/barvis-sound/blob/main/server/README.md).
+- Contract it follows: [../modules.md](../modules.md).
+
+Code identifiers keep the old name: the Python package `convo_server`, the CLI
+`convo-server`, `CONVO_*` env vars, the MCP server name `convo-ai`, and the Barvis server
+name `convo`. Don't rename them.
+
+## What it provides
+
+Wearables record conversations (Amazfit T-Rex 3 Pro watch app now; a XIAO ESP32-S3
+pendant planned; an Omi pendant later). The barvis-sound server on the owner's machine
+detects speech (Silero VAD), transcribes (whisper.cpp), identifies speakers, splits
+recordings into conversations, and summarizes them with the local LLM (title, summary,
+key points, action items, people, topics, facts, daily digest). Everything is stored in
+SQLite (`server/data/convo.db`) and exposed through an MCP server.
+
+## Tools
+
+Source: `server/convo_server/mcp_server.py` (`build_mcp`).
+
+| Tool | Arguments | Annotations |
+|---|---|---|
+| `search_transcripts` | `speaker`, `query`, `since`, `until`, `limit` | read-only |
+| `search_conversations` | `query`, `person`, `since`, `until`, `limit` | read-only |
+| `get_conversation` | `conversation_id` | read-only |
+| `get_transcript` | `conversation_id`, `start_seconds`, `end_seconds`, `max_lines` | read-only |
+| `list_action_items` | `status` (open/done/dismissed/all), `person`, `since`, `until` | read-only |
+| `list_facts` | `subject`, `query`, `limit` | read-only |
+| `get_daily_digest` | `date` | read-only |
+| `list_people` | — | read-only |
+| `update_action_item` | `item_id`, `status` (open/done/dismissed) | **write** |
+| `name_speaker` | `conversation_id`, `speaker_label`, `name`, `remember_voice` | **write** |
+
+- Read-only tools: `readOnlyHint: true`, `openWorldHint: false`. With `convo` in
+  `ODYSSEUS_TRUSTED_READONLY_MCP`, Barvis runs them without approval.
+- Write tools: `readOnlyHint: false`, `destructiveHint: false`, `idempotentHint: true`,
+  `openWorldHint: false`. They keep Barvis' normal approval. `name_speaker` renames the
+  speaker's lines, redoes the summary and (with `remember_voice`) stores the voice.
+- Dates are `YYYY-MM-DD` in `CONVO_TIMEZONE`.
+- Links in results have the form `<CONVO_PUBLIC_URL>/view/<conversation_id>?sig=…#t=<seconds>`:
+  a signed HTML transcript page that opens in a phone browser without a token. Rotating
+  `CONVO_INGEST_TOKEN` revokes all links.
+- Every non-empty result asks the model to put the link next to each fact used.
+
+## Connect it
+
+Environment for the MCP server (read from the environment or `server/.env`):
+
+| Variable | Meaning |
+|---|---|
+| `CONVO_INGEST_TOKEN` | required; also the key that signs transcript links |
+| `CONVO_DATA_DIR` | data directory holding `convo.db` |
+| `CONVO_TIMEZONE` | timezone for dates (default `UTC`) |
+| `CONVO_PUBLIC_URL` | base URL of links; use the address the phone reaches (Tailscale IP) |
+| `CONVO_MCP_TOKEN` | HTTP only; ≥ 16 chars, separate from the ingest token |
+| `CONVO_MCP_HOST`, `CONVO_MCP_PORT` | HTTP only; default `127.0.0.1`, `8001` |
+
+**stdio** (Barvis running natively, e.g. the test instance): in Settings > MCP add a
+stdio server named `convo`, command `<barvis-sound>/server/.venv/bin/convo-server`, args
+`["mcp"]`, with the `CONVO_*` environment above.
+
+**Streamable HTTP** (Barvis in Docker):
+
+```bash
+cd server
+CONVO_MCP_TOKEN=... CONVO_MCP_HOST=172.17.0.1 .venv/bin/convo-server mcp --http   # docker bridge IP
+```
+
+Then add an HTTP server named `convo` with URL
+`http://host.docker.internal:8001/mcp?access_token=<CONVO_MCP_TOKEN>`.
+
+Then, per [../modules.md](../modules.md#registering-a-module-in-barvis):
+
+1. `ODYSSEUS_TRUSTED_READONLY_MCP=convo`, restart Barvis.
+2. `python scripts/barvis_setup.py --url http://127.0.0.1:7010 --password-file <file>`.
+3. Paste the server's `INSTRUCTIONS` text (top of `mcp_server.py`) into a Custom preset
+   system prompt.
+
+## Eval and current score
+
+- Script: `server/eval/bakeoff.py` in barvis-sound. Seed fictional data first with
+  `server/scripts/seed_demo.py` using the same `CONVO_DATA_DIR`.
+- 20 questions; a question passes when the frontend called a convo tool, cited a link to
+  the right conversation, and the answer has the expected fact.
+- Barvis run: `python eval/bakeoff.py --frontend odysseus` from `server/`, with
+  `ODYSSEUS_URL` (default `http://127.0.0.1:7010`), `ODYSSEUS_USER`, and
+  `ODYSSEUS_PASSWORD`, `ODYSSEUS_PASSWORD_FILE` or `ODYSSEUS_API_TOKEN`; optional
+  `ODYSSEUS_PRESET` (default `custom`) and `ODYSSEUS_APPROVAL`.
+- Results: `server/eval/results/odysseus.jsonl` (gitignored).
+
+| Frontend (same model, same MCP server) | Score |
+|---|---|
+| upstream Odysseus | 3/20 |
+| Barvis, PR SDarioosh/Barvis#1 | 9/20 (right fact 18/20, link cited 9/20) |
+| tuned Hermes Agent | 15/20 |
+
+**Target: ≥ 15/20.** Remaining failures: answers with the right fact but no transcript
+link, and 2 replies that were just "Done." because the model returned empty text after
+its tool calls. Full analysis: barvis-sound
+[docs/frontend-decision.md](https://github.com/SDarioosh/barvis-sound/blob/main/docs/frontend-decision.md).
+
+## Known gaps against the contract
+
+- No test yet asserts the annotation of every tool (required by
+  [../modules.md](../modules.md#interface-mcp-server)).
