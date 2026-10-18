@@ -144,30 +144,41 @@ Results go to `server/eval/results/<frontend>.jsonl`. They hold only fictional d
 data, so they can be pasted into PRs. Barvis' log (`$SBX/logs/barvis.log`) shows each
 tool call, approval and MCP error.
 
-Sandbox runs on questions 1, 4, 16 (one run each, so ±1 is noise at this size):
+Sandbox baseline (2026-10-18, questions 1, 4, 16): raw 1/3, Barvis over HTTP 1/3. Audio
+check: Silero VAD found 8.1 s of speech in the JFK clip and whisper.cpp transcribed it.
 
-| Date | Barvis | Score | Approvals for read-only tools |
-|---|---|---|---|
-| 2026-10-18 | baseline (`barvis` before the annotations fix) | 1/3, then 2/3 on a rerun | 1 per question that called a tool |
-| 2026-10-18 | HTTP annotations fix | 3/3 | 0 |
+whisper-server is only needed for the audio check: `seed_demo.py` inserts transcripts
+directly, so an eval-only session can skip building whisper.cpp.
 
-Raw (no Barvis) baseline: 1/3. With the fix, question 4 took 197 s instead of 971 s:
-no approval round trip, and the model needed fewer rounds.
+Count approvals in a run with `grep -c "Exact approval required" $SBX/logs/barvis.log`;
+`bakeoff.py` also prints `(odysseus: N tool approval(s) auto-accepted)` per question.
 
-Audio check (2026-10-18): Silero VAD found 8.1 s of speech in the JFK clip and whisper.cpp transcribed it.
+### HTTP annotation fix (finding 1), 2026-10-18
+
+Same stack, same seed, questions 1, 4, 16, Barvis restarted between the runs:
+
+| | score | approval prompts | `Exact approval required` lines | tool calls | time |
+|---|---|---|---|---|---|
+| before | 2/3 | 2 | 2 | 2 | 563 s |
+| after | 2/3 | 0 | 0 | 2 | 399 s |
+
+The score doesn't move here because `bakeoff.py` auto-accepts approvals. Each approval
+made Barvis redo the model round that produced the call (~1–2 min on CPU), which is where
+the time went. Question 16 fails in both runs: the 4B model answers without calling a
+tool. Small runs vary: the same questions scored 1/3 in the first baseline.
 
 ## Findings from the first sandbox run
 
-These are real bugs, not sandbox quirks. 1–3 are Barvis bugs (tracked in
+These are real bugs, not sandbox quirks. 1–3 and 5 are Barvis bugs (tracked in
 [roadmap.md](roadmap.md)); 4 is a barvis-sound bug (tracked in its `PROGRESS.md`).
 
-1. **HTTP MCP servers lose their annotations.** `_connect_http` in `src/mcp_manager.py`
-   stores each tool without `annotations` (the stdio and SSE paths keep them). So
-   `src/mcp_trust.py` sees no `readOnlyHint`, and every read-only call over HTTP needs
-   approval ("Exact approval required before tool start"). The owner's Docker setup
-   uses HTTP, so this affects the server too. General fix, offer upstream.
-   **Fixed** (one line in `_connect_http`, test `tests/test_mcp_http_annotations.py`):
-   in the sandbox, read-only barvis-sound tools over HTTP now run with no approval.
+1. **Fixed: HTTP MCP servers lose their annotations.** `_connect_http` in
+   `src/mcp_manager.py` stored each tool without `annotations` (the stdio and SSE paths
+   keep them). So `src/mcp_trust.py` saw no `readOnlyHint`, and every read-only call over
+   HTTP needed approval ("Exact approval required before tool start"). The owner's Docker
+   setup uses HTTP, so this affected the server too. Fixed with one line; results in
+   [HTTP annotation fix](#http-annotation-fix-finding-1-2026-10-18). Upstream issue to
+   file.
 2. **Stdio MCP servers added over the API fail on every call** in the sandbox:
    `MCP tool call failed: <name>:` with an empty message and `exit_code=1`, while the
    same server works from the same `mcp` client library outside Barvis. Use HTTP until
@@ -178,6 +189,11 @@ These are real bugs, not sandbox quirks. 1–3 are Barvis bugs (tracked in
    conversation is summarized, it is marked `failed`, and `convo-server summarize-pending`
    only retries `pending` conversations (`Pipeline.summarize_pending`). The conversation
    keeps its transcript but never gets a summary, title or action items.
+5. **Repeating output becomes "Model request failed".** When the model repeats itself,
+   Barvis aborts the stream (`[degenerate-stream] aborting … repeated an exact 69-token
+   block twice` in the log) and the answer starts with "The task is incomplete: Model
+   request failed." (question 4, first run). Seen once, with the 4B model; not yet
+   checked whether it happens with the server model.
 
 ## Server verification
 
