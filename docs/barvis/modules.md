@@ -88,6 +88,74 @@ name heuristic. So:
 - Long results are paged with explicit arguments (e.g. `start_seconds`) and say how to
   get more.
 
+### Slash skill
+
+Each module gets one slash command in Barvis, e.g. `/sound <question>`, plus a share
+of `/context <question>` (every trusted module). For that one message, the model is
+offered only the module's tools (plus `ask_user`/`update_plan`), so a small model
+finds them among Odysseus' ~130 tools. Mechanism: a Barvis skill whose
+`requires_toolsets` is `mcp:<server name>`; see
+[deploy.md](deploy.md#features-and-modules) and `src/skill_invocation.py`.
+
+What the module ships:
+
+- **The skill text is the module's MCP `instructions`.** The module owns it, in its
+  own repo (barvis-sound: `INSTRUCTIONS` in `server/convo_server/mcp_server.py`). Write
+  it so it works as a procedure: which tool for which question, dates as
+  `YYYY-MM-DD`, and "put the link next to each fact". Paragraphs or list items become
+  the skill's procedure steps.
+- **The module doc names the skill and the server**, e.g. "skill `sound`, server
+  `convo`". Pick a short, unused name; it must not clash with an Odysseus slash
+  command or skill.
+- Barvis' `scripts/barvis_setup.py` creates or updates the skill (source `managed`, no
+  skill audit) from the Custom preset text, or from `--skill-text <skill>=<file>`. To
+  change the text, change the module's instructions and the preset, then rerun setup.
+  Never copy Barvis code into the module for this; it is configuration.
+- Changing the skill's name is a contract change for users (it's what they type).
+  Treat it like a tool rename (see "Versioning").
+
+### Shared search (planned)
+
+Goal: one `context` search tool that asks every module at once and merges the hits.
+Until it exists, `/context` offers every module's tools and the model calls each
+search tool. So that a later aggregator can call every module the same way, each
+module's main search tool should accept and return the following. This is contract
+text only; no module or Barvis code implements the aggregator yet.
+
+**Arguments** (all optional except `query`; extra module-specific arguments are fine):
+
+| Argument | Type | Meaning |
+|---|---|---|
+| `query` | string | free-text search; may be empty when `person` or dates are given |
+| `since` | string `YYYY-MM-DD` | from this date (inclusive), module timezone |
+| `until` | string `YYYY-MM-DD` | to this date (inclusive), module timezone |
+| `person` | string | a person's name as the user says it ("Emily"); the module matches its own people/speakers |
+| `limit` | integer | maximum hits (default about 10) |
+
+barvis-sound's `search_conversations` already has `query`, `person`, `since`, `until`,
+`limit`. `since`/`until` match its existing names; an aggregator maps "from/to" to them.
+
+**Result** (compact text, one hit per block, best first):
+
+```
+<title> (<YYYY-MM-DD HH:MM>, <person>, <person>)
+<one or two sentences: the relevant part, quoted or summarized>
+link: <source link that opens this item at the right place>
+```
+
+- Every hit has a date and a link (the module's usual source link, e.g. barvis-sound's
+  signed transcript link with `#t=<seconds>`). No hit without a link.
+- The result ends with the usual citation rule ("put the link next to each fact").
+- No hits: one line saying so ("No conversations found."), so the aggregator can tell
+  "nothing" from an error.
+- Errors (bad date, module down) come back as a readable result line, not a protocol
+  error, so one module failing doesn't fail the whole search.
+- The tool is `readOnlyHint: true`.
+
+A module adds a `context_search` tool (or marks its existing search tool) once the
+aggregator is designed; until then, matching argument names and the result shape is
+enough.
+
 ## Registering a module in Barvis
 
 Do this in the sandbox stack first ([sandbox.md](sandbox.md)); the owner repeats it on
@@ -103,14 +171,17 @@ the server's test instance (`127.0.0.1:7010`), then on production (port 7000) pe
    (comma separated, e.g. `ODYSSEUS_TRUSTED_READONLY_MCP=convo,<next>`) in `.env` or
    `docker-compose.override.yml` (production), then restart. Write tools keep normal
    approval.
-4. **Run `scripts/barvis_setup.py`** (`--dry-run` first). It checks that the module's
-   server is connected and sets "Auto" tool mode, leaving every Odysseus tool on.
-   `--trim` gives the old memory-only tool set with "Regular tools". Known gap: with
-   every tool on, "Auto" doesn't offer module tools yet, and "Regular tools" overflows
-   a 32k context ([sandbox.md](sandbox.md#all-odysseus-tools-on-2026-10-18)).
-5. **Add instructions to the preset:** paste the module's usage instructions (its MCP
+4. **Add instructions to the preset:** paste the module's usage instructions (its MCP
    `instructions` text) into a Custom preset system prompt, because Odysseus doesn't
-   forward them.
+   forward them. The next step also uses this text for the module's slash skill.
+5. **Run `scripts/barvis_setup.py`** (`--dry-run` first). It checks that the module's
+   server is connected, sets "Auto" tool mode leaving every Odysseus tool on, and
+   creates the module's slash skill (`--module-skill <skill>=<server>`, e.g.
+   `sound=convo`) and the shared `/context` skill. See
+   [Slash skill](#slash-skill). `--trim` gives the old memory-only tool set with
+   "Regular tools". With every tool on, plain questions in "Auto" don't reach module
+   tools; `/sound` and `/context` do
+   ([sandbox.md](sandbox.md#slash-skills-2026-10-18)).
 6. **Run the module's eval** (see "Eval harness"): a few questions in the sandbox, the
    full run by the owner on the server. Record the server score in the module doc.
 7. **Document it:** add `docs/barvis/modules/<name>.md` (copy the structure of
@@ -174,10 +245,15 @@ in `build_mcp`) on every contract change.
 - [ ] Tool names and descriptions as in "Interface: MCP server"; no clash with Odysseus built-ins.
 - [ ] Correct `readOnlyHint` / `destructiveHint` on every tool, with a test.
 - [ ] Every result fact has a source link; non-empty results carry the citation rule.
+- [ ] MCP `instructions` written to work as the slash skill's procedure; the module doc
+      names the skill (e.g. `sound`) and server.
+- [ ] Main search tool follows [Shared search (planned)](#shared-search-planned):
+      `query`, `since`, `until`, `person`, `limit`; dated hits with links.
 - [ ] Eval script with fictional seed data, a `--frontend odysseus` mode and a target
       score.
 - [ ] Registered in the sandbox stack, then on the server's test instance: MCP server added, name in
-      `ODYSSEUS_TRUSTED_READONLY_MCP`, `barvis_setup.py` run, preset instructions added.
+      `ODYSSEUS_TRUSTED_READONLY_MCP`, preset instructions added, `barvis_setup.py` run
+      with `--module-skill <skill>=<server>` (slash skill created).
 - [ ] Eval run against Barvis; score recorded.
 - [ ] `docs/barvis/modules/<name>.md`, the table above, and
       [architecture.md](architecture.md) updated.

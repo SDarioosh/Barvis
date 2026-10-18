@@ -81,10 +81,28 @@ Then, per [../modules.md](../modules.md#registering-a-module-in-barvis):
 
 1. `ODYSSEUS_TRUSTED_READONLY_MCP=convo`, restart Barvis (production: already in
    `docker-compose.override.yml`, see [../deploy.md](../deploy.md#features-and-modules)).
-2. `python scripts/barvis_setup.py --url http://127.0.0.1:7010 --password-file <file>`
-   (sandbox, or the server's test instance; on production `barvis_deploy.sh` runs it).
-3. Paste the server's `INSTRUCTIONS` text (top of `mcp_server.py`) into a Custom preset
+2. Paste the server's `INSTRUCTIONS` text (top of `mcp_server.py`) into a Custom preset
    system prompt.
+3. `python scripts/barvis_setup.py --url http://127.0.0.1:7010 --password-file <file>`
+   (sandbox, or the server's test instance; on production `barvis_deploy.sh` runs it).
+   It creates the `/sound` and `/context` skills from that preset text.
+
+## Slash skill: `/sound`
+
+- Skill **`sound`**, server **`convo`**: `/sound <question>` gives that one message
+  barvis-sound's 10 tools (plus `ask_user`/`update_plan`) and nothing else. `/context
+  <question>` does the same for every trusted module (today only `convo`).
+- The skill's procedure is `INSTRUCTIONS` from `server/convo_server/mcp_server.py`, the
+  same text as the Custom preset. barvis-sound owns it: change it there, update the
+  preset, rerun `barvis_setup.py`.
+- Needed because with every Odysseus tool on and "Auto", a plain recording question
+  is routed to built-ins (calendar, files) and never sees a convo tool. Sandbox
+  numbers: [../sandbox.md](../sandbox.md#slash-skills-2026-10-18).
+- Examples: `/sound what did Alice say about the budget in September?`,
+  `/context what did Maria ask me to do on Friday?` The model gets today's date on
+  every turn, so relative dates work.
+- Write tools (`update_action_item`, `name_speaker`) are offered on `/sound` turns and
+  still ask for approval.
 
 ## Eval and current score
 
@@ -115,5 +133,9 @@ its tool calls. Full analysis: barvis-sound
 
 - No test yet asserts the annotation of every tool (required by
   [../modules.md](../modules.md#interface-mcp-server)).
-- Barvis drops annotations for HTTP MCP servers, so `convo`'s read-only tools still ask
-  for approval over HTTP ([../sandbox.md](../sandbox.md#findings-from-the-first-sandbox-run)).
+- Plain questions (no `/sound` or `/context`) don't reach the convo tools when every
+  Odysseus tool is on ([../roadmap.md](../roadmap.md)).
+- A malformed date argument (e.g. `'2026-09-30”,'` from the 4B sandbox model) makes
+  `search_conversations` raise instead of returning a readable error, so Barvis only
+  sees `exit_code=1` and the model reports a vague failure. A barvis-sound fix, listed
+  under "Next" in SDarioosh/Barvis#9.
