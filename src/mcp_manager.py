@@ -395,6 +395,8 @@ class McpManager:
                     "name": tool.name,
                     "description": tool.description or "",
                     "input_schema": tool.inputSchema if hasattr(tool, "inputSchema") else {},
+                    # Barvis: keep annotations like stdio/SSE; src/mcp_trust.py needs readOnlyHint
+                    "annotations": getattr(tool, "annotations", None),
                 })
 
             self._sessions[server_id] = session
