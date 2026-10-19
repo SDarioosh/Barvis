@@ -113,6 +113,59 @@ async function loadWho() {
   }
 }
 
+// ----------------------------------------------------------------- action items
+// Live from barvis-sound (no copies in Odysseus): Done / Dismiss call its
+// update_action_item and the list is read again.
+function itemCard(it) {
+  const msg = el('span', { className: 'bs-meta' });
+  const set = async (status) => {
+    buttons.forEach((b) => { b.disabled = true; });
+    try {
+      const r = await api(`/api/barvis/sound/action-items/${it.id}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      });
+      if (r.ok) {
+        card.remove();
+        return;
+      }
+      msg.textContent = r.message;
+    } catch (e) {
+      msg.textContent = `Could not save: ${e.message}`;
+    }
+    buttons.forEach((b) => { b.disabled = false; });
+  };
+  const buttons = [
+    el('button', { type: 'button', className: 'bs-btn primary', onclick: () => set('done') }, 'Done'),
+    el('button', { type: 'button', className: 'bs-btn', onclick: () => set('dismissed') }, 'Dismiss'),
+  ];
+  const link = safeLink(it.link);
+  const card = el('div', { className: 'bs-card' },
+    el('h2', {}, it.text),
+    el('div', { className: 'bs-meta' },
+      [it.due ? `due ${it.due}` : null, it.owner ? `owner ${it.owner}` : null,
+       `from “${it.conversation_title}”, ${it.when}`].filter(Boolean).join(' · ')),
+    el('div', { className: 'bs-row' }, ...buttons,
+      link ? el('a', { className: 'bs-link', href: link, target: '_blank', rel: 'noopener' },
+        el('span', { html: OPEN_ICON }), 'Where it was said') : null,
+      msg));
+  return card;
+}
+
+async function loadItems() {
+  const box = $('#bs-items');
+  try {
+    const { action_items: items } = await api('/api/barvis/sound/action-items?status=open');
+    if (!items.length) {
+      status(box, 'No open action items.');
+      return;
+    }
+    box.replaceChildren(...items.map(itemCard));
+  } catch (e) {
+    status(box, e.message, true);
+  }
+}
+
 // ---------------------------------------------------------------- conversations
 function convCard(c) {
   const link = safeLink(c.link);
@@ -123,7 +176,7 @@ function convCard(c) {
     c.summary ? el('p', { className: 'bs-summary' }, c.summary) : null,
     link ? el('div', { className: 'bs-row' },
       el('a', { className: 'bs-link', href: link, target: '_blank', rel: 'noopener' },
-        el('span', { html: OPEN_ICON }), ' Transcript')) : null);
+        el('span', { html: OPEN_ICON }), 'Transcript')) : null);
 }
 
 async function loadList() {
@@ -152,7 +205,9 @@ $('#bs-filter').addEventListener('submit', (e) => {
 });
 $('#bs-refresh').addEventListener('click', () => {
   loadWho();
+  loadItems();
   loadList();
 });
 loadWho();
+loadItems();
 loadList();

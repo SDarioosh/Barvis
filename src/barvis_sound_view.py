@@ -22,6 +22,11 @@ _UNNAMED = re.compile(
     r"^- (?P<label>.+?) in \"(?P<title>.*)\" (?P<when>\d{4}-\d{2}-\d{2} \d{2}:\d{2}) "
     r"\(conversation id (?P<conv>[^)]+)\), (?P<lines>\d+) lines"
     r"(?:; sounds like (?P<guess>.+) \((?P<score>[0-9.]+)\))?$")
+_ITEM = re.compile(
+    r"^- #(?P<id>\d+) \[(?P<status>open|done|dismissed)\] (?P<rest>.*) — from "
+    r"\"(?P<title>.*)\" (?P<when>\d{4}-\d{2}-\d{2} \d{2}:\d{2}) (?P<link>\S+)$")
+_DUE = re.compile(r" due (?P<due>.+)$")
+_OWNER = re.compile(r" \(owner (?P<owner>[^)]*)\)$")
 _QUOTE = re.compile(r"^#(?P<id>\d+) \"(?P<text>.*)\" (?P<link>https?://\S+)$")
 
 
@@ -53,6 +58,34 @@ class UnnamedSpeaker:
     guess: str | None = None
     guess_score: float | None = None
     quotes: list[Quote] = field(default_factory=list)
+
+
+@dataclass
+class ActionItem:
+    id: int
+    status: str
+    text: str
+    owner: str | None
+    due: str | None  # "2026-10-23 (Friday)" or as said
+    conversation_title: str
+    when: str
+    link: str
+
+
+def parse_action_items(text: str) -> list[ActionItem]:
+    out = []
+    for raw in (text or "").splitlines():
+        m = _ITEM.match(raw.strip())
+        if not m:
+            continue
+        rest, due, owner = m["rest"], None, None
+        if d := _DUE.search(rest):
+            due, rest = d["due"], rest[:d.start()]
+        if o := _OWNER.search(rest):
+            owner, rest = o["owner"], rest[:o.start()]
+        out.append(ActionItem(int(m["id"]), m["status"], rest.strip(), owner, due,
+                              m["title"], m["when"], m["link"]))
+    return out
 
 
 def parse_conversations(text: str) -> list[Conversation]:
@@ -126,3 +159,16 @@ async def name_speaker(call: CallTool, conversation_id: str, speaker_label: str,
     return await call("name_speaker", {"conversation_id": conversation_id,
                                        "speaker_label": speaker_label, "name": name,
                                        "remember_voice": True})
+
+
+async def action_items(call: CallTool, status: str = "open") -> list[dict]:
+    if status not in {"open", "done", "dismissed", "all"}:
+        raise ValueError("status must be open, done, dismissed or all")
+    return as_dicts(parse_action_items(await call("list_action_items", {"status": status})))
+
+
+async def set_action_item(call: CallTool, item_id: int, status: str) -> str:
+    """The module stays the source of truth: this is its own update_action_item."""
+    if status not in {"open", "done", "dismissed"}:
+        raise ValueError("status must be open, done or dismissed")
+    return await call("update_action_item", {"item_id": int(item_id), "status": status})

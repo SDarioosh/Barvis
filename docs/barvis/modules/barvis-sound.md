@@ -113,9 +113,11 @@ Then, per [../modules.md](../modules.md#registering-a-module-in-barvis):
 
 ## Conversations page
 
-`/barvis/sound` (sidebar: **Conversations**, admin only) shows the module's
-conversations and a "who is this?" card for every unnamed speaker. It calls
-`search_conversations`, `list_unnamed_speakers` and `name_speaker` through the MCP
+`/barvis/sound` (sidebar: **Conversations**, admin only) shows open action items live
+(Done / Dismiss call `update_action_item`; Odysseus keeps no copy), the module's
+conversations, and a "who is this?" card for every unnamed speaker. It calls
+`list_action_items`, `update_action_item`, `search_conversations`,
+`list_unnamed_speakers` and `name_speaker` through the MCP
 manager and parses their result lines (`src/barvis_sound_view.py`, test
 `tests/test_barvis_sound_view.py`); change those line shapes together with the parser.
 `BARVIS_SOUND_SERVER` names the server (default `convo`). Transcripts open the module's

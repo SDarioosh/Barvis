@@ -38,8 +38,7 @@
     .bs-filters { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr auto; gap: 8px; }
     .bs-empty, .bs-status { font-size: 0.85rem; opacity: 0.7; padding: 6px 0; }
     .bs-status.error { color: var(--red); opacity: 1; }
-    .bs-link { color: var(--fg); }
-    .bs-link svg { vertical-align: -2px; }
+    .bs-link { color: var(--fg); display: inline-flex; align-items: center; gap: 4px; }
     @media (max-width: 640px) { .bs-filters { grid-template-columns: 1fr 1fr; } }
   </style>
 </head>
@@ -56,6 +55,9 @@
 
     <div class="bs-section" id="bs-who-title">Who is this?</div>
     <div id="bs-who"><div class="bs-status">Loading…</div></div>
+
+    <div class="bs-section">Action items</div>
+    <div id="bs-items"><div class="bs-status">Loading…</div></div>
 
     <div class="bs-section">Recorded conversations</div>
     <form class="bs-filters" id="bs-filter">

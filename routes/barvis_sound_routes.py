@@ -5,8 +5,13 @@
 * ``GET  /api/barvis/sound/conversations``  (query, person, since, until, limit)
 * ``GET  /api/barvis/sound/unnamed``        (limit)
 * ``POST /api/barvis/sound/name-speaker``   {conversation_id, speaker_label, name}
+* ``GET  /api/barvis/sound/action-items``   (status)
+* ``POST /api/barvis/sound/action-items/{id}`` {status}
 
-All three go through the module's MCP tools (``src/barvis_sound_view.py``); the module's
+Action items are shown live from the module (no copies in Odysseus); Done/Dismiss call
+the module's ``update_action_item``.
+
+All of them go through the module's MCP tools (``src/barvis_sound_view.py``); the module's
 database is never touched. Admin only: the data is the owner's recordings, and the MCP
 server is admin-configured. Naming a speaker from a card is the user's explicit action,
 so it doesn't go through the chat approval card.
@@ -27,6 +32,10 @@ from src import barvis_sound_view as view
 logger = logging.getLogger(__name__)
 
 SERVER_ENV = "BARVIS_SOUND_SERVER"
+
+
+class ItemStatus(BaseModel):
+    status: str = Field(pattern="^(open|done|dismissed)$")
 
 
 class NameSpeaker(BaseModel):
@@ -83,5 +92,18 @@ def setup_barvis_sound_routes() -> APIRouter:
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
         return {"ok": not message.startswith("No lines"), "message": message}
+
+    @router.get("/api/barvis/sound/action-items", dependencies=[Depends(require_admin)])
+    async def action_items(status: str = "open") -> dict[str, Any]:
+        try:
+            return {"action_items": await view.action_items(_caller(), status)}
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+
+    @router.post("/api/barvis/sound/action-items/{item_id}",
+                 dependencies=[Depends(require_admin)])
+    async def set_action_item(item_id: int, body: ItemStatus) -> dict[str, Any]:
+        message = await view.set_action_item(_caller(), item_id, body.status)
+        return {"ok": message.startswith("Action item"), "message": message}
 
     return router

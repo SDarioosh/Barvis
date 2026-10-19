@@ -40,6 +40,19 @@ def test_parse_unnamed():
     assert view.parse_unnamed("No unnamed speakers found.") == []
 
 
+ITEMS = """2 open action items (times are UTC). When answering, put the link next to each fact you use:
+- #12 [open] Send Alice the revised spreadsheet (owner Me) due 2026-09-19 (Friday) — from "Q4 budget" 2026-09-15 10:00 http://h:8000/view/a?sig=x#t=40
+- #13 [open] Pick up Aunt Rosa — from "Dinner plans" 2026-10-16 20:00 http://h:8000/view/b?sig=y#t=16"""
+
+
+def test_parse_action_items():
+    a, b = view.parse_action_items(ITEMS)
+    assert (a.id, a.text, a.owner, a.due) == (
+        12, "Send Alice the revised spreadsheet", "Me", "2026-09-19 (Friday)")
+    assert (b.text, b.owner, b.due, b.link) == (
+        "Pick up Aunt Rosa", None, None, "http://h:8000/view/b?sig=y#t=16")
+
+
 class FakeManager:
     _connections = {"srv1": {"name": "convo", "status": "connected"}}
 
@@ -49,7 +62,11 @@ class FakeManager:
     async def call_tool(self, name, args):
         self.calls.append((name, args))
         tool = name.split("__")[-1]
+        if tool == "update_action_item":
+            return {"stdout": f"Action item #{args['item_id']} is now {args['status']}.",
+                    "exit_code": 0}
         out = {"search_conversations": CONVS, "list_unnamed_speakers": UNNAMED,
+               "list_action_items": ITEMS,
                "name_speaker": "Renamed 4 lines from Speaker 1 to Ben; the summary will be redone."}
         return {"stdout": out[tool], "exit_code": 0}
 
@@ -87,6 +104,19 @@ def test_routes_call_only_module_tools(client):
     assert client.post("/api/barvis/sound/name-speaker",
                        json={"conversation_id": "c3", "speaker_label": "Speaker 1",
                              "name": ""}).status_code == 422
+
+
+def test_action_items_are_live_from_the_module(client):
+    r = client.get("/api/barvis/sound/action-items")
+    assert [i["id"] for i in r.json()["action_items"]] == [12, 13]
+    assert client.manager.calls[-1] == ("mcp__srv1__list_action_items", {"status": "open"})
+    r = client.post("/api/barvis/sound/action-items/12", json={"status": "done"})
+    assert r.json() == {"ok": True, "message": "Action item #12 is now done."}
+    assert client.manager.calls[-1] == ("mcp__srv1__update_action_item",
+                                        {"item_id": 12, "status": "done"})
+    assert client.post("/api/barvis/sound/action-items/12",
+                       json={"status": "deleted"}).status_code == 422
+    assert client.get("/api/barvis/sound/action-items?status=bogus").status_code == 400
 
 
 def test_module_not_connected(client):
