@@ -125,3 +125,91 @@ def test_trusted_read_is_not_an_unverified_external_effect(manager, monkeypatch)
     assert classify(_mcp_capture("mcp__srv1__name_speaker"))["external"] is True
     monkeypatch.delenv(mcp_trust.TRUSTED_READONLY_MCP_ENV)
     assert classify(_mcp_capture(SEARCH))["external"] is True
+
+
+@pytest.fixture
+def no_disables(monkeypatch):
+    from src import skill_mcp_toolsets
+    disabled = {}
+    monkeypatch.setattr(skill_mcp_toolsets, "_disabled_map", lambda: disabled)
+    return disabled
+
+
+def test_follow_up_gets_the_used_trusted_servers_other_tools(manager, monkeypatch, no_disables):
+    """'Speaker 2 was Jenn' after a /sound search must be offered name_speaker."""
+    monkeypatch.setenv(mcp_trust.TRUSTED_READONLY_MCP_ENV, "convo")
+    warm = mcp_trust.with_trusted_server_tools({SEARCH, "manage_notes"})
+    assert {"mcp__srv1__name_speaker", "mcp__srv1__get_transcript", "manage_notes"} <= warm
+    assert "mcp__srv2__search_web" not in warm
+
+
+def test_follow_up_expansion_respects_trust_and_disables(manager, monkeypatch, no_disables):
+    monkeypatch.setenv(mcp_trust.TRUSTED_READONLY_MCP_ENV, "other")
+    assert mcp_trust.with_trusted_server_tools({SEARCH}) == {SEARCH}
+    monkeypatch.delenv(mcp_trust.TRUSTED_READONLY_MCP_ENV)
+    assert mcp_trust.with_trusted_server_tools({SEARCH}) == {SEARCH}
+    monkeypatch.setenv(mcp_trust.TRUSTED_READONLY_MCP_ENV, "convo")
+    no_disables["srv1"] = ["name_speaker"]
+    assert "mcp__srv1__name_speaker" not in mcp_trust.with_trusted_server_tools({SEARCH})
+    # Nothing from the server ran yet: nothing is added.
+    assert mcp_trust.with_trusted_server_tools({"manage_notes"}) == {"manage_notes"}
+
+
+def test_follow_up_contract_offers_write_tool_but_does_not_grant_it(manager, monkeypatch,
+                                                                    no_disables):
+    from src.turn_contract import resolve_turn_contract
+    monkeypatch.setenv(mcp_trust.TRUSTED_READONLY_MCP_ENV, "convo")
+    schemas = [{"type": "function", "function": {"name": f"mcp__srv1__{t['name']}",
+                                                 "parameters": {"type": "object"}}}
+               for t in manager._tools["srv1"]]
+    message = 'Speaker 1 and 3 was "Shahyah", speaker 2 was "Jenn"'
+    contract = resolve_turn_contract(
+        capabilities=(), schemas=schemas, policy=ToolPolicy(), message=message,
+        warm_tools=mcp_trust.with_trusted_server_tools({SEARCH}))
+    assert "mcp__srv1__name_speaker" in contract.offered
+    auth = create_request_authority(message, owner="alice", session_id="s", policy=ToolPolicy())
+    assert not auth.permits(ExactOperation.normalize("mcp__srv1__name_speaker", "{}"))
+
+
+def _approval(tool, allow_remaining=True):
+    return SimpleNamespace(pending=SimpleNamespace(tool_name=tool),
+                           allow_remaining_actions=allow_remaining)
+
+
+RENAME = "mcp__srv1__name_speaker"
+
+
+def _rename(label, name):
+    return ExactOperation.normalize(RENAME, f'{{"speaker_label":"{label}","name":"{name}"}}')
+
+
+def test_approved_trusted_tool_runs_again_in_the_resumed_task(manager, monkeypatch):
+    """Approving one name_speaker lets the other speakers be renamed in that task."""
+    from src.agent_runtime.authority import RequestAuthority
+    monkeypatch.setenv(mcp_trust.TRUSTED_READONLY_MCP_ENV, "convo")
+    base = RequestAuthority.empty(owner="alice", session_id="s")
+    assert not base.permits(_rename("Speaker 3", "Shahyah"))
+    auth = mcp_trust.with_approved_tool_grant(base, _approval(RENAME))
+    assert auth.permits(_rename("Speaker 3", "Shahyah"))
+    assert auth.permits(_rename("Speaker 2", "Jenn"))
+    # Only the approved tool; other tools on the server or elsewhere get nothing.
+    assert not auth.permits(ExactOperation.normalize("mcp__srv1__wipe", "{}"))
+    assert not auth.permits(ExactOperation.normalize("mcp__srv2__search_web", "{}"))
+    # Policy and per-tool disables still win.
+    assert not auth.restrict(disabled_tools={RENAME}).permits(_rename("Speaker 2", "Jenn"))
+    assert not auth.restrict(ToolPolicy(disable_mcp=True)).permits(_rename("Speaker 2", "Jenn"))
+    assert mcp_trust.with_approved_tool_grant(auth, _approval(RENAME)) is auth
+
+
+def test_no_grant_without_trust_or_continuation(manager, monkeypatch):
+    from src.agent_runtime.authority import RequestAuthority
+    base = RequestAuthority.empty(owner="alice", session_id="s")
+    monkeypatch.setenv(mcp_trust.TRUSTED_READONLY_MCP_ENV, "convo")
+    for approval in (_approval(RENAME, allow_remaining=False),
+                     _approval("mcp__srv2__search_web"), _approval("bash"), None):
+        assert mcp_trust.with_approved_tool_grant(base, approval) is base
+    monkeypatch.delenv(mcp_trust.TRUSTED_READONLY_MCP_ENV)
+    assert mcp_trust.with_approved_tool_grant(base, _approval(RENAME)) is base
+    monkeypatch.setenv(mcp_trust.TRUSTED_READONLY_MCP_ENV, "convo")
+    manager._connections["srv1"]["status"] = "error"
+    assert mcp_trust.with_approved_tool_grant(base, _approval(RENAME)) is base

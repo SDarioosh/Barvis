@@ -82,7 +82,9 @@ a plain question doesn't reach module tools: per-turn selection picks built-ins
   every server in `ODYSSEUS_TRUSTED_READONLY_MCP`. That message gets only those tools
   plus `ask_user`/`update_plan` (~10 instead of ~130), so a small model finds them.
 - It applies to that one message. The next message without a slash command is routed
-  normally; a follow-up needs the command again.
+  normally, but once a module tool has run in a chat, later messages in that chat are
+  offered all of that module's tools again (for example "Speaker 2 was Jenn" after a
+  `/sound` question gets `name_speaker`). A new chat needs the command again.
 - Read-only module tools run without approval (trusted server); write tools
   (`update_action_item`, `name_speaker`) still ask.
 - The model gets today's date on every turn (Odysseus' "Current date and time"

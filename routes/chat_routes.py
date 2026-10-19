@@ -3580,6 +3580,9 @@ def setup_chat_routes(
                 exact_tool_approval.pending.request_authority
                 or RequestAuthority.empty(owner=_user, session_id=session, workspace=workspace)
             ).restrict(tool_policy)
+            # Barvis: an approved trusted-module tool may run again in this resumed task (src/mcp_trust.py)
+            from src.mcp_trust import with_approved_tool_grant
+            _request_authority = with_approved_tool_grant(_request_authority, exact_tool_approval)
         _turn_contract = None
         # Image models execute directly, not through the text-agent inventory.
         # Keep the permission policy above, but do not apply routing omissions
@@ -3620,6 +3623,9 @@ def setup_chat_routes(
                 last_user_message=message,
             )
             _warm_tools = _successful_session_tool_names(sess)
+            # Barvis: a used trusted module's other tools stay offered on follow-ups (src/mcp_trust.py)
+            from src.mcp_trust import with_trusted_server_tools
+            _warm_tools = with_trusted_server_tools(_warm_tools)
             _selected_tools = selected_tools_for_request(message)
             if _selected_tools is None and _contextual_browser_turn_followup:
                 # A referential retry targets the browser state established by

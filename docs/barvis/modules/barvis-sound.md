@@ -103,6 +103,13 @@ Then, per [../modules.md](../modules.md#registering-a-module-in-barvis):
   every turn, so relative dates work.
 - Write tools (`update_action_item`, `name_speaker`) are offered on `/sound` turns and
   still ask for approval.
+- Follow-ups in the same chat don't need `/sound` again: once a convo tool has run in a
+  chat, every later message there is offered all 10 tools (write tools still ask). So
+  "Speaker 1 and 3 were Shahyah, speaker 2 was Jenn" after `/sound what did we talk about
+  last night?` calls `name_speaker`.
+- Approving a write tool once covers more calls of that same tool in the same reply:
+  one click renames all three speakers. A different write tool in that reply is still
+  refused; ask for it in a new message.
 
 ## Eval and current score
 
