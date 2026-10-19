@@ -275,9 +275,9 @@ HOUSEKEEPING_DEFAULTS = {
     "audit_skills":          {"name": "Skills Audit",             "trigger_type": "schedule", "schedule": "daily", "scheduled_time": "02:00", "cron_expression": None, "legacy_names": ["Audit Skills"]},
 }
 
-# Barvis: seed the module action-item sync task (src/barvis_action_items.py)
-from src.barvis_action_items import register_housekeeping as _barvis_housekeeping  # noqa: E402
-_barvis_housekeeping(HOUSEKEEPING_DEFAULTS)
+# Fork: seed the module action-item sync task (src/module_action_items.py)
+from src.module_action_items import register_housekeeping as _fork_housekeeping  # noqa: E402
+_fork_housekeeping(HOUSEKEEPING_DEFAULTS)
 
 RETIRED_HOUSEKEEPING_ACTIONS = frozenset({
     "tidy_calendar",
@@ -2837,5 +2837,5 @@ class TaskScheduler:
             db.close()
 
 
-# Barvis: the action-item sync posts nothing to the assistant chat (src/barvis_action_items.py)
+# Fork: the action-item sync posts nothing to the assistant chat (src/module_action_items.py)
 TaskScheduler._SILENT_ACTIONS = TaskScheduler._SILENT_ACTIONS | {"barvis_sync_action_items"}

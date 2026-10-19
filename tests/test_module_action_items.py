@@ -1,9 +1,9 @@
-"""Barvis: barvis-sound action items -> to-dos, calendar, ntfy (src/barvis_action_items.py)."""
+"""Fork: odysseus-sound action items -> ntfy (src/module_action_items.py)."""
 import datetime
 
 import pytest
 
-from src import barvis_action_items as bai
+from src import module_action_items as bai
 
 LIST = """3 all action items (times are Europe/Berlin). When answering, put the link next to each fact you use:
 - #12 [open] Send Alice the revised spreadsheet (owner Me) due 2026-09-19 (Friday) — from "Q4 budget" 2026-09-15 12:00 http://h:8000/view/a?sig=x#t=40
@@ -57,7 +57,8 @@ def pushes(tmp_path, monkeypatch):
 
     monkeypatch.setattr(note_routes, "dispatch_reminder", fake_dispatch)
     monkeypatch.setattr("src.constants.DATA_DIR", str(tmp_path))
-    for var in ("BARVIS_NOTIFY_CHANNEL", "BARVIS_DIGEST_HOUR"):
+    for var in ("MODULE_NOTIFY_CHANNEL", "MODULE_DIGEST_HOUR",
+                "BARVIS_NOTIFY_CHANNEL", "BARVIS_DIGEST_HOUR"):
         monkeypatch.delenv(var, raising=False)
     return sent
 
@@ -103,10 +104,20 @@ async def test_missing_digest_is_retried_and_notifications_can_be_off(pushes, mo
     await bai.sync("alice", module, now=morning)
     await bai.sync("alice", module, now=morning)
     assert len([c for c in module.calls if c[0] == "get_daily_digest"]) == 2 and pushes == []
-    monkeypatch.setenv("BARVIS_NOTIFY_CHANNEL", "off")
+    monkeypatch.setenv("MODULE_NOTIFY_CHANNEL", "off")
     module.digest = DIGEST
     await bai.sync("alice", module, now=morning)
     assert pushes == []
+
+
+def test_settings_fall_back_to_former_barvis_names(monkeypatch):
+    for var in ("MODULE_DIGEST_HOUR", "BARVIS_DIGEST_HOUR"):
+        monkeypatch.delenv(var, raising=False)
+    assert bai.digest_hour() == 8
+    monkeypatch.setenv("BARVIS_DIGEST_HOUR", "6")
+    assert bai.digest_hour() == 6
+    monkeypatch.setenv("MODULE_DIGEST_HOUR", "7")
+    assert bai.digest_hour() == 7
 
 
 def test_module_server_lookup():

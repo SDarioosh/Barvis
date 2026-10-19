@@ -14,7 +14,7 @@ Hugging Face, npm and GitHub reachable; `cmake`, `gcc`, `ffmpeg`, Node 22, Pytho
 | Use the sandbox for | Leave to the owner's server |
 |---|---|
 | Unit tests, lint, everything with fakes | the real model (`qwen3.5-35b` on the RTX 3060) |
-| Running the whole chain: seed data → barvis-sound → MCP → Barvis → eval | the score that counts (target ≥ 15/20) |
+| Running the whole chain: seed data → odysseus-sound → MCP → Odysseus → eval | the score that counts (target ≥ 15/20) |
 | Before/after comparisons on the same small model | real devices, real audio, Tailscale |
 | Reproducing bugs in gating, routing, MCP, links | anything touching production (port 7000) |
 
@@ -34,11 +34,11 @@ demo conversations takes ~8 min. One eval question takes ~10–110 s with
 
 ## Build and start
 
-Paths below: `SBX` is a scratch directory; `SOUND` and `BARVIS` are the two clones.
+Paths below: `SBX` is a scratch directory; `SOUND` and `FORK` are the two clones.
 Sandboxes are fresh containers, so redo this per session. Never commit `SBX` contents.
 
 ```bash
-SBX=~/sbx; SOUND=<barvis-sound clone>; BARVIS=<Barvis clone>
+SBX=~/sbx; SOUND=<odysseus-sound clone>; FORK=<Odysseus fork clone>
 mkdir -p $SBX/models $SBX/logs && cd $SBX
 
 # llama.cpp and whisper.cpp, CPU builds (~10 min, can run in parallel)
@@ -62,7 +62,7 @@ setsid nohup $SBX/whisper.cpp/build/bin/whisper-server -m $SBX/models/ggml-base.
   --host 127.0.0.1 --port 8178 -t 2 > $SBX/logs/whisper.log 2>&1 < /dev/null &
 ```
 
-### barvis-sound
+### odysseus-sound
 
 ```bash
 cat > $SBX/convo.env <<'EOF'
@@ -97,15 +97,15 @@ the sandbox because it needs the SpeechBrain model):
 
 The tokens are sandbox-only placeholders; never reuse them anywhere real.
 
-### Barvis
+### Odysseus
 
 ```bash
-cd $BARVIS
+cd $FORK
 uv venv -p 3.11 venv && uv pip install -p venv/bin/python -r requirements.txt -r requirements-dev.txt
-mkdir -p data $SBX/barvis-data
+mkdir -p data $SBX/odysseus-data
 echo sandbox-admin-password > $SBX/admin.txt
-ODYSSEUS_DATA_DIR=$SBX/barvis-data ODYSSEUS_TRUSTED_READONLY_MCP=convo \
-  setsid nohup venv/bin/python -m uvicorn app:app --host 127.0.0.1 --port 7010 > $SBX/logs/barvis.log 2>&1 < /dev/null &
+ODYSSEUS_DATA_DIR=$SBX/odysseus-data ODYSSEUS_TRUSTED_READONLY_MCP=convo \
+  setsid nohup venv/bin/python -m uvicorn app:app --host 127.0.0.1 --port 7010 > $SBX/logs/odysseus.log 2>&1 < /dev/null &
 ```
 
 ChromaDB isn't running, so the log shows `VectorRAG init failed` and
@@ -125,7 +125,7 @@ curl -s -b $J -X POST $B/api/model-endpoints -F name=sandbox-llama \
 curl -s -b $J -X POST $B/api/mcp/servers -F name=convo -F transport=http \
   -F "url=http://127.0.0.1:8001/mcp?access_token=$CONVO_MCP_TOKEN"
 # --trim: the tool set of all earlier sandbox runs; see "All Odysseus tools on" for why
-venv/bin/python scripts/barvis_setup.py --url http://$B --password-file $SBX/admin.txt --trim
+venv/bin/python scripts/modules_setup.py --url http://$B --password-file $SBX/admin.txt --trim
 INSTR=$(cd $SOUND/server && .venv/bin/python -c \
   "import json; from convo_server.mcp_server import INSTRUCTIONS; print(json.dumps(INSTRUCTIONS))")
 curl -s -b $J -X POST $B/api/presets/custom -H 'content-type: application/json' \
@@ -142,21 +142,21 @@ ODYSSEUS_URL=http://127.0.0.1:7010 ODYSSEUS_PASSWORD_FILE=$SBX/admin.txt \
 ```
 
 Results go to `server/eval/results/<frontend>.jsonl`. They hold only fictional demo
-data, so they can be pasted into PRs. Barvis' log (`$SBX/logs/barvis.log`) shows each
+data, so they can be pasted into PRs. Odysseus' log (`$SBX/logs/odysseus.log`) shows each
 tool call, approval and MCP error.
 
-Sandbox baseline (2026-10-18, questions 1, 4, 16): raw 1/3, Barvis over HTTP 1/3. Audio
+Sandbox baseline (2026-10-18, questions 1, 4, 16): raw 1/3, Odysseus over HTTP 1/3. Audio
 check: Silero VAD found 8.1 s of speech in the JFK clip and whisper.cpp transcribed it.
 
 whisper-server is only needed for the audio check: `seed_demo.py` inserts transcripts
 directly, so an eval-only session can skip building whisper.cpp.
 
-Count approvals in a run with `grep -c "Exact approval required" $SBX/logs/barvis.log`;
+Count approvals in a run with `grep -c "Exact approval required" $SBX/logs/odysseus.log`;
 `bakeoff.py` also prints `(odysseus: N tool approval(s) auto-accepted)` per question.
 
 ### HTTP annotation fix (finding 1), 2026-10-18
 
-Same stack, same seed, questions 1, 4, 16, Barvis restarted between the runs:
+Same stack, same seed, questions 1, 4, 16, Odysseus restarted between the runs:
 
 | | score | approval prompts | `Exact approval required` lines | tool calls | time |
 |---|---|---|---|---|---|
@@ -164,13 +164,13 @@ Same stack, same seed, questions 1, 4, 16, Barvis restarted between the runs:
 | after | 2/3 | 0 | 0 | 2 | 399 s |
 
 The score doesn't move here because `bakeoff.py` auto-accepts approvals. Each approval
-made Barvis redo the model round that produced the call (~1–2 min on CPU), which is where
+made Odysseus redo the model round that produced the call (~1–2 min on CPU), which is where
 the time went. Question 16 fails in both runs: the 4B model answers without calling a
 tool. Small runs vary: the same questions scored 1/3 in the first baseline.
 
 ### All Odysseus tools on, 2026-10-18
 
-Same stack and seed, questions 1, 4, 16, one Barvis instance; only `barvis_setup.py`
+Same stack and seed, questions 1, 4, 16, one Odysseus instance; only `modules_setup.py`
 changed between runs. 89 built-ins plus the built-in MCP servers and `convo`.
 
 | Setup | score | convo tools called | approvals | time | what happened |
@@ -180,16 +180,16 @@ changed between runs. 89 built-ins plus the built-in MCP servers and `convo`.
 | C: every tool on, "Auto" (new default) | 0/3 | none | 1 | 299 s | per-turn selection offered `ask_user`/`python`/`read_file` (Q1, Q16) and `manage_calendar` (Q4); no convo tool was offered |
 
 So with every tool on, module tools don't reach the model in either mode. `/sound`
-and `/context` fix that per message; see [Slash skills](#slash-skills-2026-10-18). `barvis_setup.py` now defaults to "Auto" (B can't
+and `/context` fix that per message; see [Slash skills](#slash-skills-2026-10-18). `modules_setup.py` now defaults to "Auto" (B can't
 work at 32k), and `--trim` keeps the setup that answers recording questions.
 
 ### Slash skills, 2026-10-18
 
-`/sound` and `/context` (SDarioosh/Barvis#9). Same stack and seed, one Barvis instance,
+`/sound` and `/context` (SDarioosh/Barvis#9). Same stack and seed, one Odysseus instance,
 questions 1, 4, 16 plus a person + relative date question (21: "What did Maria ask me
 to do on Friday?", answer in the 2026-10-16 `maria-oct` conversation). C, D and E ran
 with every tool on and "Auto"; only the message changed. D and E were sent through
-`scripts/barvis_slash_eval.py` (the composed `/invoke` message, through bakeoff's
+`scripts/module_slash_eval.py` (the composed `/invoke` message, through bakeoff's
 odysseus frontend). `tools_sent` is the `[agent-debug]` count on the first round.
 
 | Setup | score | convo tools called | approvals | `tools_sent` | time |
@@ -205,7 +205,7 @@ odysseus frontend). `tools_sent` is the `[agent-debug]` count on the first round
   "Friday" to 2026-10-16.
 - E: Q16 made no tool call; Q4 searched but answered "not found"; Q21 cited the right
   conversation but left out the keyword (Rosa/train). Same tools as D, different
-  procedure text (`/context`'s generic one vs barvis-sound's `INSTRUCTIONS`), so with
+  procedure text (`/context`'s generic one vs odysseus-sound's `INSTRUCTIONS`), so with
   a 4B model the wording matters; small runs also vary (Q1 here started with "Model
   request failed", finding 5, and still passed).
 - A first ran right after the others and failed in ~1 s per question: llama-server had
@@ -223,14 +223,14 @@ Rerun D:
 ```bash
 cd $SOUND/server && . $SBX/convo.env
 ODYSSEUS_URL=http://127.0.0.1:7010 ODYSSEUS_PASSWORD_FILE=$SBX/admin.txt \
-  .venv/bin/python $BARVIS/scripts/barvis_slash_eval.py --skill sound \
-  --log $SBX/logs/barvis.log --extra -- --only 1 4 16 21
+  .venv/bin/python $FORK/scripts/module_slash_eval.py --skill sound \
+  --log $SBX/logs/odysseus.log --extra -- --only 1 4 16 21
 ```
 
 ## Findings from the first sandbox run
 
-These are real bugs, not sandbox quirks. 1–3 and 5 are Barvis bugs (tracked in
-[roadmap.md](roadmap.md)); 4 is a barvis-sound bug (tracked in its `PROGRESS.md`).
+These are real bugs, not sandbox quirks. 1–3 and 5 are bugs in Odysseus or the fork (tracked in
+[roadmap.md](roadmap.md)); 4 is an odysseus-sound bug (tracked in its `PROGRESS.md`).
 
 1. **Fixed: HTTP MCP servers lose their annotations.** `_connect_http` in
    `src/mcp_manager.py` stored each tool without `annotations` (the stdio and SSE paths
@@ -241,23 +241,23 @@ These are real bugs, not sandbox quirks. 1–3 and 5 are Barvis bugs (tracked in
    file.
 2. **Fixed: stdio MCP servers added over the API fail on every call**:
    `MCP tool call failed: <name>:` with an empty message and `exit_code=1`, while the
-   same server works from the same `mcp` client library outside Barvis. Cause: the
+   same server works from the same `mcp` client library outside Odysseus. Cause: the
    server was connected inside the HTTP request, and Starlette's `BaseHTTPMiddleware`
    cancels its task group once the response is sent, which also cancelled the stdio
    transport's reader/writer tasks (the empty message is anyio's `ClosedResourceError`).
    The call inside the adding request worked; every later one failed. Built-in servers
    were not affected (they hold their connection in their own task). Fixed by opening
-   every stdio connection in a long-lived owner task (`src/mcp_stdio_owner.py`, BARVIS.md).
+   every stdio connection in a long-lived owner task (`src/mcp_stdio_owner.py`, FORK.md).
    Reproduced and checked under uvicorn with a one-tool FastMCP server; regression test
    `tests/test_mcp_stdio_owner.py`. Upstream issue to file.
-3. **Empty answers:** some Barvis replies are empty after tool calls (question 16 in the
+3. **Empty answers:** some Odysseus replies are empty after tool calls (question 16 in the
    HTTP run). That matches the "Done." replies in the server eval.
-4. **barvis-sound: failed summaries are never retried.** If llama-server is down when a
+4. **odysseus-sound: failed summaries are never retried.** If llama-server is down when a
    conversation is summarized, it is marked `failed`, and `convo-server summarize-pending`
    only retries `pending` conversations (`Pipeline.summarize_pending`). The conversation
    keeps its transcript but never gets a summary, title or action items.
 5. **Repeating output becomes "Model request failed".** When the model repeats itself,
-   Barvis aborts the stream (`[degenerate-stream] aborting … repeated an exact 69-token
+   Odysseus aborts the stream (`[degenerate-stream] aborting … repeated an exact 69-token
    block twice` in the log) and the answer starts with "The task is incomplete: Model
    request failed." (question 4, first run). Seen once, with the 4B model; not yet
    checked whether it happens with the server model.
@@ -269,12 +269,12 @@ answers, devices or deployment has a **Server verification** section listing:
 
 - the commands to run, for example:
   - restart the isolated test instance (`~/.hermes/cache/scratch/barvis-run.sh`, port 7010);
-  - `python scripts/barvis_setup.py --url http://127.0.0.1:7010 --password-file <file>`;
-  - `python eval/bakeoff.py --frontend odysseus` in barvis-sound `server/`;
+  - `python scripts/modules_setup.py --url http://127.0.0.1:7010 --password-file <file>`;
+  - `python eval/bakeoff.py --frontend odysseus` in odysseus-sound `server/`;
 - the result to expect (e.g. "score ≥ previous 9/20");
 - anything that needs a real device, with the steps.
 
 Agents never run these themselves. Production (`/home/steam/models/odysseus`, port
-7000) is changed only by the owner with `scripts/barvis_deploy.sh`
+7000) is changed only by the owner with `scripts/fork_deploy.sh`
 ([deploy.md](deploy.md)); a Server verification may end with that deploy step. The owner
 pastes the result into the PR; the agent continues from there.

@@ -1,5 +1,5 @@
-// Barvis: barvis-sound page — conversations list and "who is this?" cards.
-// Data comes from routes/barvis_sound_routes.py, which calls the module's MCP tools.
+// Fork: odysseus-sound page — conversations list and "who is this?" cards.
+// Data comes from routes/sound_module_routes.py, which calls the module's MCP tools.
 // Transcript links are the module's signed /view links; they open in a new tab.
 
 const $ = (sel) => document.querySelector(sel);
@@ -60,7 +60,7 @@ function whoCard(s, onDone) {
     }
     buttons.forEach((b) => { b.disabled = true; });
     try {
-      const r = await api('/api/barvis/sound/name-speaker', {
+      const r = await api('/api/modules/sound/name-speaker', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ conversation_id: s.conversation_id, speaker_label: s.label, name }),
       });
@@ -102,7 +102,7 @@ function whoCard(s, onDone) {
 async function loadWho() {
   const box = $('#bs-who');
   try {
-    const { speakers } = await api('/api/barvis/sound/unnamed?limit=10');
+    const { speakers } = await api('/api/modules/sound/unnamed?limit=10');
     if (!speakers.length) {
       status(box, 'Everyone is named.');
       return;
@@ -114,14 +114,14 @@ async function loadWho() {
 }
 
 // ----------------------------------------------------------------- action items
-// Live from barvis-sound (no copies in Odysseus): Done / Dismiss call its
+// Live from odysseus-sound (no copies in Odysseus): Done / Dismiss call its
 // update_action_item and the list is read again.
 function itemCard(it) {
   const msg = el('span', { className: 'bs-meta' });
   const set = async (status) => {
     buttons.forEach((b) => { b.disabled = true; });
     try {
-      const r = await api(`/api/barvis/sound/action-items/${it.id}`, {
+      const r = await api(`/api/modules/sound/action-items/${it.id}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),
       });
@@ -155,7 +155,7 @@ function itemCard(it) {
 async function loadItems() {
   const box = $('#bs-items');
   try {
-    const { action_items: items } = await api('/api/barvis/sound/action-items?status=open');
+    const { action_items: items } = await api('/api/modules/sound/action-items?status=open');
     if (!items.length) {
       status(box, 'No open action items.');
       return;
@@ -188,7 +188,7 @@ async function loadList() {
   params.set('limit', '30');
   status(box, 'Loading…');
   try {
-    const { conversations } = await api(`/api/barvis/sound/conversations?${params}`);
+    const { conversations } = await api(`/api/modules/sound/conversations?${params}`);
     if (!conversations.length) {
       status(box, 'No conversations found.');
       return;

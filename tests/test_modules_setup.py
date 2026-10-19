@@ -1,4 +1,4 @@
-"""Barvis: scripts/barvis_setup.py against a fake admin API."""
+"""Fork: scripts/modules_setup.py against a fake admin API."""
 
 from __future__ import annotations
 
@@ -10,9 +10,9 @@ import httpx
 import pytest
 
 _SPEC = importlib.util.spec_from_file_location(
-    "barvis_setup", Path(__file__).resolve().parents[1] / "scripts" / "barvis_setup.py")
-barvis_setup = importlib.util.module_from_spec(_SPEC)
-_SPEC.loader.exec_module(barvis_setup)
+    "modules_setup", Path(__file__).resolve().parents[1] / "scripts" / "modules_setup.py")
+modules_setup = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(modules_setup)
 
 
 PRESET_TEXT = ("These tools search the user's own recorded conversations.\n\n"
@@ -21,7 +21,7 @@ PRESET_TEXT = ("These tools search the user's own recorded conversations.\n\n"
 
 @pytest.fixture(autouse=True)
 def _no_trusted_env(monkeypatch):
-    monkeypatch.delenv(barvis_setup.TRUSTED_ENV, raising=False)
+    monkeypatch.delenv(modules_setup.TRUSTED_ENV, raising=False)
 
 
 class FakeApi:
@@ -73,9 +73,9 @@ def _run(tmp_path, argv, api=None):
     api = api or FakeApi()
     pw = tmp_path / "pw.txt"
     pw.write_text("not-a-real-password\n")
-    args = barvis_setup.parse_args(["--password-file", str(pw), *argv])
-    with httpx.Client(base_url="http://barvis.test", transport=httpx.MockTransport(api)) as c:
-        assert barvis_setup.run(c, args) == 0
+    args = modules_setup.parse_args(["--password-file", str(pw), *argv])
+    with httpx.Client(base_url="http://odysseus.test", transport=httpx.MockTransport(api)) as c:
+        assert modules_setup.run(c, args) == 0
     return api
 
 
@@ -128,7 +128,7 @@ def test_missing_module_server_is_reported(tmp_path, capsys):
 
 def test_keep_without_trim_is_rejected(tmp_path):
     with pytest.raises(SystemExit):
-        barvis_setup.parse_args(["--password-file", "x", "--keep", "web_search"])
+        modules_setup.parse_args(["--password-file", "x", "--keep", "web_search"])
 
 
 def test_default_creates_sound_and_context_skills(tmp_path):
@@ -147,7 +147,7 @@ def test_default_creates_sound_and_context_skills(tmp_path):
 
 
 def test_context_skill_uses_trusted_env(tmp_path, monkeypatch):
-    monkeypatch.setenv(barvis_setup.TRUSTED_ENV, "convo, notes")
+    monkeypatch.setenv(modules_setup.TRUSTED_ENV, "convo, notes")
     api = _run(tmp_path, [])
     context = api.skill_writes()[-1][2]
     assert context["requires_toolsets"] == ["mcp:convo", "mcp:notes"]
@@ -189,8 +189,8 @@ def test_no_skills_and_dry_run_write_no_skills(tmp_path, capsys):
 
 def test_bad_module_skill_is_rejected():
     with pytest.raises(SystemExit):
-        barvis_setup.parse_args(["--password-file", "x", "--module-skill", "sound"])
+        modules_setup.parse_args(["--password-file", "x", "--module-skill", "sound"])
 
 
 def test_procedure_steps_splits_paragraphs_and_lists():
-    assert barvis_setup.procedure_steps("a\nb\n\n1. c\n2) d\n\n") == ["a b", "c", "d"]
+    assert modules_setup.procedure_steps("a\nb\n\n1. c\n2) d\n\n") == ["a b", "c", "d"]

@@ -3584,6 +3584,6 @@ BUILTIN_ACTION_INFO = {
     "check_email_urgency": "Scan unread emails hourly, tag urgent/reply-soon/newsletter/marketing/spam, and send a reminder when a new email needs a fast reply.",
 }
 
-# Barvis: module action items -> to-dos, calendar, ntfy (src/barvis_action_items.py)
-from src.barvis_action_items import register_builtin_action as _barvis_register  # noqa: E402
-_barvis_register(BUILTIN_ACTIONS, BUILTIN_ACTION_INFO)
+# Fork: module action items -> ntfy (src/module_action_items.py)
+from src.module_action_items import register_builtin_action as _fork_register  # noqa: E402
+_fork_register(BUILTIN_ACTIONS, BUILTIN_ACTION_INFO)

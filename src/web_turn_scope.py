@@ -1,4 +1,4 @@
-"""Barvis: keep web lookups working when the web toggle is on.
+"""Fork: keep web lookups working when the web toggle is on.
 
 Upstream decides which tools a turn may run from the words of the message
 (request authority). Two gaps made web lookups fail in chat:

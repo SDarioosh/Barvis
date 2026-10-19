@@ -1,23 +1,26 @@
-# Barvis: agent guide
+# Odysseus fork: agent guide
 
 Instructions for any coding agent (Claude Code, Google Antigravity, others) working in
 this repository. Read this file completely before changing anything.
 
-## What Barvis is
+## What this repo is
 
-- Barvis is a fork of [Odysseus](https://github.com/odysseus-dev/odysseus), a self-hosted
-  AI workspace (chat, agents, MCP, documents, email, notes, tasks, calendar). License
-  AGPL-3.0.
-- Barvis is the **hub** of a personal, fully local AI system: the one chat and agent
-  interface the owner uses from an Android phone and a Mac over Tailscale.
-- **Modules** are separate programs in separate repos (`barvis-<name>`). Each owns its
-  data and exposes it through its own MCP server. Barvis is only a client of them.
-- First module: [barvis-sound](https://github.com/SDarioosh/barvis-sound) (recorded
+- Our fork of [Odysseus](https://github.com/odysseus-dev/odysseus), a self-hosted AI
+  workspace (chat, agents, MCP, documents, email, notes, tasks, calendar). License
+  AGPL-3.0. It was called Barvis until 2026-10-19; the repo URL (`SDarioosh/Barvis`) and
+  the `barvis` branch keep that name.
+- Odysseus is the **hub** of a personal, fully local AI system: the one chat and agent
+  interface the owner uses from an Android phone and a Mac over Tailscale. The fork
+  keeps the Odysseus name and adds capabilities through modules.
+- **Modules** are separate programs in separate repos (`odysseus-<name>`; the first one's
+  repo is still `barvis-sound`). Each owns its data and exposes it through its own MCP
+  server. Odysseus is only a client of them.
+- First module: [odysseus-sound](https://github.com/SDarioosh/barvis-sound) (recorded
   conversations: transcripts, summaries, action items, facts). Details:
-  [docs/barvis/modules/barvis-sound.md](docs/barvis/modules/barvis-sound.md).
-- What the fork changes today: [BARVIS.md](BARVIS.md). System picture, ports and
-  services: [docs/barvis/architecture.md](docs/barvis/architecture.md). Status and
-  next work: [docs/barvis/roadmap.md](docs/barvis/roadmap.md).
+  [docs/fork/modules/odysseus-sound.md](docs/fork/modules/odysseus-sound.md).
+- What the fork changes today: [FORK.md](FORK.md). System picture, ports and
+  services: [docs/fork/architecture.md](docs/fork/architecture.md). Status and
+  next work: [docs/fork/roadmap.md](docs/fork/roadmap.md).
 
 ## Privacy rules (non-negotiable)
 
@@ -29,7 +32,7 @@ this repository. Read this file completely before changing anything.
 - Cloud is fine only for development tooling (coding agents, package and model-weight
   downloads).
 - Never paste real transcripts, chat content or tokens into issues, PRs, commit messages
-  or test fixtures. Use fictional data (barvis-sound's `server/scripts/seed_demo.py`).
+  or test fixtures. Use fictional data (odysseus-sound's `server/scripts/seed_demo.py`).
 
 ## Where Odysseus keeps things
 
@@ -50,62 +53,62 @@ Odysseus is large (~478k lines of Python) and fast-moving. Start from these file
 | Tests | `tests/` (see `tests/README.md`, `tests/KNOWN_FAILURES.md`) |
 | Upstream's own rules | `CONTRIBUTING.md`, `SECURITY.md`, `THREAT_MODEL.md` |
 
-Barvis code so far: `src/mcp_trust.py`, `src/mcp_stdio_owner.py`, `src/skill_mcp_toolsets.py`,
-`src/skill_invocation.py`, `src/offered_reads.py`, `src/barvis_action_items.py`,
-`src/barvis_sound_view.py`, `src/web_turn_scope.py`, `routes/barvis_sound_routes.py`, `static/barvis-sound.html`,
-`static/js/barvisSound.js`,
-`scripts/barvis_setup.py`,
-`scripts/barvis_slash_eval.py`, `scripts/barvis_deploy.sh`, `docker/barvis.override.yml`,
+Fork code so far: `src/mcp_trust.py`, `src/mcp_stdio_owner.py`, `src/skill_mcp_toolsets.py`,
+`src/skill_invocation.py`, `src/offered_reads.py`, `src/module_action_items.py`,
+`src/sound_module_view.py`, `src/web_turn_scope.py`, `routes/sound_module_routes.py`, `static/sound-module.html`,
+`static/js/soundModule.js`,
+`scripts/modules_setup.py`,
+`scripts/module_slash_eval.py`, `scripts/fork_deploy.sh`, `docker/fork.override.yml`,
 their tests (`tests/test_mcp_trust.py`,
-`tests/test_mcp_http_annotations.py`, `tests/test_mcp_stdio_owner.py`, `tests/test_barvis_setup.py`,
+`tests/test_mcp_http_annotations.py`, `tests/test_mcp_stdio_owner.py`, `tests/test_modules_setup.py`,
 `tests/test_skill_mcp_toolsets.py`, `tests/test_offered_reads.py`,
-`tests/test_barvis_action_items.py`, `tests/test_barvis_sound_view.py`, `tests/test_web_turn_scope.py`), and the hooks listed in [BARVIS.md](BARVIS.md).
+`tests/test_module_action_items.py`, `tests/test_sound_module_view.py`, `tests/test_web_turn_scope.py`), and the hooks listed in [FORK.md](FORK.md).
 
 ## Fork rules (merge-friendly)
 
 Upstream changes every day, so every line we touch in an upstream file is a future
 merge conflict.
 
-- Put Barvis code in **new files** (`src/<feature>.py`, `scripts/barvis_*.py`,
-  `tests/test_<feature>.py`, `docs/barvis/`).
+- Put fork code in **new files** (`src/<feature>.py`, `scripts/<feature>.py`,
+  `tests/test_<feature>.py`, `docs/fork/`).
 - Change upstream files only with **small hooks**: a lazy import plus a call into the new
-  file, a few lines at most. Put a comment on the hook that names the Barvis file it
-  calls (for example `# Barvis: ... (src/mcp_trust.py)`), so `git grep` finds every hook.
+  file, a few lines at most. Put a comment on the hook that names the fork file it
+  calls (for example `# Fork: ... (src/mcp_trust.py)`), so `git grep` finds every hook.
 - No renames, reformatting, import sorting, or drive-by refactors of upstream code. Don't
   run formatters over upstream files.
 - Branding goes through theme and config, never by renaming identifiers or strings in
   upstream code.
-- Prefer configuration over code (see `scripts/barvis_setup.py`).
+- Prefer configuration over code (see `scripts/modules_setup.py`).
 - Follow upstream's code conventions in `CONTRIBUTING.md` (paths from `src/constants.py`,
   `internal_api_base()` instead of hardcoded URLs, Conventional Commits, its visual style).
-- A general fix (not Barvis-specific) is written so it could go upstream, and is offered
-  upstream. How: [docs/barvis/upstream-sync.md](docs/barvis/upstream-sync.md).
-- Record every new hook in the "Changes from upstream" table in [BARVIS.md](BARVIS.md).
+- A general fix (not fork-specific) is written so it could go upstream, and is offered
+  upstream. How: [docs/fork/upstream-sync.md](docs/fork/upstream-sync.md).
+- Record every new hook in the "Changes from upstream" table in [FORK.md](FORK.md).
 
 ## Boundaries: hub and modules
 
-- Barvis reaches a module **only** through that module's MCP server (or its documented
+- Odysseus reaches a module **only** through that module's MCP server (or its documented
   HTTP API).
-- Barvis never opens, reads or writes a module's database or files directly.
-- A module never imports Barvis code. The AGPL covers Barvis only; modules talk to it
+- Odysseus never opens, reads or writes a module's database or files directly.
+- A module never imports Odysseus code. The AGPL covers the fork only; modules talk to it
   over a protocol, so the AGPL doesn't extend to them. Don't copy Odysseus code into a
   module.
 - The module contract (tool naming, annotations, links, auth, eval):
-  [docs/barvis/modules.md](docs/barvis/modules.md).
+  [docs/fork/modules.md](docs/fork/modules.md).
 
 ## Where does this change belong?
 
 | The change is about | Put it in |
 |---|---|
 | Capturing, processing or storing a module's data (audio, transcripts, summaries) | the module repo |
-| A module's tool names, arguments, results, links or annotations | the module repo, coordinated per [modules.md](docs/barvis/modules.md#versioning) |
-| How the model is offered or gated on MCP tools, approvals, routing | Barvis (hook + new file) |
-| Chat UI, views of module data, notifications, tasks/calendar in the hub | Barvis (calls the module's MCP tools or API) |
-| Which tools are on, model tool mode | Barvis config: `scripts/barvis_setup.py` |
-| A preset's instructions for a module | Barvis config (Custom preset), text owned by the module doc |
-| A bug in Odysseus that isn't Barvis-specific | Barvis, written to be offered upstream |
+| A module's tool names, arguments, results, links or annotations | the module repo, coordinated per [modules.md](docs/fork/modules.md#versioning) |
+| How the model is offered or gated on MCP tools, approvals, routing | this repo (hook + new file) |
+| Chat UI, views of module data, notifications, tasks/calendar in the hub | this repo (calls the module's MCP tools or API) |
+| Which tools are on, model tool mode | config: `scripts/modules_setup.py` |
+| A preset's instructions for a module | Odysseus config (Custom preset), text owned by the module doc |
+| A bug in Odysseus that isn't fork-specific | this repo, written to be offered upstream |
 
-If a feature needs both repos, do the module side first, then the Barvis side, and link
+If a feature needs both repos, do the module side first, then the fork side, and link
 the two PRs to each other.
 
 ## Where you work: the cloud sandbox
@@ -113,9 +116,9 @@ the two PRs to each other.
 - You work in a cloud sandbox, **not on the owner's server**. Never assume access to the
   server, its services, its data or Tailscale.
 - The sandbox can build and run the whole system with small CPU models and fictional
-  data: llama-server, whisper-server, barvis-sound, its MCP server, Barvis on
+  data: llama-server, whisper-server, odysseus-sound, its MCP server, Odysseus on
   `127.0.0.1:7010`, and the eval. Steps, timings and known issues:
-  [docs/barvis/sandbox.md](docs/barvis/sandbox.md).
+  [docs/fork/sandbox.md](docs/fork/sandbox.md).
 - Small-model scores are only comparable with other sandbox runs. The real score
   (`qwen3.5-35b`, target ≥ 15/20) is measured by the owner on the server.
 - Use only fictional data (`seed_demo.py`). Sandbox tokens and passwords are throwaway
@@ -125,20 +128,20 @@ the two PRs to each other.
 
 - Every PR that can change answers, devices or deployment has a **Server verification**
   section: the exact commands, the expected result, and any real-device steps. Format:
-  [docs/barvis/sandbox.md](docs/barvis/sandbox.md#server-verification).
+  [docs/fork/sandbox.md](docs/fork/sandbox.md#server-verification).
 - The owner runs it and pastes the result into the PR. Continue from that result; you
   don't run anything on the server.
-- On the server there are two Barvis instances ([docs/barvis/deploy.md](docs/barvis/deploy.md)).
+- On the server there are two instances of the fork ([docs/fork/deploy.md](docs/fork/deploy.md)).
   **Production** (Docker, `/home/steam/models/odysseus`, port 7000) is the owner's daily
   install, with all Odysseus features. Only the owner changes it, and only with
-  `scripts/barvis_deploy.sh` after the PR is merged and verified on the test instance.
+  `scripts/fork_deploy.sh` after the PR is merged and verified on the test instance.
   Never write verification steps that edit, restart, rebuild or reconfigure production
   in any other way; a PR may end its Server verification with "deploy:
-  `scripts/barvis_deploy.sh deploy`" for the owner to run. The **isolated test instance**
+  `scripts/fork_deploy.sh deploy`" for the owner to run. The **isolated test instance**
   (`127.0.0.1:7010`, started with `~/.hermes/cache/scratch/barvis-run.sh`, log
   `~/.hermes/cache/scratch/bakeoff/barvis.log`) is what verification steps target.
 - Server clones: `~/projects/barvis` (this repo) and `~/projects/barvis-ai-wt/*`
-  (barvis-sound worktrees; the folder may be renamed).
+  (odysseus-sound worktrees; the folder may be renamed).
 
 ## Tests
 
@@ -154,22 +157,22 @@ Install first (`uv venv -p 3.11 venv && uv pip install -p venv/bin/python -r
 requirements.txt -r requirements-dev.txt && mkdir -p data`); the three files above run
 281 tests in ~30 s. Setup for a full run is in `tests/KNOWN_FAILURES.md`. For changes
 that affect answers, also run the module evals in the sandbox stack
-([sandbox.md](docs/barvis/sandbox.md#run-the-eval)) and add a Server verification
+([sandbox.md](docs/fork/sandbox.md#run-the-eval)) and add a Server verification
 section to the PR.
 
 ### Known upstream failures
 
 - 23 tests already fail on clean upstream, in `tests/test_null_owner_gates.py` and
-  `tests/test_runtime_evidence_contract.py`. They are not Barvis bugs. Don't fix them
-  in Barvis PRs.
+  `tests/test_runtime_evidence_contract.py`. They are not fork bugs. Don't fix them
+  in fork PRs.
 - To judge a failure, run the same test on a clean `barvis` checkout (a worktree):
-  `git worktree add ../barvis-clean origin/barvis`. A failure that also happens there is
+  `git worktree add ../fork-clean origin/barvis`. A failure that also happens there is
   not yours. Report new failures only.
 
 ## Git rules
 
 - Work on a feature branch and open a PR. Small commits, Conventional Commits style
-  (`feat(mcp): ...`, `docs(barvis): ...`).
+  (`feat(mcp): ...`, `docs(fork): ...`).
 - Branches here: `dev` mirrors upstream `dev` and is **never committed to**. `barvis` is
   the integration and default branch; PRs go into `barvis`. Stacked PRs say so in the
   description.
@@ -177,7 +180,7 @@ section to the PR.
   pushes to branches you didn't create.
 - Never commit secrets, `.env`, databases, `data/`, logs, audio, or tokens. Before
   pushing, run the checks in `SECURITY.md` ("Publishing A Fork").
-- Upstream sync is its own PR: [docs/barvis/upstream-sync.md](docs/barvis/upstream-sync.md).
+- Upstream sync is its own PR: [docs/fork/upstream-sync.md](docs/fork/upstream-sync.md).
 
 ## When stuck
 
@@ -188,7 +191,7 @@ section to the PR.
 
 ## Device code
 
-Barvis has no device code; devices belong to modules. If a change can't be verified on
+The fork has no device code; devices belong to modules. If a change can't be verified on
 real hardware, list what still needs real-device testing in the PR's Server verification
 section and the module's `PROGRESS.md`.
 

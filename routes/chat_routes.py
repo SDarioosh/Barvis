@@ -2686,7 +2686,7 @@ def setup_chat_routes(
             chat_mode = "agent"
             auto_escalated = True
             logger.info("chat→agent auto-escalation: explicit private browser workflow")
-        # Barvis: a slash-invoked skill that declares tools runs in agent mode (src/skill_invocation.py)
+        # Fork: a slash-invoked skill that declares tools runs in agent mode (src/skill_invocation.py)
         from src.skill_invocation import invoked_skill_needs_tools
         if chat_mode == "chat" and invoked_skill_needs_tools(message, effective_user(request)):
             chat_mode, auto_escalated = "agent", True
@@ -3574,7 +3574,7 @@ def setup_chat_routes(
                 _explicit_browser_intent or _external_discovery_intent
             ) else ()),
         )
-        # Barvis: web toggle on + no tool named in the words → web_search (src/web_turn_scope.py)
+        # Fork: web toggle on + no tool named in the words → web_search (src/web_turn_scope.py)
         from src.web_turn_scope import with_unclassified_web_search
         _request_authority = with_unclassified_web_search(
             _request_authority, web_search_enabled="web_search" not in disabled_tools,
@@ -3585,7 +3585,7 @@ def setup_chat_routes(
                 exact_tool_approval.pending.request_authority
                 or RequestAuthority.empty(owner=_user, session_id=session, workspace=workspace)
             ).restrict(tool_policy)
-            # Barvis: an approved trusted-module tool may run again in this resumed task (src/mcp_trust.py)
+            # Fork: an approved trusted-module tool may run again in this resumed task (src/mcp_trust.py)
             from src.mcp_trust import with_approved_tool_grant
             _request_authority = with_approved_tool_grant(_request_authority, exact_tool_approval)
         _turn_contract = None
@@ -3628,7 +3628,7 @@ def setup_chat_routes(
                 last_user_message=message,
             )
             _warm_tools = _successful_session_tool_names(sess)
-            # Barvis: a used trusted module's other tools stay offered on follow-ups (src/mcp_trust.py)
+            # Fork: a used trusted module's other tools stay offered on follow-ups (src/mcp_trust.py)
             from src.mcp_trust import with_trusted_server_tools
             _warm_tools = with_trusted_server_tools(_warm_tools)
             _selected_tools = selected_tools_for_request(message)
@@ -3721,7 +3721,7 @@ def setup_chat_routes(
                 warm_tools=_warm_tools,
                 message=message, history=getattr(sess, "history", []) or [],
             )
-            # Barvis: a slash-invoked skill pins its requires_toolsets for this message (src/skill_invocation.py)
+            # Fork: a slash-invoked skill pins its requires_toolsets for this message (src/skill_invocation.py)
             from src.skill_invocation import pin_skill_contract
             _turn_contract = pin_skill_contract(_turn_contract, message=message, owner=_user, schemas=_contract_schemas, policy=_contract_policy)
             _request_authority = _request_authority.restrict(_contract_policy)
@@ -3825,7 +3825,7 @@ def setup_chat_routes(
             tool_policy = build_effective_tool_policy(
                 disabled_tools=disabled_tools, last_user_message=message,
             )
-        # Barvis: the model may read every personal store it is offered (src/offered_reads.py)
+        # Fork: the model may read every personal store it is offered (src/offered_reads.py)
         from src.offered_reads import with_offered_read_grants
         if chat_mode == "agent":
             _request_authority = with_offered_read_grants(_request_authority, _turn_contract, tool_policy, disabled_tools, owner=_user)

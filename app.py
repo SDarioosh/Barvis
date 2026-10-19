@@ -876,9 +876,9 @@ from routes.mcp.mcp_routes import setup_mcp_routes
 mcp_manager = McpManager()
 set_mcp_manager(mcp_manager)
 app.include_router(setup_mcp_routes(mcp_manager))
-# Barvis: barvis-sound conversations page (routes/barvis_sound_routes.py)
-from routes.barvis_sound_routes import setup_barvis_sound_routes  # noqa: E402
-app.include_router(setup_barvis_sound_routes())
+# Fork: odysseus-sound conversations page (routes/sound_module_routes.py)
+from routes.sound_module_routes import setup_sound_module_routes  # noqa: E402
+app.include_router(setup_sound_module_routes())
 logger.info("MCP routes initialized")
 
 # AI Interaction tools (debates, pipelines, self-managing AI, UI control)
