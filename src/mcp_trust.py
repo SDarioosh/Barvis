@@ -150,6 +150,10 @@ def with_approved_tool_grant(authority, exact_approval, manager=None):
     the resumed task now gets a grant for that same tool. Other tools get
     nothing, and ``restrict`` (policy, per-tool disables, ``disable_mcp``)
     still applies to every call.
+
+    The authority also lists the external backends it may reach, sealed from
+    the original request's grants, so the tool's MCP backend is added there
+    too. If that backend can't be resolved for this owner, nothing is granted.
     """
     if authority is None or exact_approval is None:
         return authority
@@ -161,7 +165,18 @@ def with_approved_tool_grant(authority, exact_approval, manager=None):
     from dataclasses import replace
 
     from src.agent_runtime.authority import OperationGrant, canonical_tool
-    tool = canonical_tool(tool)
-    if any(g.tool == tool and g.actions is None and g.inputs is None for g in authority.grants):
+    from src.agent_runtime.remote_resources import resolve_backend
+    try:
+        backend = resolve_backend(tool, admission=True, owner=authority.owner)
+    except (ValueError, TypeError, AttributeError):
         return authority
-    return replace(authority, grants=(*authority.grants, OperationGrant(tool)))
+    grants = authority.grants
+    if not any(g.tool == canonical_tool(tool) and g.actions is None and g.inputs is None
+               for g in grants):
+        grants = (*grants, OperationGrant(canonical_tool(tool)))
+    backends = authority.backend_resources
+    if backends is not None and backend not in backends:
+        backends = (*backends, backend)
+    if grants is authority.grants and backends is authority.backend_resources:
+        return authority
+    return replace(authority, grants=grants, backend_resources=backends)
