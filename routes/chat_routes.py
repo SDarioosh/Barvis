@@ -3820,6 +3820,10 @@ def setup_chat_routes(
             tool_policy = build_effective_tool_policy(
                 disabled_tools=disabled_tools, last_user_message=message,
             )
+        # Barvis: the model may read every personal store it is offered (src/offered_reads.py)
+        from src.offered_reads import with_offered_read_grants
+        if chat_mode == "agent":
+            _request_authority = with_offered_read_grants(_request_authority, _turn_contract, tool_policy, disabled_tools, owner=_user)
         research_blocked_by_policy = bool(
             tool_policy.blocks("trigger_research")
             or tool_policy.blocks("manage_research")

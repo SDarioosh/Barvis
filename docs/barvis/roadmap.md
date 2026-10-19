@@ -3,7 +3,7 @@
 Barvis-specific status. Upstream's own plans are in [../../ROADMAP.md](../../ROADMAP.md);
 don't edit that file.
 
-_Last updated: 2026-10-18_
+_Last updated: 2026-10-19_
 
 ## Status
 
@@ -16,6 +16,7 @@ _Last updated: 2026-10-18_
 | 5 | HTTP MCP servers keep tool annotations (no approvals for trusted reads over HTTP) | merged (SDarioosh/Barvis#5); sandbox 2/3 → 2/3, approvals 2 → 0 | [sandbox.md](sandbox.md#http-annotation-fix-finding-1-2026-10-18) |
 | 6 | Production: Barvis replaces the owner's Odysseus on port 7000 with all Odysseus features; deploy/rollback script; `barvis_setup.py` no longer trims tools by default | merged (SDarioosh/Barvis#8); production switched 2026-10-18 | [deploy.md](deploy.md) |
 | 7 | `/sound` and `/context`: slash-invoked skills offer module tools for one message (MCP entries in `requires_toolsets`, skill tools pinned on the invoked turn, managed skills from `barvis_setup.py`) | PR SDarioosh/Barvis#9; sandbox results in [sandbox.md](sandbox.md#slash-skills-2026-10-18) | [deploy.md](deploy.md#features-and-modules) |
+| 8 | Several tools in a row: a turn may read every personal store it offers (calendar, tasks, notes, memory, documents, skills), so a calendar lookup after a tasks lookup is no longer refused; writes unchanged | this PR | [../../BARVIS.md](../../BARVIS.md) |
 
 ## Next
 
