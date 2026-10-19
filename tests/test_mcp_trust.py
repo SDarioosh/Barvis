@@ -1,4 +1,5 @@
 """Admin-trusted read-only MCP servers (src/mcp_trust.py)."""
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -183,15 +184,43 @@ def _rename(label, name):
     return ExactOperation.normalize(RENAME, f'{{"speaker_label":"{label}","name":"{name}"}}')
 
 
-def test_approved_trusted_tool_runs_again_in_the_resumed_task(manager, monkeypatch):
+@pytest.fixture
+def backends(manager, monkeypatch):
+    """MCP backend identities, as McpManager.resource_identity returns them."""
+    from src import tool_execution
+    from src.agent_runtime.resources import ExternalResource
+
+    def identity(qualified):
+        _, server, tool = qualified.split("__", 2)
+        if server not in manager._tools:
+            return None
+        return ExternalResource("mcp", f"endpoint:{server}", server, tool, "incarnation")
+
+    manager.resource_identity = identity
+    monkeypatch.setattr(tool_execution, "get_mcp_manager", lambda: manager)
+    return manager
+
+
+def test_approved_trusted_tool_runs_again_in_the_resumed_task(backends, monkeypatch):
     """Approving one name_speaker lets the other speakers be renamed in that task."""
     from src.agent_runtime.authority import RequestAuthority
+    from src.agent_runtime.remote_resources import bind_backend_for_operation
+    from src.agent_runtime.resources import ResourceIdentityError
     monkeypatch.setenv(mcp_trust.TRUSTED_READONLY_MCP_ENV, "convo")
-    base = RequestAuthority.empty(owner="alice", session_id="s")
+    # A resumed authority: inherited, backends sealed from the original request.
+    base = replace(RequestAuthority.empty(owner="alice", session_id="s"), inherited=True)
     assert not base.permits(_rename("Speaker 3", "Shahyah"))
+    with pytest.raises(ResourceIdentityError):
+        bind_backend_for_operation(base, _rename("Speaker 3", "Shahyah"))
     auth = mcp_trust.with_approved_tool_grant(base, _approval(RENAME))
     assert auth.permits(_rename("Speaker 3", "Shahyah"))
     assert auth.permits(_rename("Speaker 2", "Jenn"))
+    # The tool's MCP backend is in scope too ("External backend is outside
+    # sealed request scope" on the server before this).
+    bound = bind_backend_for_operation(auth, _rename("Speaker 2", "Jenn"))
+    assert bound.resource.tool_id == "name_speaker"
+    with pytest.raises(ResourceIdentityError):
+        bind_backend_for_operation(auth, ExactOperation.normalize("mcp__srv2__search_web", "{}"))
     # Only the approved tool; other tools on the server or elsewhere get nothing.
     assert not auth.permits(ExactOperation.normalize("mcp__srv1__wipe", "{}"))
     assert not auth.permits(ExactOperation.normalize("mcp__srv2__search_web", "{}"))
@@ -201,7 +230,7 @@ def test_approved_trusted_tool_runs_again_in_the_resumed_task(manager, monkeypat
     assert mcp_trust.with_approved_tool_grant(auth, _approval(RENAME)) is auth
 
 
-def test_no_grant_without_trust_or_continuation(manager, monkeypatch):
+def test_no_grant_without_trust_or_continuation(backends, monkeypatch):
     from src.agent_runtime.authority import RequestAuthority
     base = RequestAuthority.empty(owner="alice", session_id="s")
     monkeypatch.setenv(mcp_trust.TRUSTED_READONLY_MCP_ENV, "convo")
@@ -211,5 +240,9 @@ def test_no_grant_without_trust_or_continuation(manager, monkeypatch):
     monkeypatch.delenv(mcp_trust.TRUSTED_READONLY_MCP_ENV)
     assert mcp_trust.with_approved_tool_grant(base, _approval(RENAME)) is base
     monkeypatch.setenv(mcp_trust.TRUSTED_READONLY_MCP_ENV, "convo")
-    manager._connections["srv1"]["status"] = "error"
+    backends._connections["srv1"]["status"] = "error"
+    assert mcp_trust.with_approved_tool_grant(base, _approval(RENAME)) is base
+    # A backend that can't be resolved (or belongs to another owner) gets nothing.
+    backends._connections["srv1"]["status"] = "connected"
+    backends.resource_identity = lambda qualified: None
     assert mcp_trust.with_approved_tool_grant(base, _approval(RENAME)) is base
