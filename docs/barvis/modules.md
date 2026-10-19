@@ -61,7 +61,7 @@ Registered modules:
   description what makes this tool different ("the user's recorded conversations").
 - The description says when to use the tool, in one or two sentences. Every argument
   has a description. Dates are `YYYY-MM-DD` in the module's configured timezone.
-- Keep the tool count small (barvis-sound has 10). Every schema is sent with every
+- Keep the tool count small (barvis-sound has 13). Every schema is sent with every
   request.
 
 ### Annotations (Barvis trust depends on them)
