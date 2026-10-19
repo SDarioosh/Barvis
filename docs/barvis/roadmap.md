@@ -15,8 +15,8 @@ _Last updated: 2026-10-19_
 | 4 | Sandbox stack (whole system on CPU in the cloud sandbox) | working; baseline raw 1/3, Barvis 1/3 | [sandbox.md](sandbox.md) |
 | 5 | HTTP MCP servers keep tool annotations (no approvals for trusted reads over HTTP) | merged (SDarioosh/Barvis#5); sandbox 2/3 → 2/3, approvals 2 → 0 | [sandbox.md](sandbox.md#http-annotation-fix-finding-1-2026-10-18) |
 | 6 | Production: Barvis replaces the owner's Odysseus on port 7000 with all Odysseus features; deploy/rollback script; `barvis_setup.py` no longer trims tools by default | merged (SDarioosh/Barvis#8); production switched 2026-10-18 | [deploy.md](deploy.md) |
-| 7 | `/sound` and `/context`: slash-invoked skills offer module tools for one message (MCP entries in `requires_toolsets`, skill tools pinned on the invoked turn, managed skills from `barvis_setup.py`) | PR SDarioosh/Barvis#9; sandbox results in [sandbox.md](sandbox.md#slash-skills-2026-10-18) | [deploy.md](deploy.md#features-and-modules) |
-| 8 | Several tools in a row: a turn may read every personal store it offers (calendar, tasks, notes, memory, documents, skills), so a calendar lookup after a tasks lookup is no longer refused; writes unchanged | this PR | [../../BARVIS.md](../../BARVIS.md) |
+| 7 | `/sound` and `/context`: slash-invoked skills offer module tools for one message (MCP entries in `requires_toolsets`, skill tools pinned on the invoked turn, managed skills from `barvis_setup.py`) | merged (SDarioosh/Barvis#9); sandbox, every tool on + Auto: plain 0/4, `/sound` 4/4, `/context` 1/4 ([sandbox.md](sandbox.md#slash-skills-2026-10-18)) | [deploy.md](deploy.md#features-and-modules) |
+| 8 | Several tools in a row: a turn may read every personal store it offers (calendar, tasks, notes, memory, documents, skills), so a calendar lookup after a tasks lookup is no longer refused; writes unchanged | PR SDarioosh/Barvis#16 | [../../BARVIS.md](../../BARVIS.md) |
 
 ## Next
 
@@ -31,9 +31,11 @@ _Last updated: 2026-10-19_
    stdio servers added over the API fail on every call. (The HTTP annotation bug is
    item 5 above; its upstream issue is drafted in that PR, for the owner to file.)
 2. **Citations to ≥ 15/20.** Most remaining failures have the right fact and no
-   transcript link. Two replies were just "Done." because the model returned empty text
-   after its tool calls. Find why Barvis turns that into "Done." and why links get
-   dropped; fix in Barvis, or in the module's result text if that's the cause. Rerun
+   transcript link. Replies that were just "Done." (the model returned empty text after
+   its tool calls, and the chat route saves "Done." for an empty answer) now get one
+   tool-free answer round (BARVIS.md, "Empty replies after module tools"). Still open:
+   why links get dropped; fix in Barvis, or in the module's result text if that's the
+   cause. Rerun
    `server/eval/bakeoff.py --frontend odysseus` after each change.
 3. **Action items → tasks and calendar.** barvis-sound action items flow into Odysseus
    tasks and CalDAV. Barvis reads them through the module's MCP tools

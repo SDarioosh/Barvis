@@ -57,7 +57,7 @@ curl -sSL -o models/ggml-base.en.bin \
 # Same ports as production. Start long-running services with setsid so they survive
 # the shell that started them (plain `cmd &` inside a compound command can die with it).
 setsid nohup $SBX/llama.cpp/build/bin/llama-server -m $SBX/models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf \
-  --alias qwen3-4b --host 127.0.0.1 --port 8082 --jinja -c 32768 -t 4 > $SBX/logs/llama.log 2>&1 < /dev/null &
+  --alias qwen3-4b --host 127.0.0.1 --port 8082 --jinja -c 32768 -t 4 --cache-ram 2048 > $SBX/logs/llama.log 2>&1 < /dev/null &
 setsid nohup $SBX/whisper.cpp/build/bin/whisper-server -m $SBX/models/ggml-base.en.bin \
   --host 127.0.0.1 --port 8178 -t 2 > $SBX/logs/whisper.log 2>&1 < /dev/null &
 ```
@@ -179,9 +179,53 @@ changed between runs. 89 built-ins plus the built-in MCP servers and `convo`.
 | B: every tool on, "Regular tools" | 0/3 | none | 0 | 2 s | every request was 34.7–36.8k tokens, over the 32k context: llama-server returned HTTP 400 before the model ran (132 tool schemas sent) |
 | C: every tool on, "Auto" (new default) | 0/3 | none | 1 | 299 s | per-turn selection offered `ask_user`/`python`/`read_file` (Q1, Q16) and `manage_calendar` (Q4); no convo tool was offered |
 
-So with every tool on, module tools don't reach the model in either mode. That is the
-next fix ([roadmap.md](roadmap.md)). `barvis_setup.py` now defaults to "Auto" (B can't
+So with every tool on, module tools don't reach the model in either mode. `/sound`
+and `/context` fix that per message; see [Slash skills](#slash-skills-2026-10-18). `barvis_setup.py` now defaults to "Auto" (B can't
 work at 32k), and `--trim` keeps the setup that answers recording questions.
+
+### Slash skills, 2026-10-18
+
+`/sound` and `/context` (SDarioosh/Barvis#9). Same stack and seed, one Barvis instance,
+questions 1, 4, 16 plus a person + relative date question (21: "What did Maria ask me
+to do on Friday?", answer in the 2026-10-16 `maria-oct` conversation). C, D and E ran
+with every tool on and "Auto"; only the message changed. D and E were sent through
+`scripts/barvis_slash_eval.py` (the composed `/invoke` message, through bakeoff's
+odysseus frontend). `tools_sent` is the `[agent-debug]` count on the first round.
+
+| Setup | score | convo tools called | approvals | `tools_sent` | time |
+|---|---|---|---|---|---|
+| A: `--trim`, "Regular tools" | 3/4 | all 4 | 0 | 11 | 887 s |
+| C: all tools, Auto, plain question | 0/4 | none | 2 | 2–3 | 1016 s |
+| D: all tools, Auto, `/sound` | **4/4** | all 4 | 0 | 11 | 564 s |
+| E: all tools, Auto, `/context` | 1/4 | Q1, Q4, Q21 | 0 | 11 | 551 s |
+
+- C: Q1 and Q16 got `ask_user`/`python`/`read_file` and answered "no access"; Q4 went
+  to `manage_calendar`, Q21 to `manage_tasks` (one approval each), both empty.
+- D: every question searched the conversations and cited the right link. Q21 resolved
+  "Friday" to 2026-10-16.
+- E: Q16 made no tool call; Q4 searched but answered "not found"; Q21 cited the right
+  conversation but left out the keyword (Rosa/train). Same tools as D, different
+  procedure text (`/context`'s generic one vs barvis-sound's `INSTRUCTIONS`), so with
+  a 4B model the wording matters; small runs also vary (Q1 here started with "Model
+  request failed", finding 5, and still passed).
+- A first ran right after the others and failed in ~1 s per question: llama-server had
+  been OOM-killed (13 GB resident; its prompt cache grows across long runs). The row
+  above is the rerun on 2026-10-19 after restarting it with `--cache-ram 2048`; use
+  that flag for long eval sessions in the sandbox.
+- Date: the `/sound` request to llama-server (captured through a logging proxy)
+  contains Odysseus' "Current date and time" message ("Today is Monday, October 19,
+  2026 (2026-10-19)") and exactly the 11 tools.
+- Step 1 (before the change), how a slash skill's `requires_toolsets` was applied in
+  "Auto": only when the SKILL.md text named the tool; see the PR.
+
+Rerun D:
+
+```bash
+cd $SOUND/server && . $SBX/convo.env
+ODYSSEUS_URL=http://127.0.0.1:7010 ODYSSEUS_PASSWORD_FILE=$SBX/admin.txt \
+  .venv/bin/python $BARVIS/scripts/barvis_slash_eval.py --skill sound \
+  --log $SBX/logs/barvis.log --extra -- --only 1 4 16 21
+```
 
 ## Findings from the first sandbox run
 
