@@ -51,8 +51,8 @@ Odysseus is large (~478k lines of Python) and fast-moving. Start from these file
 | Upstream's own rules | `CONTRIBUTING.md`, `SECURITY.md`, `THREAT_MODEL.md` |
 
 Barvis code so far: `src/mcp_trust.py`, `src/skill_mcp_toolsets.py`,
-`src/skill_invocation.py`, `scripts/barvis_setup.py`, `scripts/barvis_deploy.sh`,
-`docker/barvis.override.yml`, their tests (`tests/test_mcp_trust.py`,
+`src/skill_invocation.py`, `scripts/barvis_setup.py`, `scripts/barvis_slash_eval.py`,
+`scripts/barvis_deploy.sh`, `docker/barvis.override.yml`, their tests (`tests/test_mcp_trust.py`,
 `tests/test_mcp_http_annotations.py`, `tests/test_barvis_setup.py`,
 `tests/test_skill_mcp_toolsets.py`), and the hooks listed in [BARVIS.md](BARVIS.md).
 
