@@ -123,7 +123,10 @@ Then, per [../modules.md](../modules.md#registering-a-module-in-barvis):
   `ODYSSEUS_PRESET` (default `custom`) and `ODYSSEUS_APPROVAL`.
 - Results: `server/eval/results/odysseus.jsonl` (gitignored).
 - Sandbox (Qwen3-4B on CPU, questions 1, 4, 16; not comparable with the table below):
-  raw 1/3, Barvis over HTTP 1/3. Steps: [../sandbox.md](../sandbox.md#run-the-eval).
+  raw 1/3, Barvis over HTTP 1/3. With every Odysseus tool on and "Auto" (questions 1,
+  4, 16, 21): plain 0/4, `/sound` 4/4, `/context` 1/4, `--trim` 3/4
+  ([../sandbox.md](../sandbox.md#slash-skills-2026-10-18)). Slash-prefixed runs:
+  `scripts/barvis_slash_eval.py` in Barvis. Steps: [../sandbox.md](../sandbox.md#run-the-eval).
 
 | Frontend (same model, same MCP server) | Score |
 |---|---|
