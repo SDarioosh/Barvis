@@ -121,3 +121,47 @@ def with_trusted_server_tools(names: Iterable[str], manager=None,
         if any(n.startswith(f"mcp__{server_id}__") for n in names):
             out |= enabled.get(server_id, set())
     return frozenset(out)
+
+
+def is_trusted_server_tool(tool_name: Any, manager=None) -> bool:
+    """A ``mcp__<server_id>__<tool>`` name on a connected trusted server."""
+    if not isinstance(tool_name, str) or not tool_name.startswith("mcp__"):
+        return False
+    keys = trusted_readonly_server_keys()
+    if not keys:
+        return False
+    manager = manager if manager is not None else _manager()
+    if manager is None:
+        return False
+    return any(tool_name.startswith(f"mcp__{server_id}__")
+               for server_id in _trusted_server_ids(manager, keys))
+
+
+def with_approved_tool_grant(authority, exact_approval, manager=None):
+    """Let an approved trusted-module tool run again in the resumed task.
+
+    The chat card's "allow" covers the rest of the resumed task (upstream sets
+    ``allow_remaining_actions``, which lifts the approval gate), but request
+    authority still admits only the one exact approved call: built-in tools
+    get grants from the request text, MCP tools never do. So "Speaker 1 and 3
+    were Shahyah, speaker 2 was Jenn" renamed Speaker 1 after the owner
+    approved, then hard-blocked the next ``name_speaker`` calls ("outside
+    server request authority"). For a tool on a trusted module server only,
+    the resumed task now gets a grant for that same tool. Other tools get
+    nothing, and ``restrict`` (policy, per-tool disables, ``disable_mcp``)
+    still applies to every call.
+    """
+    if authority is None or exact_approval is None:
+        return authority
+    if not getattr(exact_approval, "allow_remaining_actions", False):
+        return authority
+    tool = str(getattr(exact_approval.pending, "tool_name", "") or "").strip()
+    if not is_trusted_server_tool(tool, manager):
+        return authority
+    from dataclasses import replace
+
+    from src.agent_runtime.authority import OperationGrant, canonical_tool
+    tool = canonical_tool(tool)
+    if any(g.tool == tool and g.actions is None and g.inputs is None for g in authority.grants):
+        return authority
+    return replace(authority, grants=(*authority.grants, OperationGrant(tool)))
