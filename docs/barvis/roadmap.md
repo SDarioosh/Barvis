@@ -3,7 +3,7 @@
 Barvis-specific status. Upstream's own plans are in [../../ROADMAP.md](../../ROADMAP.md);
 don't edit that file.
 
-_Last updated: 2026-10-18_
+_Last updated: 2026-10-19_
 
 ## Status
 
@@ -15,6 +15,7 @@ _Last updated: 2026-10-18_
 | 4 | Sandbox stack (whole system on CPU in the cloud sandbox) | working; baseline raw 1/3, Barvis 1/3 | [sandbox.md](sandbox.md) |
 | 5 | HTTP MCP servers keep tool annotations (no approvals for trusted reads over HTTP) | merged (SDarioosh/Barvis#5); sandbox 2/3 → 2/3, approvals 2 → 0 | [sandbox.md](sandbox.md#http-annotation-fix-finding-1-2026-10-18) |
 | 6 | Production: Barvis replaces the owner's Odysseus on port 7000 with all Odysseus features; deploy/rollback script; `barvis_setup.py` no longer trims tools by default | merged (SDarioosh/Barvis#8); production switched 2026-10-18 | [deploy.md](deploy.md) |
+| 9 | barvis-sound page `/barvis/sound`: conversations list and "who is this?" cards for unnamed speakers (roadmap 5) | PR open; needs barvis-sound's `list_unnamed_speakers` (barvis-sound recognition PR) | [../../BARVIS.md](../../BARVIS.md) |
 | 7 | `/sound` and `/context`: slash-invoked skills offer module tools for one message (MCP entries in `requires_toolsets`, skill tools pinned on the invoked turn, managed skills from `barvis_setup.py`) | PR SDarioosh/Barvis#9; sandbox results in [sandbox.md](sandbox.md#slash-skills-2026-10-18) | [deploy.md](deploy.md#features-and-modules) |
 
 ## Next
@@ -42,9 +43,10 @@ _Last updated: 2026-10-18_
    [sandbox.md](sandbox.md#all-odysseus-tools-on-2026-10-18)).
 4. **ntfy notifications.** Notify the phone (for example new action items or the daily
    digest) through the existing ntfy service. Local only.
-5. **Conversations view.** A Barvis view that lists conversations and opens transcripts,
-   built on the module's MCP tools or documented HTTP API. New files under `static/`
-   and `routes/`, upstream visual style (`CONTRIBUTING.md`).
+5. **Conversations view** (status item 9). `/barvis/sound` lists conversations and opens
+   the module's signed transcripts; "who is this?" cards name unnamed speakers. Next:
+   follow the user's theme (the page uses the default dark tokens only), and a live view
+   of action items if the owner prefers it over the copy (item 8).
 6. **Phone access.** Use Barvis from the Android phone over Tailscale (Odysseus has a
    PWA). Lock services to Tailscale per the owner's security decision.
 7. **Shared search.** One `context` search tool that queries every module with the

@@ -111,6 +111,17 @@ Then, per [../modules.md](../modules.md#registering-a-module-in-barvis):
   one click renames all three speakers. A different write tool in that reply is still
   refused; ask for it in a new message.
 
+## Conversations page
+
+`/barvis/sound` (sidebar: **Conversations**, admin only) shows the module's
+conversations and a "who is this?" card for every unnamed speaker. It calls
+`search_conversations`, `list_unnamed_speakers` and `name_speaker` through the MCP
+manager and parses their result lines (`src/barvis_sound_view.py`, test
+`tests/test_barvis_sound_view.py`); change those line shapes together with the parser.
+`BARVIS_SOUND_SERVER` names the server (default `convo`). Transcripts open the module's
+signed `/view` links in a new tab (Barvis' CSP doesn't allow framing another origin).
+Audio isn't kept after transcription, so cards quote lines instead of playing them.
+
 ## Eval and current score
 
 - Script: `server/eval/bakeoff.py` in barvis-sound. Seed fictional data first with
