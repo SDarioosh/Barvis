@@ -83,9 +83,10 @@ Then add an HTTP server named `convo` with URL
 or `http://127.0.0.1:8001/mcp?access_token=<CONVO_MCP_TOKEN>` (Barvis native, e.g. the
 sandbox).
 
-**stdio** (`convo-server mcp`, args `["mcp"]`, with the `CONVO_*` environment) connects,
-but every call then fails in Barvis; see
-[../sandbox.md](../sandbox.md#findings-from-the-first-sandbox-run).
+**stdio** (`convo-server mcp`, args `["mcp"]`, with the `CONVO_*` environment) works for a
+native Barvis since stdio connections got their own owner task (before, every call after
+the adding request failed; [../sandbox.md](../sandbox.md#findings-from-the-first-sandbox-run),
+finding 2). HTTP stays the documented setup: Barvis in Docker can't spawn `convo-server`.
 
 Then, per [../modules.md](../modules.md#registering-a-module-in-barvis):
 

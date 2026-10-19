@@ -163,8 +163,9 @@ the server's test instance (`127.0.0.1:7010`), then on production (port 7000) pe
 [deploy.md](deploy.md#features-and-modules).
 
 1. **Start the module's MCP server**, HTTP bound to loopback / the Docker bridge /
-   Tailscale. Use HTTP: stdio servers added over the API currently fail on every call
-   in Barvis ([sandbox.md](sandbox.md#findings-from-the-first-sandbox-run)).
+   Tailscale. HTTP is the tested path. Stdio works too since the owner-task fix
+   ([sandbox.md](sandbox.md#findings-from-the-first-sandbox-run), finding 2), but the
+   Docker image would need the module installed inside it.
 2. **Add it to Barvis:** Settings > MCP, or `POST /api/mcp/servers`. Give it a short
    name (barvis-sound: `convo`). HTTP URL form: `http://<host>:<port>/mcp?access_token=<token>`.
 3. **Trust its read-only tools:** add the server name to `ODYSSEUS_TRUSTED_READONLY_MCP`

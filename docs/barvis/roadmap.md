@@ -16,9 +16,10 @@ _Last updated: 2026-10-19_
 | 5 | HTTP MCP servers keep tool annotations (no approvals for trusted reads over HTTP) | merged (SDarioosh/Barvis#5); sandbox 2/3 → 2/3, approvals 2 → 0 | [sandbox.md](sandbox.md#http-annotation-fix-finding-1-2026-10-18) |
 | 6 | Production: Barvis replaces the owner's Odysseus on port 7000 with all Odysseus features; deploy/rollback script; `barvis_setup.py` no longer trims tools by default | merged (SDarioosh/Barvis#8); production switched 2026-10-18 | [deploy.md](deploy.md) |
 | 7 | `/sound` and `/context`: slash-invoked skills offer module tools for one message (MCP entries in `requires_toolsets`, skill tools pinned on the invoked turn, managed skills from `barvis_setup.py`) | merged (SDarioosh/Barvis#9); sandbox, every tool on + Auto: plain 0/4, `/sound` 4/4, `/context` 1/4 ([sandbox.md](sandbox.md#slash-skills-2026-10-18)) | [deploy.md](deploy.md#features-and-modules) |
-| 8 | Several tools in a row: a turn may read every personal store it offers (calendar, tasks, notes, memory, documents, skills), so a calendar lookup after a tasks lookup is no longer refused; writes unchanged | PR SDarioosh/Barvis#16 | [../../BARVIS.md](../../BARVIS.md) |
-| 9 | Action items and digest on the phone (roadmap 3–4): built-in task "Barvis Action Items" pushes new items, items due today and the daily digest via ntfy; items stay live in barvis-sound (owner's decision, 2026-10-19) | PR open, ships paused | [../../BARVIS.md](../../BARVIS.md), `src/barvis_action_items.py` |
-| 10 | barvis-sound page `/barvis/sound`: live action items (done/dismiss), conversations list and "who is this?" cards for unnamed speakers (roadmap 3, 5) | PR open; needs barvis-sound's `list_unnamed_speakers` (barvis-sound recognition PR) | [../../BARVIS.md](../../BARVIS.md) |
+| 8 | Several tools in a row: a turn may read every personal store it offers (calendar, tasks, notes, memory, documents, skills), so a calendar lookup after a tasks lookup is no longer refused; writes unchanged | merged (SDarioosh/Barvis#16) | [../../BARVIS.md](../../BARVIS.md) |
+| 9 | Action items and digest on the phone (roadmap 3–4): built-in task "Barvis Action Items" pushes new items, items due today and the daily digest via ntfy; items stay live in barvis-sound (owner's decision, 2026-10-19) | merged (SDarioosh/Barvis#17), ships paused | [../../BARVIS.md](../../BARVIS.md), `src/barvis_action_items.py` |
+| 10 | barvis-sound page `/barvis/sound`: live action items (done/dismiss), conversations list and "who is this?" cards for unnamed speakers (roadmap 3, 5) | merged (SDarioosh/Barvis#19); barvis-sound's `list_unnamed_speakers` merged (SDarioosh/barvis-sound#24) | [../../BARVIS.md](../../BARVIS.md) |
+| 11 | Stdio MCP servers added over the API keep working after that request (sandbox finding 2): each stdio connection has its own owner task | PR SDarioosh/Barvis#20 | [../../BARVIS.md](../../BARVIS.md), `src/mcp_stdio_owner.py` |
 
 ## Next
 
@@ -29,9 +30,10 @@ _Last updated: 2026-10-19_
    module skills' tools whenever the skill index matches. Measure against C and D.
    Also "Regular tools" with every tool on still overflows 32k; slash skills don't help
    there (every enabled tool is sent).
-1. **Fix the remaining MCP bug the sandbox found** ([sandbox.md](sandbox.md#findings-from-the-first-sandbox-run)):
-   stdio servers added over the API fail on every call. (The HTTP annotation bug is
-   item 5 above; its upstream issue is drafted in that PR, for the owner to file.)
+1. **Fixed (status item 11): the remaining MCP bug the sandbox found**
+   ([sandbox.md](sandbox.md#findings-from-the-first-sandbox-run), finding 2): stdio servers
+   added over the API failed on every call. Upstream issues for this and the HTTP
+   annotation bug (item 5) are drafted in their PRs, for the owner to file.
 2. **Citations to ≥ 15/20.** Most remaining failures have the right fact and no
    transcript link. Replies that were just "Done." (the model returned empty text after
    its tool calls, and the chat route saves "Done." for an empty answer) now get one
