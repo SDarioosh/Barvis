@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
-# Barvis: build and deploy Barvis with Docker Compose, with backup and rollback.
+# Barvis: update the modules, then build and deploy Barvis with Docker Compose, with
+# backup and rollback.
 #
-# Run from the Barvis checkout that holds docker-compose.yml, .env and
-# docker-compose.override.yml (see docs/barvis/deploy.md).
+# Works from any directory: it uses the Barvis checkout it lives in, which holds
+# docker-compose.yml, .env and docker-compose.override.yml (see docs/barvis/deploy.md).
 #
-#   scripts/barvis_deploy.sh deploy [REF]   # build REF (default: <remote>/barvis) and switch to it
-#   scripts/barvis_deploy.sh rollback       # switch back to the image before the last deploy
-#   scripts/barvis_deploy.sh status         # what is running
+#   scripts/barvis_deploy.sh deploy [REF]   # modules, then build REF (default: <remote>/barvis) and switch to it
+#   scripts/barvis_deploy.sh modules        # only update and restart the modules
+#   scripts/barvis_deploy.sh rollback       # switch Barvis back to the image before the last deploy
+#   scripts/barvis_deploy.sh status         # what is running, modules included
 #
-# Environment (all optional):
+# Settings: environment, or KEY=value lines in ~/.config/barvis/deploy.env (all optional):
+#   BARVIS_MODULES      module deploy commands, space separated; each is run with
+#                       "deploy" or "status" (docs/barvis/modules.md#deploying-a-module),
+#                       e.g. ~/projects/barvis-sound/server/scripts/deploy.sh
 #   DOCKER              docker command (default: "sudo docker")
 #   BARVIS_REMOTE       git remote of the Barvis repo (default: the one pointing at */Barvis)
 #   BARVIS_BACKUP_DIR   where data backups go (default: ~/barvis-backups)
@@ -17,6 +22,17 @@
 #   BARVIS_PY           python with httpx for barvis_setup.py (default: venv/bin/python, else python3)
 #   BARVIS_SETUP_ARGS   extra arguments for barvis_setup.py (e.g. "--trim")
 set -euo pipefail
+
+cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.."
+CONFIG=${BARVIS_DEPLOY_CONFIG:-$HOME/.config/barvis/deploy.env}
+if [ -f "$CONFIG" ]; then  # KEY=value lines; the environment wins
+  while IFS= read -r line || [ -n "$line" ]; do
+    [[ $line =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]] || continue
+    key=${BASH_REMATCH[1]} value=${BASH_REMATCH[2]}
+    value=${value#[\"\']} value=${value%[\"\']} value=${value/#\~/$HOME}
+    [ -n "${!key+x}" ] || export "$key=$value"
+  done < "$CONFIG"
+fi
 
 DOCKER=${DOCKER:-sudo docker}
 BACKUP_DIR=${BARVIS_BACKUP_DIR:-$HOME/barvis-backups}
@@ -97,9 +113,41 @@ remote() {
   git remote -v | awk 'tolower($2) ~ /[\/:]sdarioosh\/barvis(\.git)?$/ {print $1; exit}'
 }
 
+module_cmds() {  # BARVIS_MODULES, one per line, ~ expanded
+  local m
+  for m in ${BARVIS_MODULES:-}; do echo "${m/#\~/$HOME}"; done
+}
+
+# Update and restart each module before Barvis, so Barvis comes up against the new
+# module servers. A failed module is reported at the end; Barvis is still deployed.
+MODULES_FAILED=()
+deploy_modules() {
+  local m
+  [ -n "${BARVIS_MODULES:-}" ] || { log "no BARVIS_MODULES set; skipping modules"; return 0; }
+  if [ "$(id -u)" = 0 ] && [ -n "${SUDO_USER:-}" ]; then
+    log "started with sudo; skipping modules (they run as your user; run this script without sudo, it calls sudo for docker itself)"
+    MODULES_FAILED+=(all)
+    return 0
+  fi
+  while IFS= read -r m; do
+    if [ ! -x "$m" ]; then
+      log "module deploy command not found or not executable: $m"
+      MODULES_FAILED+=("$m")
+      continue
+    fi
+    log "module: $m deploy"
+    "$m" deploy < /dev/null || MODULES_FAILED+=("$m")
+  done < <(module_cmds)
+}
+
+modules_result() {
+  [ ${#MODULES_FAILED[@]} -eq 0 ] || die "module deploy failed: ${MODULES_FAILED[*]} (see the output above)"
+}
+
 cmd_deploy() {
   preflight
   git diff --quiet HEAD -- || die "tracked files have local changes; move them to .env or docker-compose.override.yml first (git status)"
+  deploy_modules
   local r ref sha
   r=$(remote); [ -n "$r" ] || die "no git remote points at the Barvis repo; set BARVIS_REMOTE"
   ref=${1:-$r/barvis}
@@ -131,6 +179,7 @@ cmd_deploy() {
   fi
   run_setup
   log "deployed $sha"
+  modules_result
 }
 
 cmd_rollback() {
@@ -149,11 +198,16 @@ cmd_status() {
   echo "checkout:      $(git rev-parse --short HEAD) $(git log -1 --format=%s)"
   echo -n "health:        "; curl -s "$URL/api/health" || echo "not answering on $URL"
   echo
+  local m
+  while IFS= read -r m; do
+    [ -x "$m" ] && "$m" status < /dev/null || echo "module $m: status failed"
+  done < <(module_cmds)
 }
 
 case "${1:-}" in
   deploy) shift; cmd_deploy "$@" ;;
+  modules) deploy_modules; modules_result; log "modules done" ;;
   rollback) cmd_rollback ;;
   status) cmd_status ;;
-  *) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  *) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac
