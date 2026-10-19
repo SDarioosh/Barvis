@@ -18,6 +18,7 @@ _Last updated: 2026-10-19_
 | 7 | `/sound` and `/context`: slash-invoked skills offer module tools for one message (MCP entries in `requires_toolsets`, skill tools pinned on the invoked turn, managed skills from `barvis_setup.py`) | merged (SDarioosh/Barvis#9); sandbox, every tool on + Auto: plain 0/4, `/sound` 4/4, `/context` 1/4 ([sandbox.md](sandbox.md#slash-skills-2026-10-18)) | [deploy.md](deploy.md#features-and-modules) |
 | 8 | Several tools in a row: a turn may read every personal store it offers (calendar, tasks, notes, memory, documents, skills), so a calendar lookup after a tasks lookup is no longer refused; writes unchanged | PR SDarioosh/Barvis#16 | [../../BARVIS.md](../../BARVIS.md) |
 | 9 | Action items and digest on the phone (roadmap 3–4): built-in task "Barvis Action Items" pushes new items, items due today and the daily digest via ntfy; items stay live in barvis-sound (owner's decision, 2026-10-19) | PR open, ships paused | [../../BARVIS.md](../../BARVIS.md), `src/barvis_action_items.py` |
+| 10 | barvis-sound page `/barvis/sound`: live action items (done/dismiss), conversations list and "who is this?" cards for unnamed speakers (roadmap 3, 5) | PR open; needs barvis-sound's `list_unnamed_speakers` (barvis-sound recognition PR) | [../../BARVIS.md](../../BARVIS.md) |
 
 ## Next
 
@@ -43,9 +44,9 @@ _Last updated: 2026-10-19_
    with done/dismiss through `update_action_item`) and pushes reminders.
 4. **ntfy notifications** (status item 9). New action items and yesterday's digest go
    to the phone through the ntfy reminder channel.
-5. **Conversations view.** A Barvis view that lists conversations and opens transcripts,
-   built on the module's MCP tools or documented HTTP API. New files under `static/`
-   and `routes/`, upstream visual style (`CONTRIBUTING.md`).
+5. **Conversations view** (status item 10). `/barvis/sound` lists conversations, live
+   action items (done/dismiss) and "who is this?" cards for unnamed speakers. Next:
+   follow the user's theme (the page uses the default dark tokens only).
 6. **Phone access.** Use Barvis from the Android phone over Tailscale (Odysseus has a
    PWA). Lock services to Tailscale per the owner's security decision.
 7. **Shared search.** One `context` search tool that queries every module with the

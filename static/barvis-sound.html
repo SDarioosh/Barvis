@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Conversations — Barvis</title>
+  <link rel="icon" href="/static/icon.ico">
+  <link rel="stylesheet" href="/static/css/00-tokens.css?v=20260929csssplit">
+  <style>
+    /* Barvis: barvis-sound page. Colors, font and spacing come from the Odysseus
+       tokens in 00-tokens.css; nothing here introduces new color values. */
+    body { background: var(--bg); color: var(--fg); margin: 0; }
+    .bs-wrap { max-width: 860px; margin: 0 auto; padding: 16px; }
+    .bs-top { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+    .bs-top h1 { font-size: 1.1rem; font-weight: 600; margin: 0; flex: 1; }
+    .bs-top a { color: var(--fg); opacity: 0.7; text-decoration: none; }
+    .bs-top a:hover { opacity: 1; }
+    .bs-section { margin: 18px 0 8px; font-size: 0.85rem; text-transform: uppercase;
+                  letter-spacing: 0.06em; opacity: 0.6; }
+    .bs-card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+               padding: 12px 14px; margin-bottom: 10px; }
+    .bs-card h2 { font-size: 0.95rem; margin: 0 0 4px; font-weight: 600; }
+    .bs-meta { font-size: 0.8rem; opacity: 0.65; }
+    .bs-summary { margin: 6px 0 0; font-size: 0.88rem; line-height: 1.45; }
+    .bs-quote { display: block; margin: 6px 0; padding: 4px 8px; border-left: 2px solid var(--border);
+                color: var(--fg); text-decoration: none; font-size: 0.86rem; }
+    .bs-quote:hover { border-left-color: var(--red); }
+    .bs-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+    .bs-input { background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+                border-radius: 6px; padding: 6px 8px; font: inherit; font-size: 0.85rem;
+                min-width: 0; }
+    .bs-btn { background: transparent; color: var(--fg); border: 1px solid var(--border);
+              border-radius: 6px; padding: 6px 10px; font: inherit; font-size: 0.85rem;
+              cursor: pointer; }
+    .bs-btn:hover { border-color: var(--fg); }
+    .bs-btn.primary { border-color: var(--red); color: var(--red); }
+    .bs-btn:disabled { opacity: 0.4; cursor: default; }
+    .bs-filters { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr auto; gap: 8px; }
+    .bs-empty, .bs-status { font-size: 0.85rem; opacity: 0.7; padding: 6px 0; }
+    .bs-status.error { color: var(--red); opacity: 1; }
+    .bs-link { color: var(--fg); display: inline-flex; align-items: center; gap: 4px; }
+    @media (max-width: 640px) { .bs-filters { grid-template-columns: 1fr 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="bs-wrap">
+    <div class="bs-top">
+      <a href="/" title="Back to Barvis">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+      </a>
+      <h1>Conversations</h1>
+      <button type="button" class="bs-btn" id="bs-refresh">Refresh</button>
+    </div>
+
+    <div class="bs-section" id="bs-who-title">Who is this?</div>
+    <div id="bs-who"><div class="bs-status">Loading…</div></div>
+
+    <div class="bs-section">Action items</div>
+    <div id="bs-items"><div class="bs-status">Loading…</div></div>
+
+    <div class="bs-section">Recorded conversations</div>
+    <form class="bs-filters" id="bs-filter">
+      <input class="bs-input" name="query" placeholder="Words" aria-label="Words">
+      <input class="bs-input" name="person" placeholder="Person" aria-label="Person">
+      <input class="bs-input" name="since" type="date" aria-label="From">
+      <input class="bs-input" name="until" type="date" aria-label="To">
+      <button type="submit" class="bs-btn">Search</button>
+    </form>
+    <div id="bs-list"><div class="bs-status">Loading…</div></div>
+  </div>
+  <script type="module" src="/static/js/barvisSound.js"></script>
+</body>
+</html>

@@ -139,6 +139,19 @@ Settings: `BARVIS_ACTION_ITEMS_SERVER` (default `convo`), `BARVIS_NOTIFY_CHANNEL
 ntfy integration (Settings → Integrations); the topic is the reminder topic
 (`reminder_ntfy_topic`).
 
+## Conversations page
+
+`/barvis/sound` (sidebar: **Conversations**, admin only) shows open action items live
+(Done / Dismiss call `update_action_item`; Odysseus keeps no copy), the module's
+conversations, and a "who is this?" card for every unnamed speaker. It calls
+`list_action_items`, `update_action_item`, `search_conversations`,
+`list_unnamed_speakers` and `name_speaker` through the MCP
+manager and parses their result lines (`src/barvis_sound_view.py`, test
+`tests/test_barvis_sound_view.py`); change those line shapes together with the parser.
+`BARVIS_SOUND_SERVER` names the server (default `convo`). Transcripts open the module's
+signed `/view` links in a new tab (Barvis' CSP doesn't allow framing another origin).
+Audio isn't kept after transcription, so cards quote lines instead of playing them.
+
 ## Eval and current score
 
 - Script: `server/eval/bakeoff.py` in barvis-sound. Seed fictional data first with

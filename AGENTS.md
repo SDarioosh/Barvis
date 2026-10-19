@@ -52,12 +52,14 @@ Odysseus is large (~478k lines of Python) and fast-moving. Start from these file
 
 Barvis code so far: `src/mcp_trust.py`, `src/skill_mcp_toolsets.py`,
 `src/skill_invocation.py`, `src/offered_reads.py`, `src/barvis_action_items.py`,
+`src/barvis_sound_view.py`, `routes/barvis_sound_routes.py`, `static/barvis-sound.html`,
+`static/js/barvisSound.js`,
 `scripts/barvis_setup.py`,
 `scripts/barvis_slash_eval.py`, `scripts/barvis_deploy.sh`, `docker/barvis.override.yml`,
 their tests (`tests/test_mcp_trust.py`,
 `tests/test_mcp_http_annotations.py`, `tests/test_barvis_setup.py`,
 `tests/test_skill_mcp_toolsets.py`, `tests/test_offered_reads.py`,
-`tests/test_barvis_action_items.py`), and the hooks listed in [BARVIS.md](BARVIS.md).
+`tests/test_barvis_action_items.py`, `tests/test_barvis_sound_view.py`), and the hooks listed in [BARVIS.md](BARVIS.md).
 
 ## Fork rules (merge-friendly)
 
