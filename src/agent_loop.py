@@ -37233,8 +37233,11 @@ async def stream_agent_loop(
             else "unattended_preamble_recovery"
         )
     )
+    # Barvis: answer an empty reply after module tools (src/mcp_trust.py)
+    from src.mcp_trust import ran_trusted_server_tool
+    _barvis_module_empty_final = _unattended_empty_final and ran_trusted_server_tool(tool_events)
     if (
-        _unattended_native_runtime
+        (_unattended_native_runtime or _barvis_module_empty_final)
         and tool_events
         and (
             _exhausted_rounds
