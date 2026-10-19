@@ -1567,8 +1567,11 @@ def selected_tools_for_request(message: str) -> frozenset[str] | None:
     ):
         return frozenset({"list_models"})
     model_discovery_clauses = re.split(r"[\n.!?;]+", text)
+    # Barvis: comparisons and explicit web lookups are web questions (src/web_turn_scope.py)
+    from src.web_turn_scope import model_lookup_wants_web
     if any(
-        re.search(r"\b(?:models?|qwen|llama|gemma|mistral|instruct)\b", clause, re.I)
+        not model_lookup_wants_web(clause)
+        and re.search(r"\b(?:models?|qwen|llama|gemma|mistral|instruct)\b", clause, re.I)
         and re.search(
             r"\b(?:i(?:['’]?m|\s+am)\s+after|look(?:ing)?\s+for|find|search|show|"
             r"recommend|suggest|anything\s+in)\b",

@@ -3574,6 +3574,11 @@ def setup_chat_routes(
                 _explicit_browser_intent or _external_discovery_intent
             ) else ()),
         )
+        # Barvis: web toggle on + no tool named in the words → web_search (src/web_turn_scope.py)
+        from src.web_turn_scope import with_unclassified_web_search
+        _request_authority = with_unclassified_web_search(
+            _request_authority, web_search_enabled="web_search" not in disabled_tools,
+            client_runtime_context=client_runtime_context)
         if exact_tool_approval is not None:
             from src.agent_runtime.authority import RequestAuthority
             _request_authority = (
