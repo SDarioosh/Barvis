@@ -3583,3 +3583,7 @@ BUILTIN_ACTION_INFO = {
     "audit_skills": "Audit unaudited skills after enough new skills are added: test, narrow metadata, self-edit/retry, optional teacher rewrite, tag duplicates/trivial skills, and publish/draft using the auto-approve threshold.",
     "check_email_urgency": "Scan unread emails hourly, tag urgent/reply-soon/newsletter/marketing/spam, and send a reminder when a new email needs a fast reply.",
 }
+
+# Barvis: module action items -> to-dos, calendar, ntfy (src/barvis_action_items.py)
+from src.barvis_action_items import register_builtin_action as _barvis_register  # noqa: E402
+_barvis_register(BUILTIN_ACTIONS, BUILTIN_ACTION_INFO)
