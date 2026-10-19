@@ -163,7 +163,8 @@ the server's test instance (`127.0.0.1:7010`), then on production (port 7000) pe
 [deploy.md](deploy.md#features-and-modules).
 
 1. **Start the module's MCP server**, HTTP bound to loopback / the Docker bridge /
-   Tailscale. HTTP is the tested path. Stdio works too since the owner-task fix
+   Tailscale. On the server, add its deploy command to `BARVIS_MODULES`
+   ([Deploying a module](#deploying-a-module)) so it stays running. HTTP is the tested path. Stdio works too since the owner-task fix
    ([sandbox.md](sandbox.md#findings-from-the-first-sandbox-run), finding 2), but the
    Docker image would need the module installed inside it.
 2. **Add it to Barvis:** Settings > MCP, or `POST /api/mcp/servers`. Give it a short
@@ -188,6 +189,24 @@ the server's test instance (`127.0.0.1:7010`), then on production (port 7000) pe
 7. **Document it:** add `docs/barvis/modules/<name>.md` (copy the structure of
    [barvis-sound.md](modules/barvis-sound.md)), a row in the table at the top of this
    file, and its services in [architecture.md](architecture.md).
+
+## Deploying a module
+
+So that one `scripts/barvis_deploy.sh deploy` updates the whole system
+([deploy.md](deploy.md#update-production)), a module ships a deploy command:
+
+- An executable in the module repo (barvis-sound: `server/scripts/deploy.sh`), listed in
+  `BARVIS_MODULES`. Barvis runs it with `deploy`, and with `status` for
+  `barvis_deploy.sh status`. Nothing else: Barvis never reaches into the module's files.
+- `deploy` works from any directory, as the owner's user, without sudo and without
+  input: it updates the module's checkout to its default branch, installs it, starts or
+  restarts its services in the background (so they survive logout and reboot), waits
+  until its MCP server answers, and exits non-zero if it doesn't. It rolls itself back
+  when the new version doesn't come up.
+- Its settings live in the module's own config (barvis-sound: `server/.env`), not in
+  Barvis.
+- Barvis deploys modules first, then itself, so `barvis_setup.py` finds their MCP
+  servers connected.
 
 ## Eval harness
 

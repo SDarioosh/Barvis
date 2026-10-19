@@ -72,10 +72,10 @@ owner's server.
 | Service | Address | Status | Notes |
 |---|---|---|---|
 | llama-server (`qwen3.5-35b`, OpenAI-compatible, no auth) | `127.0.0.1:8082` | running | shared by Barvis, Odysseus, barvis-sound |
-| whisper-server (whisper.cpp) | `127.0.0.1:8178` | running, not a system service yet | used by barvis-sound |
-| barvis-sound API + worker (`convo-server serve`) | port 8000 | running (test server), not a system service yet | ingestion, read API, `/view/` transcript links |
-| barvis-sound MCP over HTTP (`convo-server mcp --http`) | `CONVO_MCP_HOST:CONVO_MCP_PORT`, default `127.0.0.1:8001` | available; started on demand | stdio (`convo-server mcp`) needs no port |
-| Barvis production (Docker, image `barvis:<commit>`; was upstream Odysseus until 2026-10-18) | port 7000, `/home/steam/models/odysseus` | running | the owner deploys it with `scripts/barvis_deploy.sh` ([deploy.md](deploy.md)); agents never run anything on it |
+| whisper-server (whisper.cpp) | `127.0.0.1:8178` | running; can be the user service `barvis-sound-whisper` (`BARVIS_SOUND_WHISPER_CMD`) | used by barvis-sound |
+| barvis-sound API + worker (`convo-server serve`) | port 8000 | running (test server); user service `barvis-sound` once `barvis-deploy` is set up | ingestion, read API, `/view/` transcript links |
+| barvis-sound MCP over HTTP (`convo-server mcp --http`) | `CONVO_MCP_HOST:CONVO_MCP_PORT`, default `127.0.0.1:8001` | user service `barvis-sound-mcp` once `barvis-deploy` is set up | stdio (`convo-server mcp`) needs no port |
+| Barvis production (Docker, image `barvis:<commit>`; was upstream Odysseus until 2026-10-18) | port 7000, `/home/steam/models/odysseus` | running | the owner deploys it, and the modules, with `scripts/barvis_deploy.sh` ([deploy.md](deploy.md)); agents never run anything on it |
 | Barvis isolated test instance | `127.0.0.1:7010` | running on demand (`~/.hermes/cache/scratch/barvis-run.sh`) | use for all tests and evals |
 | Odysseus ChromaDB | port 8100 | part of production's Compose stack | must not be reachable from outside |
 | ntfy | port 8091 | part of production's Compose stack; status not verified | Barvis notifications planned |

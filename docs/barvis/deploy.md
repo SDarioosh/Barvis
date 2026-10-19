@@ -17,32 +17,73 @@ The flow for every change: **PR → sandbox checks → merge into `barvis` → t
 
 ## Update production
 
+One command updates the modules and Barvis, from any directory:
+
 ```bash
-cd /home/steam/models/odysseus
-scripts/barvis_deploy.sh deploy          # latest barvis
-scripts/barvis_deploy.sh status          # what is running
-scripts/barvis_deploy.sh rollback        # back to the image before the last deploy
+barvis-deploy deploy          # modules, then the latest barvis
+barvis-deploy status          # what is running, modules included
+barvis-deploy modules         # only update and restart the modules
+barvis-deploy rollback        # Barvis back to the image before the last deploy
 ```
+
+`barvis-deploy` is a link to `scripts/barvis_deploy.sh` in the production checkout
+([one-time setup](#one-command-setup-once)); the full path works too.
 
 `deploy` does, in order:
 
 1. Refuses to run if tracked files have local changes, or if
    `docker-compose.override.yml` doesn't select a `barvis:` image.
-2. Fetches the Barvis remote and fast-forwards the local `barvis` branch (or checks out
+2. Runs each module's deploy command from `BARVIS_MODULES`
+   ([modules.md](modules.md#deploying-a-module)). For barvis-sound that updates its
+   checkout, installs it, restarts `convo-server serve`, the MCP server and (if
+   configured) whisper-server as background services, and waits until they answer. A
+   failed module rolls itself back; Barvis is still deployed and the run ends with an
+   error naming the module.
+3. Fetches the Barvis remote and fast-forwards the local `barvis` branch (or checks out
    the ref you pass, e.g. a tag).
-3. Builds `barvis:<short sha>`, tags the running image `barvis:previous`.
-4. Stops the app container and backs up the data dir to
+4. Builds `barvis:<short sha>`, tags the running image `barvis:previous`.
+5. Stops the app container and backs up the data dir to
    `~/barvis-backups/data-<date>-<old sha>.tgz` (keeps the last 5).
-5. Starts the new image, waits up to 2 minutes for `/api/health`. If it never comes up,
+6. Starts the new image, waits up to 2 minutes for `/api/health`. If it never comes up,
    it switches back to `barvis:previous` by itself and says so.
-6. Runs `scripts/barvis_setup.py` if `~/.config/barvis/admin.txt` exists.
+7. Runs `scripts/barvis_setup.py` if `~/.config/barvis/admin.txt` exists.
 
-`barvis_setup.py` needs Python with `httpx`; on the owner's server put
-`export BARVIS_PY=~/projects/barvis/venv/bin/python` in `~/.bashrc`.
+Run it as your user, not with `sudo`: it calls `sudo docker` itself, and the modules run
+as your user.
 
-Settings (all optional): `DOCKER` (default `sudo docker`), `BARVIS_REMOTE`,
-`BARVIS_BACKUP_DIR`, `BARVIS_KEEP_BACKUPS`, `BARVIS_PASSWORD_FILE`, `BARVIS_PY`,
-`BARVIS_SETUP_ARGS`. See the top of the script.
+Settings (all optional), as `KEY=value` lines in `~/.config/barvis/deploy.env` or in the
+environment (which wins): `BARVIS_MODULES`, `DOCKER` (default `sudo docker`),
+`BARVIS_REMOTE`, `BARVIS_BACKUP_DIR`, `BARVIS_KEEP_BACKUPS`, `BARVIS_PASSWORD_FILE`,
+`BARVIS_PY`, `BARVIS_SETUP_ARGS`. See the top of the script.
+
+### One-command setup (once)
+
+On the owner's server, with barvis-sound in `~/projects/barvis-ai-wt/main` (adjust the
+path if the folder was renamed):
+
+```bash
+mkdir -p ~/.local/bin ~/.config/barvis
+ln -sf /home/steam/models/odysseus/scripts/barvis_deploy.sh ~/.local/bin/barvis-deploy
+cat > ~/.config/barvis/deploy.env <<'EOF'
+BARVIS_MODULES=~/projects/barvis-ai-wt/main/server/scripts/deploy.sh
+BARVIS_PY=~/projects/barvis/venv/bin/python
+EOF
+```
+
+`barvis_setup.py` needs Python with `httpx`, hence `BARVIS_PY`. In barvis-sound's
+`server/.env`, set what used to be typed on the command line, so the services get it:
+
+```bash
+CONVO_MCP_TOKEN=<the token in Barvis' convo MCP URL>
+CONVO_MCP_HOST=172.17.0.1
+# optional, whisper-server as a service too (full paths):
+BARVIS_SOUND_WHISPER_CMD=/path/to/whisper-server -m /path/to/ggml-large-v3-turbo-q5_0.bin --host 127.0.0.1 --port 8178
+```
+
+Stop any `convo-server` or `whisper-server` started by hand (the module's deploy refuses
+to start next to them), then run `barvis-deploy deploy`. After that the module services
+start at boot and restart on a crash. barvis-sound's side:
+[server/README.md](https://github.com/SDarioosh/barvis-sound/blob/main/server/README.md#deploy-one-command-runs-in-the-background).
 
 **Rolling back data.** `rollback` switches the image only. If the newer version migrated
 the database, the old one may not read it; restore the backup taken before that deploy
@@ -107,7 +148,8 @@ A module plugs in as an MCP server ([modules.md](modules.md#registering-a-module
 For barvis-sound on this server:
 
 - Run its MCP server on the Docker bridge address, so the container can reach it:
-  `CONVO_MCP_HOST=172.17.0.1 .venv/bin/convo-server mcp --http` (port 8001).
+  `CONVO_MCP_HOST=172.17.0.1` in its `server/.env` (port 8001). `barvis-deploy` keeps it
+  running ([above](#one-command-setup-once)).
 - In Settings > MCP add an HTTP server named `convo`:
   `http://host.docker.internal:8001/mcp?access_token=<CONVO_MCP_TOKEN>`.
 - `ODYSSEUS_TRUSTED_READONLY_MCP=convo` is set in `docker-compose.override.yml`.
