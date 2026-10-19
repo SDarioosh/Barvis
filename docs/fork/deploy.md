@@ -1,89 +1,112 @@
-# Deploying Barvis on the server
+# Deploying the fork on the server
 
-Barvis runs on the owner's server in two places:
+Our Odysseus fork runs on the owner's server in two places:
 
 | | Production | Test instance |
 |---|---|---|
 | What | the owner's daily install: all Odysseus features plus modules | throwaway copy for checks and evals |
-| How | Docker Compose, image `barvis:<commit>` built locally | from source (`uvicorn`), its own data dir |
+| How | Docker Compose, image `odysseus-fork:<commit>` built locally | from source (`uvicorn`), its own data dir |
 | Where | `/home/steam/models/odysseus`, port 7000 | `~/projects/barvis`, `127.0.0.1:7010` (`~/.hermes/cache/scratch/barvis-run.sh`) |
-| Changed by | the owner only, with `scripts/barvis_deploy.sh` | verification steps in PRs |
+| Changed by | the owner only, with `scripts/fork_deploy.sh` | verification steps in PRs |
 
 Production ran upstream Odysseus until 2026-10-18 and was converted in place, so it kept
 its accounts, chats, settings, ChromaDB and ntfy data.
 
 The flow for every change: **PR → sandbox checks → merge into `barvis` → test instance
-(Server verification) → `barvis_deploy.sh deploy` on production.**
+(Server verification) → `fork_deploy.sh deploy` on production.**
 
 ## Update production
 
-One command updates the modules and Barvis, from any directory:
+One command updates the modules and Odysseus, from any directory:
 
 ```bash
-barvis-deploy deploy          # modules, then the latest barvis
-barvis-deploy status          # what is running, modules included
-barvis-deploy modules         # only update and restart the modules
-barvis-deploy rollback        # Barvis back to the image before the last deploy
+odysseus-deploy deploy          # modules, then the latest barvis branch
+odysseus-deploy status          # what is running, modules included
+odysseus-deploy modules         # only update and restart the modules
+odysseus-deploy rollback        # Odysseus back to the image before the last deploy
 ```
 
-`barvis-deploy` is a link to `scripts/barvis_deploy.sh` in the production checkout
+`odysseus-deploy` is a link to `scripts/fork_deploy.sh` in the production checkout
 ([one-time setup](#one-command-setup-once)); the full path works too.
 
 `deploy` does, in order:
 
 1. Refuses to run if tracked files have local changes, or if
-   `docker-compose.override.yml` doesn't select a `barvis:` image.
-2. Runs each module's deploy command from `BARVIS_MODULES`
-   ([modules.md](modules.md#deploying-a-module)). For barvis-sound that updates its
+   `docker-compose.override.yml` doesn't select an `odysseus-fork:` image (or the former
+   `barvis:` one).
+2. Runs each module's deploy command from `FORK_MODULES`
+   ([modules.md](modules.md#deploying-a-module)). For odysseus-sound that updates its
    checkout, installs it, restarts `convo-server serve`, the MCP server and (if
    configured) whisper-server as background services, and waits until they answer. A
-   failed module rolls itself back; Barvis is still deployed and the run ends with an
+   failed module rolls itself back; Odysseus is still deployed and the run ends with an
    error naming the module.
-3. Fetches the Barvis remote and fast-forwards the local `barvis` branch (or checks out
+3. Fetches the fork's remote and fast-forwards the local `barvis` branch (or checks out
    the ref you pass, e.g. a tag).
-4. Builds `barvis:<short sha>`, tags the running image `barvis:previous`.
+4. Builds `odysseus-fork:<short sha>`, tags the running image `odysseus-fork:previous`.
 5. Stops the app container and backs up the data dir to
-   `~/barvis-backups/data-<date>-<old sha>.tgz` (keeps the last 5).
+   `~/odysseus-backups/data-<date>-<old sha>.tgz` (keeps the last 5).
 6. Starts the new image, waits up to 2 minutes for `/api/health`. If it never comes up,
-   it switches back to `barvis:previous` by itself and says so.
-7. Runs `scripts/barvis_setup.py` if `~/.config/barvis/admin.txt` exists.
+   it switches back to `odysseus-fork:previous` by itself and says so.
+7. Runs `scripts/modules_setup.py` if `~/.config/odysseus-fork/admin.txt` exists.
 
 Run it as your user, not with `sudo`: it calls `sudo docker` itself, and the modules run
 as your user.
 
-Settings (all optional), as `KEY=value` lines in `~/.config/barvis/deploy.env` or in the
-environment (which wins): `BARVIS_MODULES`, `DOCKER` (default `sudo docker`),
-`BARVIS_REMOTE`, `BARVIS_BACKUP_DIR`, `BARVIS_KEEP_BACKUPS`, `BARVIS_PASSWORD_FILE`,
-`BARVIS_PY`, `BARVIS_SETUP_ARGS`. See the top of the script.
+Settings (all optional), as `KEY=value` lines in `~/.config/odysseus-fork/deploy.env` or in the
+environment (which wins): `FORK_MODULES`, `DOCKER` (default `sudo docker`),
+`FORK_REMOTE`, `FORK_BACKUP_DIR`, `FORK_KEEP_BACKUPS`, `FORK_PASSWORD_FILE`,
+`FORK_PY`, `FORK_SETUP_ARGS`. See the top of the script. The former `BARVIS_*`
+names, `~/.config/barvis/` and `~/barvis-backups` still work ([below](#moving-from-the-barvis-name-once)).
 
 ### One-command setup (once)
 
-On the owner's server, with barvis-sound in `~/projects/barvis-ai-wt/main` (adjust the
+On the owner's server, with odysseus-sound in `~/projects/barvis-ai-wt/main` (adjust the
 path if the folder was renamed):
 
 ```bash
-mkdir -p ~/.local/bin ~/.config/barvis
-ln -sf /home/steam/models/odysseus/scripts/barvis_deploy.sh ~/.local/bin/barvis-deploy
-cat > ~/.config/barvis/deploy.env <<'EOF'
-BARVIS_MODULES=~/projects/barvis-ai-wt/main/server/scripts/deploy.sh
-BARVIS_PY=~/projects/barvis/venv/bin/python
+mkdir -p ~/.local/bin ~/.config/odysseus-fork
+ln -sf /home/steam/models/odysseus/scripts/fork_deploy.sh ~/.local/bin/odysseus-deploy
+cat > ~/.config/odysseus-fork/deploy.env <<'EOF'
+FORK_MODULES=~/projects/barvis-ai-wt/main/server/scripts/deploy.sh
+FORK_PY=~/projects/barvis/venv/bin/python
 EOF
 ```
 
-`barvis_setup.py` needs Python with `httpx`, hence `BARVIS_PY`. In barvis-sound's
+`modules_setup.py` needs Python with `httpx`, hence `FORK_PY`. In odysseus-sound's
 `server/.env`, set what used to be typed on the command line, so the services get it:
 
 ```bash
-CONVO_MCP_TOKEN=<the token in Barvis' convo MCP URL>
+CONVO_MCP_TOKEN=<the token in Odysseus' convo MCP URL>
 CONVO_MCP_HOST=172.17.0.1
 # optional, whisper-server as a service too (full paths):
 BARVIS_SOUND_WHISPER_CMD=/path/to/whisper-server -m /path/to/ggml-large-v3-turbo-q5_0.bin --host 127.0.0.1 --port 8178
 ```
 
 Stop any `convo-server` or `whisper-server` started by hand (the module's deploy refuses
-to start next to them), then run `barvis-deploy deploy`. After that the module services
-start at boot and restart on a crash. barvis-sound's side:
+to start next to them), then run `odysseus-deploy deploy`. After that the module services
+start at boot and restart on a crash. odysseus-sound's side:
 [server/README.md](https://github.com/SDarioosh/barvis-sound/blob/main/server/README.md#deploy-one-command-runs-in-the-background).
+
+### Moving from the Barvis name (once)
+
+The fork was called Barvis until 2026-10-19. The first deploy after the rename works
+with the old setup: the old `barvis-deploy` link still runs the old script, and the old
+override keeps the `barvis:` images. Its last step can't find `barvis_setup.py` any more
+and says "barvis_setup.py failed"; that is expected, the next deploy runs
+`modules_setup.py`. Then switch to the new names:
+
+```bash
+cd /home/steam/models/odysseus
+cp docker/fork.override.yml docker-compose.override.yml   # image: odysseus-fork:...
+rm -f ~/.local/bin/barvis-deploy
+ln -sf /home/steam/models/odysseus/scripts/fork_deploy.sh ~/.local/bin/odysseus-deploy
+odysseus-deploy deploy        # keeps barvis:current as the rollback image
+```
+
+Optional, any time later: `mv ~/.config/barvis ~/.config/odysseus-fork`, rename the
+`BARVIS_*` lines in `deploy.env` to `FORK_*`, and `mv ~/barvis-backups ~/odysseus-backups`.
+Until then the script reads the old names. Old `barvis:<sha>` images can be removed with
+`sudo docker image rm` once a rollback to them is no longer wanted.
 
 **Rolling back data.** `rollback` switches the image only. If the newer version migrated
 the database, the old one may not read it; restore the backup taken before that deploy
@@ -91,13 +114,13 @@ the database, the old one may not read it; restore the backup taken before that 
 
 ```bash
 sudo docker compose stop odysseus
-sudo rm -rf data && sudo tar xzf ~/barvis-backups/data-<date>-<sha>.tgz -C .
+sudo rm -rf data && sudo tar xzf ~/odysseus-backups/data-<date>-<sha>.tgz -C .
 sudo docker compose up -d
 ```
 
 ## Features and modules
 
-Production keeps every Odysseus feature. `scripts/barvis_setup.py` (run by `deploy`):
+Production keeps every Odysseus feature. `scripts/modules_setup.py` (run by `deploy`):
 
 - leaves the tool toggles in Settings > Tools alone;
 - sets the default chat model to "Auto" tool mode;
@@ -108,7 +131,7 @@ Production keeps every Odysseus feature. `scripts/barvis_setup.py` (run by `depl
 `--trim` turns off every built-in except a small keep-list and sets "Regular tools"
 (the old memory-only setup); `--untrim` turns everything back on.
 `--model-mode auto|full|unchanged` overrides the tool mode. Put the flags in
-`BARVIS_SETUP_ARGS` to make `deploy` use them.
+`FORK_SETUP_ARGS` to make `deploy` use them.
 
 **Asking a module: `/sound` and `/context`.** With every Odysseus tool on and "Auto",
 a plain question doesn't reach module tools: per-turn selection picks built-ins
@@ -119,7 +142,7 @@ a plain question doesn't reach module tools: per-turn selection picks built-ins
 /context what did I tell Emily I'd do last Wednesday?
 ```
 
-- `/sound` offers barvis-sound's tools (`mcp:convo`); `/context` offers the tools of
+- `/sound` offers odysseus-sound's tools (`mcp:convo`); `/context` offers the tools of
   every server in `ODYSSEUS_TRUSTED_READONLY_MCP`. That message gets only those tools
   plus `ask_user`/`update_plan` (~10 instead of ~130), so a small model finds them.
 - It applies to that one message. The next message without a slash command is routed
@@ -130,13 +153,13 @@ a plain question doesn't reach module tools: per-turn selection picks built-ins
   (`update_action_item`, `name_speaker`) still ask.
 - The model gets today's date on every turn (Odysseus' "Current date and time"
   context), so "last Wednesday" becomes a date.
-- Both are skills (Settings > Skills, category `barvis`) with `source: managed`:
-  `barvis_setup.py` creates and updates them, and they need no skill audit. `/sound`'s
-  procedure is the Custom preset's text (barvis-sound's `INSTRUCTIONS`): edit the
+- Both are skills (Settings > Skills, category `modules`) with `source: managed`:
+  `modules_setup.py` creates and updates them, and they need no skill audit. `/sound`'s
+  procedure is the Custom preset's text (odysseus-sound's `INSTRUCTIONS`): edit the
   preset and rerun setup; don't edit the skill by hand. `--no-skills` skips them;
   `--module-skill NAME=SERVER`, `--skill-text NAME=FILE`, `--context-skill NAME` and
   `--trusted a,b` change them.
-- `barvis_setup.py` runs outside the container, so it can't see the container's
+- `modules_setup.py` runs outside the container, so it can't see the container's
   `ODYSSEUS_TRUSTED_READONLY_MCP`. Without `--trusted` or that variable in its own
   environment, `/context` covers the `--module` list (default `convo`).
 - If a module's server is down, the slash message answers that its tools are
@@ -144,17 +167,17 @@ a plain question doesn't reach module tools: per-turn selection picks built-ins
 - Works in "Auto". In "Regular tools" every enabled tool is sent anyway, so with all
   tools on it still overflows a 32k context; use `--trim` there.
 
-A module plugs in as an MCP server ([modules.md](modules.md#registering-a-module-in-barvis)).
-For barvis-sound on this server:
+A module plugs in as an MCP server ([modules.md](modules.md#registering-a-module-in-odysseus)).
+For odysseus-sound on this server:
 
 - Run its MCP server on the Docker bridge address, so the container can reach it:
-  `CONVO_MCP_HOST=172.17.0.1` in its `server/.env` (port 8001). `barvis-deploy` keeps it
+  `CONVO_MCP_HOST=172.17.0.1` in its `server/.env` (port 8001). `odysseus-deploy` keeps it
   running ([above](#one-command-setup-once)).
 - In Settings > MCP add an HTTP server named `convo`:
   `http://host.docker.internal:8001/mcp?access_token=<CONVO_MCP_TOKEN>`.
 - `ODYSSEUS_TRUSTED_READONLY_MCP=convo` is set in `docker-compose.override.yml`.
 - Paste its `INSTRUCTIONS` text into a Custom preset
-  ([modules/barvis-sound.md](modules/barvis-sound.md#connect-it)).
+  ([modules/odysseus-sound.md](modules/odysseus-sound.md#connect-it)).
 
 Check reachability from inside the container:
 
@@ -167,7 +190,7 @@ except Exception as e: print('NOT reachable:', e)"
 
 ## One-time setup (done 2026-10-18)
 
-How an upstream Odysseus Compose install becomes Barvis production. Kept for a rebuild.
+How an upstream Odysseus Compose install becomes fork production. Kept for a rebuild.
 
 ```bash
 cd /home/steam/models/odysseus
@@ -176,21 +199,21 @@ sudo docker compose stop odysseus
 sudo tar czf ~/odysseus-data-$(date +%F).tgz data/
 git remote add barvis https://github.com/SDarioosh/Barvis.git
 git fetch barvis && git checkout -b barvis barvis/barvis
-cp docker/barvis.override.yml docker-compose.override.yml
+cp docker/fork.override.yml docker-compose.override.yml
 printf 'APP_BIND=0.0.0.0\nAPP_PORT=7000\n' >> .env
-mkdir -p ~/.config/barvis && chmod 700 ~/.config/barvis
-read -rsp 'Barvis admin password: ' P; printf '%s' "$P" > ~/.config/barvis/admin.txt; unset P; echo
-chmod 600 ~/.config/barvis/admin.txt
-scripts/barvis_deploy.sh deploy
+mkdir -p ~/.config/odysseus-fork && chmod 700 ~/.config/odysseus-fork
+read -rsp 'Odysseus admin password: ' P; printf '%s' "$P" > ~/.config/odysseus-fork/admin.txt; unset P; echo
+chmod 600 ~/.config/odysseus-fork/admin.txt
+scripts/fork_deploy.sh deploy
 ```
 
-The admin password is the existing Odysseus one: Barvis keeps the accounts.
+The admin password is the existing Odysseus one: the fork keeps the accounts.
 
 Pitfalls met during the switch:
 
 - **Compose runs upstream's image unless told otherwise.** `docker-compose.yml` pulls
   `ghcr.io/odysseus-dev/odysseus` and only builds locally if the pull fails. The override
-  selects `barvis:current` with `pull_policy: never`.
+  selects `odysseus-fork:current` with `pull_policy: never`.
 - **Variables reach the container only if listed.** `ODYSSEUS_TRUSTED_READONLY_MCP` is
   not in upstream's `environment:` list, so it lives in the override.
 - **Stay in the same folder.** Compose names volumes (ChromaDB, ntfy, SearXNG) after the

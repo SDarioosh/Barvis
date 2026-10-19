@@ -5,7 +5,7 @@ Their reader/writer tasks live inside the cancel scope of the task that entered
 them, and AnyIO requires that same task to exit them.
 
 A server added, enabled or reconnected over the API was entered inside the HTTP
-request. Starlette's ``BaseHTTPMiddleware`` (Barvis has several) cancels its task
+request. Starlette's ``BaseHTTPMiddleware`` (Odysseus has several) cancels its task
 group once the response is sent, which also cancels the transport tasks: the call
 made inside that request works, and every later call fails with an empty
 ``ClosedResourceError`` (``MCP tool call failed: <name>:``, ``exit_code=1``).

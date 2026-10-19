@@ -1,12 +1,12 @@
 # Upstream sync
 
-Odysseus moves fast: ~340 commits in 30 days, ~478k lines of Python, no releases. Barvis
-merges upstream `dev` into `barvis` **weekly** so each merge stays small.
+Upstream Odysseus moves fast: ~340 commits in 30 days, ~478k lines of Python, no releases.
+The fork merges upstream `dev` into `barvis` **weekly** so each merge stays small.
 
 ## Branches
 
 - `dev`: mirrors `upstream/dev`. Only fast-forwarded from upstream; never committed to.
-- `barvis`: upstream plus the Barvis patches. Default branch; all PRs go here.
+- `barvis`: upstream plus the fork's patches. Default branch; all PRs go here.
 - Upstream remote: `https://github.com/odysseus-dev/odysseus.git`.
 
 Agents never push to `dev` or `barvis` directly; the sync is a PR like any other.
@@ -45,12 +45,13 @@ Merge, don't rebase: `barvis` is shared history.
 - `src/tool_capabilities.py`: hook in `ToolRunSecurityContext`.
 - `src/mcp_manager.py`: one line in `_connect_http` that keeps tool `annotations`.
 
-Find every hook with `git grep -n "mcp_trust"` (and `git grep -n "Barvis:"` for newer
-hooks). The full list is the "Changes from upstream" table in [../../BARVIS.md](../../BARVIS.md).
+Find every hook with `git grep -n "mcp_trust"` (and `git grep -n "# Fork:"` for newer
+hooks; before 2026-10-19 they were tagged `# Barvis:`). The full list is the "Changes from
+upstream" table in [../../FORK.md](../../FORK.md).
 
 When resolving:
 
-- Take upstream's version of the file, then re-apply the Barvis hook at the matching spot.
+- Take upstream's version of the file, then re-apply the fork's hook at the matching spot.
   Don't keep old upstream code just because the hook sat next to it.
 - If the function a hook lived in is gone or renamed, find where upstream moved that
   logic and put the hook there. If there is no clear place, stop and escalate
@@ -59,43 +60,43 @@ When resolving:
 
 ## After a merge
 
-1. Barvis tests and the upstream tests around the hooks:
+1. The fork's tests and the upstream tests around the hooks:
 
    ```bash
    python -m pytest -q tests/test_mcp_trust.py tests/test_request_authority.py tests/test_tool_policy.py \
-     tests/test_skill_mcp_toolsets.py tests/test_barvis_setup.py
+     tests/test_skill_mcp_toolsets.py tests/test_modules_setup.py
    python -m py_compile app.py routes/*.py src/*.py
    ```
 
 2. Broader tests for what upstream changed in the hooked areas. Compare failures against
    a clean checkout of the previous `barvis` and the new `upstream/dev`; only new
-   failures caused by Barvis matter. 23 tests already fail upstream
+   failures caused by the fork matter. 23 tests already fail upstream
    (`tests/test_null_owner_gates.py`, `tests/test_runtime_evidence_contract.py`).
 3. Bring up the sandbox stack ([sandbox.md](sandbox.md)) on the merged code and re-run
-   `scripts/barvis_setup.py` against it. Check that module servers still connect.
-4. Run each module's eval in the sandbox (barvis-sound:
+   `scripts/modules_setup.py` against it. Check that module servers still connect.
+4. Run each module's eval in the sandbox (odysseus-sound:
    `server/eval/bakeoff.py --frontend odysseus --only 1 4 16`) and compare with the last
    sandbox run. Put both numbers in the PR.
 5. Add a Server verification section: restart the server's test instance, re-run
-   `barvis_setup.py` there, and run the full eval. The owner runs it; the server score
+   `modules_setup.py` there, and run the full eval. The owner runs it; the server score
    must not drop.
 
 Production (port 7000) is updated only by the owner, after the sync PR is merged:
-`scripts/barvis_deploy.sh deploy` ([deploy.md](deploy.md)).
+`scripts/fork_deploy.sh deploy` ([deploy.md](deploy.md)).
 
 ## Sending fixes upstream
 
-Offer a change upstream when it is a general fix or feature, not Barvis-specific. Current
-candidates (marked "Upstreamable: yes" in [../../BARVIS.md](../../BARVIS.md)): trusted
+Offer a change upstream when it is a general fix or feature, not fork-specific. Current
+candidates (marked "Upstreamable: yes" in [../../FORK.md](../../FORK.md)): trusted
 read-only MCP servers, trusted reads not counted as external effects, the
 web-intent routing fix, and HTTP MCP servers keeping tool annotations (the smallest one;
 a good first issue to file).
 
 - Upstream asks LLM agents to **open an issue first** instead of a PR
   (`CONTRIBUTING.md`). So: an agent drafts the issue text (problem, repro, proposed fix,
-  link to the Barvis commit) and gives it to the owner; the owner files it and decides
+  link to the fork's commit) and gives it to the owner; the owner files it and decides
   on a PR.
 - Upstream PRs target `dev`, follow upstream's PR template and Conventional Commits, and
-  contain only the general change: no Barvis names, docs or config.
-- Once upstream merges an equivalent change, the next sync drops the Barvis version:
-  remove the hook and the Barvis file in the merge PR, and update [../../BARVIS.md](../../BARVIS.md).
+  contain only the general change: no fork names, docs or config.
+- Once upstream merges an equivalent change, the next sync drops the fork's version:
+  remove the hook and the fork's file in the merge PR, and update [../../FORK.md](../../FORK.md).

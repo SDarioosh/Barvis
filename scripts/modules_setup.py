@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Barvis: configure an Odysseus instance to use Barvis modules over MCP.
+"""Fork: configure an Odysseus instance to use its modules over MCP.
 
 Works through the admin API, so it runs against any instance and leaves upstream
 code alone. By default it keeps every Odysseus feature:
@@ -20,7 +20,7 @@ picking a built-in (tasks, calendar, chat search) over a module tool.
 Don't combine "Regular tools" with every tool on: all ~230 tool schemas go into
 each request (~35k tokens), more than a 32k context holds.
 
-Slash-command skills: ``/sound <question>`` offers barvis-sound's tools for that
+Slash-command skills: ``/sound <question>`` offers odysseus-sound's tools for that
 one message, and ``/context <question>`` the tools of every trusted module. This
 script creates or updates those skills through the skills API (source
 ``managed``, so they need no skill audit; see src/skill_invocation.py):
@@ -37,8 +37,8 @@ Trusting a module's read-only tools is not done here; that is the
 ``ODYSSEUS_TRUSTED_READONLY_MCP`` environment variable (see src/mcp_trust.py).
 
 Usage:
-    python scripts/barvis_setup.py --url http://127.0.0.1:7000 \
-        --user admin --password-file ~/.config/barvis/admin.txt \
+    python scripts/modules_setup.py --url http://127.0.0.1:7000 \
+        --user admin --password-file ~/.config/odysseus-fork/admin.txt \
         [--trim [--keep a,b] | --untrim] [--model-mode auto|full|unchanged]
         [--module-skill sound=convo] [--skill-text sound=FILE] [--context-skill context]
         [--trusted convo,...] [--no-skills] [--dry-run]
@@ -179,7 +179,7 @@ def skill_specs(c: httpx.Client, args: argparse.Namespace) -> list[dict]:
         specs.append({
             "name": name,
             "description": f"Use the {server} module's tools for this message",
-            "category": "barvis",
+            "category": "modules",
             "requires_toolsets": [f"mcp:{server}"],
             "procedure": steps,
         })
@@ -188,7 +188,7 @@ def skill_specs(c: httpx.Client, args: argparse.Namespace) -> list[dict]:
             "name": args.context_skill,
             "description": "Search every connected module for this message: "
                            + ", ".join(args.trusted),
-            "category": "barvis",
+            "category": "modules",
             "requires_toolsets": [f"mcp:{s}" for s in args.trusted],
             "procedure": list(CONTEXT_PROCEDURE),
         })
@@ -247,7 +247,7 @@ def report_modules(c: httpx.Client, modules: list[str]) -> list[str]:
         s = by_name.get(name.casefold())
         if s is None:
             warnings.append(f"module MCP server {name!r} is not registered "
-                            f"(Settings > MCP; see docs/barvis/modules.md)")
+                            f"(Settings > MCP; see docs/fork/modules.md)")
         elif s.get("status") != "connected" or not s.get("is_enabled", True):
             warnings.append(f"module MCP server {name!r} is not connected")
     return warnings
@@ -307,7 +307,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             return run(c, args)
         except httpx.ConnectError as exc:
-            print(f"cannot reach {args.url}: {exc}. Is Barvis up? "
+            print(f"cannot reach {args.url}: {exc}. Is Odysseus up? "
                   f"Check: curl {args.url}/api/health", file=sys.stderr)
             return 2
 

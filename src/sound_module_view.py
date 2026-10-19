@@ -1,9 +1,9 @@
-"""Barvis: data for the barvis-sound page (conversations, "who is this?" cards).
+"""Fork: data for the odysseus-sound page (conversations, "who is this?" cards).
 
 Everything comes from the module's MCP tools (``search_conversations``,
-``list_unnamed_speakers``, ``name_speaker``) through Odysseus' MCP manager; Barvis never
+``list_unnamed_speakers``, ``name_speaker``) through Odysseus' MCP manager; Odysseus never
 opens the module's database. The tools return compact text for models, so this file
-parses their documented line shapes (see docs/barvis/modules/barvis-sound.md). Lines
+parses their documented line shapes (see docs/fork/modules/odysseus-sound.md). Lines
 that don't match are skipped, so a wording change degrades to fewer rows, not an error.
 """
 

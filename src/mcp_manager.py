@@ -189,7 +189,7 @@ class McpManager:
                 effective_env = {**os.environ, **(env or {})}
                 self._resource_owners[server_id] = str(effective_env.get("ODYSSEUS_MCP_MEMORY_OWNER") or effective_env.get("ODYSSEUS_MEMORY_OWNER") or "").strip()
             if transport == "stdio":
-                # Barvis: own the transport in a long-lived task, not the request (src/mcp_stdio_owner.py)
+                # Fork: own the transport in a long-lived task, not the request (src/mcp_stdio_owner.py)
                 from src.mcp_stdio_owner import connect_stdio_owned
                 res = await connect_stdio_owned(self, server_id, name, command, args or [], env or {})
             elif transport == "sse":
@@ -476,7 +476,7 @@ class McpManager:
         ``AsyncExitStack``. On shutdown this task closes the stack in its
         ``finally`` block, satisfying AnyIO's cancel-scope ownership rule.
         """
-        # Barvis: stdio connections already have an owner task (src/mcp_stdio_owner.py)
+        # Fork: stdio connections already have an owner task (src/mcp_stdio_owner.py)
         from src.mcp_stdio_owner import await_existing_owner
         if await await_existing_owner(self, server_id):
             return

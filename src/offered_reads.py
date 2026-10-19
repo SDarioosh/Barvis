@@ -1,4 +1,4 @@
-"""Barvis: let the model read every personal store it is offered in a turn.
+"""Fork: let the model read every personal store it is offered in a turn.
 
 Upstream builds request authority from the words of one message: "what are my
 tasks for today?" grants ``manage_tasks`` and nothing else. The model is often

@@ -1,22 +1,23 @@
-"""Barvis: phone notifications for barvis-sound action items and the daily digest.
+"""Fork: phone notifications for odysseus-sound action items and the daily digest.
 
-Action items stay in the module (barvis-sound is the only source; the owner chose a live
-view over copies). A built-in scheduled task ("Barvis Action Items", every 15 minutes)
+Action items stay in the module (odysseus-sound is the only source; the owner chose a live
+view over copies). A built-in scheduled task ("Module Action Items", every 15 minutes)
 reads them through the module's MCP tools and pushes, through Odysseus' reminder
 dispatcher on the ntfy channel:
 
 * new open action items (the first run only remembers the backlog, it doesn't push it);
-* once a day after ``BARVIS_DIGEST_HOUR``: items due today, and yesterday's digest.
+* once a day after ``MODULE_DIGEST_HOUR``: items due today, and yesterday's digest.
 
-Barvis never opens the module's database and keeps no copy of the items: the only state
-is which item ids and days were already pushed (``<DATA_DIR>/barvis_action_items_*.json``).
-The live list (tick done / dismiss) is on the barvis-sound page, ``/barvis/sound``.
+Odysseus never opens the module's database and keeps no copy of the items: the only state
+is which item ids and days were already pushed (``<DATA_DIR>/barvis_action_items_*.json``;
+the file name is kept from the fork's former name so existing state carries over).
+The live list (tick done / dismiss) is on the odysseus-sound page, ``/modules/sound``.
 
-Settings (environment):
+Settings (environment; the former ``BARVIS_*`` names are still read as a fallback):
 
-* ``BARVIS_ACTION_ITEMS_SERVER``: module MCP server name or id (default ``convo``).
-* ``BARVIS_NOTIFY_CHANNEL``: ``ntfy`` (default), ``browser`` or ``off``.
-* ``BARVIS_DIGEST_HOUR``: local hour after which the daily pushes go out (default 8;
+* ``MODULE_ACTION_ITEMS_SERVER``: module MCP server name or id (default ``convo``).
+* ``MODULE_NOTIFY_CHANNEL``: ``ntfy`` (default), ``browser`` or ``off``.
+* ``MODULE_DIGEST_HOUR``: local hour after which the daily pushes go out (default 8;
   ``off`` = no daily pushes).
 """
 
@@ -33,18 +34,20 @@ from typing import Any, Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 
+# The action id is stored in each user's scheduled task, so it keeps the fork's former name.
 ACTION = "barvis_sync_action_items"
-LABEL = "barvis-sound"
-TASK_NAME = "Barvis Action Items"
+LABEL = "odysseus-sound"
+TASK_NAME = "Module Action Items"
 HOUSEKEEPING_DEFAULT = {
     ACTION: {"name": TASK_NAME, "schedule": "cron", "scheduled_time": None,
-             "cron_expression": "*/15 * * * *", "ship_paused": True, "legacy_names": []},
+             "cron_expression": "*/15 * * * *", "ship_paused": True,
+             "legacy_names": ["Barvis Action Items"]},
 }
-INFO = ("Push new barvis-sound action items, items due today and the daily digest to "
+INFO = ("Push new odysseus-sound action items, items due today and the daily digest to "
         "the phone via ntfy. Reads them live through the module's MCP tools; keeps no copy.")
 MAX_PUSHED_ITEMS = 5
 
-# One line of barvis-sound's list_action_items result, e.g.
+# One line of odysseus-sound's list_action_items result, e.g.
 # - #12 [open] Send Alice the spreadsheet (owner Me) due 2026-09-19 (Friday) — from
 #   "Q4 budget" 2026-09-15 10:00 http://host:8000/view/abc?sig=...#t=40
 _LINE = re.compile(
@@ -90,20 +93,22 @@ def parse_action_items(result: str) -> list[ActionItem]:
 
 # ----------------------------------------------------------------------- settings
 def _env(name: str, default: str) -> str:
-    return (os.environ.get(name) or default).strip()
+    """``MODULE_<name>``, else the former ``BARVIS_<name>``, else ``default``."""
+    return (os.environ.get(f"MODULE_{name}") or os.environ.get(f"BARVIS_{name}")
+            or default).strip()
 
 
 def server_key() -> str:
-    return _env("BARVIS_ACTION_ITEMS_SERVER", "convo").casefold()
+    return _env("ACTION_ITEMS_SERVER", "convo").casefold()
 
 
 def notify_channel() -> str:
-    value = _env("BARVIS_NOTIFY_CHANNEL", "ntfy").lower()
+    value = _env("NOTIFY_CHANNEL", "ntfy").lower()
     return value if value in {"ntfy", "browser", "off"} else "ntfy"
 
 
 def digest_hour() -> int | None:
-    value = _env("BARVIS_DIGEST_HOUR", "8").lower()
+    value = _env("DIGEST_HOUR", "8").lower()
     if value in {"off", "none", ""}:
         return None
     try:
@@ -217,7 +222,7 @@ async def sync(owner: str, call: CallTool, *, now: datetime | None = None) -> di
     save_state(owner, state)
     if new and not first_run:
         title, body = _items_message(new)
-        key = "barvis-items-" + "-".join(str(i.id) for i in new[:20])
+        key = "module-items-" + "-".join(str(i.id) for i in new[:20])
         stats["pushed"] += int(await push(owner, title, body, key))
 
     hour = digest_hour()
@@ -228,7 +233,7 @@ async def sync(owner: str, call: CallTool, *, now: datetime | None = None) -> di
         due = [i for i in items if i.due_date == today]
         if due:
             title, body = _items_message(due, "action item due today")
-            stats["pushed"] += int(await push(owner, title, body, f"barvis-due-{today}"))
+            stats["pushed"] += int(await push(owner, title, body, f"module-due-{today}"))
         state["due_pushed"] = today
         save_state(owner, state)
     yesterday = (now.date() - timedelta(days=1)).isoformat()
@@ -236,7 +241,7 @@ async def sync(owner: str, call: CallTool, *, now: datetime | None = None) -> di
         msg = _digest_message(await call("get_daily_digest", {"date": yesterday}))
         if msg:  # not ready yet: try again next pass
             stats["pushed"] += int(await push(owner, msg[0], msg[1],
-                                              f"barvis-digest-{yesterday}"))
+                                              f"module-digest-{yesterday}"))
             state["digest_pushed"] = yesterday
             save_state(owner, state)
     return stats

@@ -14506,7 +14506,7 @@ def _build_system_prompt(
             for skill in SkillsManager(DATA_DIR).load(owner=owner):
                 if skill.get("name") in active_lookup:
                     relevant_tools.add("manage_skills")
-                    # Barvis: expand mcp:<server> entries (src/skill_mcp_toolsets.py)
+                    # Fork: expand mcp:<server> entries (src/skill_mcp_toolsets.py)
                     from src.skill_mcp_toolsets import expand_skill_toolsets
                     relevant_tools.update(expand_skill_toolsets(skill.get("requires_toolsets")))
         except Exception:
@@ -15284,7 +15284,7 @@ def _build_base_prompt(
             from src.constants import DATA_DIR
             _sm = SkillsManager(DATA_DIR)
             active_tools = list(set(TOOL_SECTIONS.keys()) - set(disabled or []))
-            # Barvis: skills needing mcp:<server> stay listed while it is usable (src/skill_mcp_toolsets.py)
+            # Fork: skills needing mcp:<server> stay listed while it is usable (src/skill_mcp_toolsets.py)
             from src.skill_mcp_toolsets import with_mcp_toolsets
             active_tools = list(with_mcp_toolsets(active_tools))
             skill_idx = _sm.index_for(
@@ -22738,7 +22738,7 @@ async def stream_agent_loop(
                     # TOOL_SECTIONS — code-nav tools (grep/glob/ls) ship as
                     # schemas without a prompt-prose section.
                     _known = known_tool_names()
-                    # Barvis: MCP entries in requires_toolsets (src/skill_mcp_toolsets.py)
+                    # Fork: MCP entries in requires_toolsets (src/skill_mcp_toolsets.py)
                     from src.skill_mcp_toolsets import expand_skill_toolsets, with_mcp_toolsets
                     for _sk in _sm.get_relevant_skills(
                         _retrieval_query, skills=_owner_skills,
@@ -33891,7 +33891,7 @@ async def stream_agent_loop(
                         from src.constants import DATA_DIR as _DD
                         from src.tool_policy import known_tool_names as _ktn
                         _known = _ktn()
-                        # Barvis: expand mcp:<server> entries (src/skill_mcp_toolsets.py)
+                        # Fork: expand mcp:<server> entries (src/skill_mcp_toolsets.py)
                         from src.skill_mcp_toolsets import expand_skill_toolsets
                         for _sk in _SkM(_DD).load(owner=owner):
                             if _sk.get("name") == _ms_name:
@@ -37233,11 +37233,11 @@ async def stream_agent_loop(
             else "unattended_preamble_recovery"
         )
     )
-    # Barvis: answer an empty reply after module tools (src/mcp_trust.py)
+    # Fork: answer an empty reply after module tools (src/mcp_trust.py)
     from src.mcp_trust import ran_trusted_server_tool
-    _barvis_module_empty_final = _unattended_empty_final and ran_trusted_server_tool(tool_events)
+    _fork_module_empty_final = _unattended_empty_final and ran_trusted_server_tool(tool_events)
     if (
-        (_unattended_native_runtime or _barvis_module_empty_final)
+        (_unattended_native_runtime or _fork_module_empty_final)
         and tool_events
         and (
             _exhausted_rounds

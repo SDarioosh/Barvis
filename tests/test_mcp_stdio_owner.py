@@ -1,6 +1,6 @@
 """Stdio MCP connections outlive the request that opened them (src/mcp_stdio_owner.py).
 
-Sandbox finding 2 (docs/barvis/sandbox.md): a stdio server added over the API
+Sandbox finding 2 (docs/fork/sandbox.md): a stdio server added over the API
 answered inside that request, then failed every later call with an empty error,
 because BaseHTTPMiddleware cancelled the transport with the request.
 """

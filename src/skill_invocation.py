@@ -32,7 +32,7 @@ user who pastes the format by hand gets exactly what typing the slash command
 would give them.
 
 Managed skills: skills an admin creates through configuration (source
-``managed``, e.g. ``scripts/barvis_setup.py``) are slash-invokable without the
+``managed``, e.g. ``scripts/modules_setup.py``) are slash-invokable without the
 LLM audit that "Auto-approve skills" requires for learned skills.
 """
 

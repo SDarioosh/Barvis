@@ -1,9 +1,9 @@
-"""Barvis: barvis-sound page data from the module's MCP tools (src/barvis_sound_view.py)."""
+"""Fork: odysseus-sound page data from the module's MCP tools (src/sound_module_view.py)."""
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from src import barvis_sound_view as view
+from src import sound_module_view as view
 
 CONVS = """2 conversations (times are Europe/Berlin). When answering, put the link next to each fact you use:
 - 2026-10-14 17:00–17:12 "Alice hands over vendor contracts" id c1; people: Alice, Me
@@ -74,12 +74,12 @@ class FakeManager:
 @pytest.fixture
 def client(monkeypatch):
     from core.middleware import require_admin
-    from routes.barvis_sound_routes import setup_barvis_sound_routes
+    from routes.sound_module_routes import setup_sound_module_routes
 
     manager = FakeManager()
     monkeypatch.setattr("src.tool_utils.get_mcp_manager", lambda: manager)
     app = FastAPI()
-    app.include_router(setup_barvis_sound_routes())
+    app.include_router(setup_sound_module_routes())
     app.dependency_overrides[require_admin] = lambda: None
     with TestClient(app) as c:
         c.manager = manager
@@ -87,48 +87,53 @@ def client(monkeypatch):
 
 
 def test_routes_call_only_module_tools(client):
-    r = client.get("/api/barvis/sound/conversations", params={"since": "2026-10-01", "limit": 999})
+    r = client.get("/api/modules/sound/conversations", params={"since": "2026-10-01", "limit": 999})
     assert r.status_code == 200 and r.json()["conversations"][0]["id"] == "c1"
     name, args = client.manager.calls[-1]
     assert name == "mcp__srv1__search_conversations"
     assert args["since"] == "2026-10-01" and args["limit"] == 50
-    assert len(client.get("/api/barvis/sound/unnamed").json()["speakers"]) == 2
+    assert len(client.get("/api/modules/sound/unnamed").json()["speakers"]) == 2
 
-    r = client.post("/api/barvis/sound/name-speaker",
+    r = client.post("/api/modules/sound/name-speaker",
                     json={"conversation_id": "c3", "speaker_label": "Speaker 1", "name": " Ben "})
     assert r.json() == {"ok": True, "message": "Renamed 4 lines from Speaker 1 to Ben; "
                                                "the summary will be redone."}
     assert client.manager.calls[-1] == ("mcp__srv1__name_speaker", {
         "conversation_id": "c3", "speaker_label": "Speaker 1", "name": "Ben",
         "remember_voice": True})
-    assert client.post("/api/barvis/sound/name-speaker",
+    assert client.post("/api/modules/sound/name-speaker",
                        json={"conversation_id": "c3", "speaker_label": "Speaker 1",
                              "name": ""}).status_code == 422
 
 
 def test_action_items_are_live_from_the_module(client):
-    r = client.get("/api/barvis/sound/action-items")
+    r = client.get("/api/modules/sound/action-items")
     assert [i["id"] for i in r.json()["action_items"]] == [12, 13]
     assert client.manager.calls[-1] == ("mcp__srv1__list_action_items", {"status": "open"})
-    r = client.post("/api/barvis/sound/action-items/12", json={"status": "done"})
+    r = client.post("/api/modules/sound/action-items/12", json={"status": "done"})
     assert r.json() == {"ok": True, "message": "Action item #12 is now done."}
     assert client.manager.calls[-1] == ("mcp__srv1__update_action_item",
                                         {"item_id": 12, "status": "done"})
-    assert client.post("/api/barvis/sound/action-items/12",
+    assert client.post("/api/modules/sound/action-items/12",
                        json={"status": "deleted"}).status_code == 422
-    assert client.get("/api/barvis/sound/action-items?status=bogus").status_code == 400
+    assert client.get("/api/modules/sound/action-items?status=bogus").status_code == 400
 
 
 def test_module_not_connected(client):
     client.manager._connections = {}
-    assert client.get("/api/barvis/sound/unnamed").status_code == 503
+    assert client.get("/api/modules/sound/unnamed").status_code == 503
 
 
 def test_api_is_admin_only(monkeypatch):
-    from routes.barvis_sound_routes import setup_barvis_sound_routes
+    from routes.sound_module_routes import setup_sound_module_routes
 
     app = FastAPI()
-    app.include_router(setup_barvis_sound_routes())
+    app.include_router(setup_sound_module_routes())
     monkeypatch.setattr("core.middleware.auth_disabled", lambda: False)
     with TestClient(app) as c:
-        assert c.get("/api/barvis/sound/unnamed").status_code == 403
+        assert c.get("/api/modules/sound/unnamed").status_code == 403
+
+
+def test_former_page_address_redirects(client):
+    r = client.get("/barvis/sound", follow_redirects=False)
+    assert r.status_code == 301 and r.headers["location"] == "/modules/sound"

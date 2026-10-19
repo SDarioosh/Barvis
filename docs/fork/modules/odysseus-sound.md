@@ -1,4 +1,4 @@
-# Module: barvis-sound
+# Module: odysseus-sound
 
 - Repo: [SDarioosh/barvis-sound](https://github.com/SDarioosh/barvis-sound) (renamed from
   `barvis-ai`; older docs call it "convo-ai"). Default branch `main`.
@@ -7,13 +7,13 @@
 - Contract it follows: [../modules.md](../modules.md).
 
 Code identifiers keep the old name: the Python package `convo_server`, the CLI
-`convo-server`, `CONVO_*` env vars, the MCP server name `convo-ai`, and the Barvis server
+`convo-server`, `CONVO_*` env vars, the MCP server name `convo-ai`, and the Odysseus server
 name `convo`. Don't rename them.
 
 ## What it provides
 
 Wearables record conversations (Amazfit T-Rex 3 Pro watch app now; a XIAO ESP32-S3
-pendant planned; an Omi pendant later). The barvis-sound server on the owner's machine
+pendant planned; an Omi pendant later). The odysseus-sound server on the owner's machine
 detects speech (Silero VAD), transcribes (whisper.cpp), identifies speakers, splits
 recordings into conversations, and summarizes them with the local LLM (title, summary,
 key points, action items, people, topics, facts, daily digest). Everything is stored in
@@ -40,10 +40,10 @@ Source: `server/convo_server/mcp_server.py` (`build_mcp`).
 | `rename_speaker_everywhere` | `old_name`, `new_name` | **write, destructive** |
 
 - Read-only tools: `readOnlyHint: true`, `openWorldHint: false`. With `convo` in
-  `ODYSSEUS_TRUSTED_READONLY_MCP`, Barvis runs them without approval.
+  `ODYSSEUS_TRUSTED_READONLY_MCP`, Odysseus runs them without approval.
 - Write tools: `readOnlyHint: false`, `destructiveHint: false`, `idempotentHint: true`,
   `openWorldHint: false`. `rename_speaker_everywhere` has `destructiveHint: true`
-  (merging two names can't be undone). They keep Barvis' normal approval.
+  (merging two names can't be undone). They keep Odysseus' normal approval.
 - `name_speaker` renames the speaker's lines, redoes the summary and (with
   `remember_voice`) adds a voice sample; since MCP version 0.2.0 it also renames
   unnamed speakers in other conversations whose voice clearly matches, and says how many.
@@ -78,38 +78,38 @@ cd server
 CONVO_MCP_TOKEN=... CONVO_MCP_HOST=172.17.0.1 .venv/bin/convo-server mcp --http   # docker bridge IP
 ```
 
-On the owner's server `barvis-deploy deploy` runs this as a background service
-(barvis-sound's `server/scripts/deploy.sh`, settings in `server/.env`;
+On the owner's server `odysseus-deploy deploy` runs this as a background service
+(odysseus-sound's `server/scripts/deploy.sh`, settings in `server/.env`;
 [../deploy.md](../deploy.md#one-command-setup-once)).
 
 Then add an HTTP server named `convo` with URL
-`http://host.docker.internal:8001/mcp?access_token=<CONVO_MCP_TOKEN>` (Barvis in Docker)
-or `http://127.0.0.1:8001/mcp?access_token=<CONVO_MCP_TOKEN>` (Barvis native, e.g. the
+`http://host.docker.internal:8001/mcp?access_token=<CONVO_MCP_TOKEN>` (Odysseus in Docker)
+or `http://127.0.0.1:8001/mcp?access_token=<CONVO_MCP_TOKEN>` (Odysseus native, e.g. the
 sandbox).
 
 **stdio** (`convo-server mcp`, args `["mcp"]`, with the `CONVO_*` environment) works for a
-native Barvis since stdio connections got their own owner task (before, every call after
+native Odysseus since stdio connections got their own owner task (before, every call after
 the adding request failed; [../sandbox.md](../sandbox.md#findings-from-the-first-sandbox-run),
-finding 2). HTTP stays the documented setup: Barvis in Docker can't spawn `convo-server`.
+finding 2). HTTP stays the documented setup: Odysseus in Docker can't spawn `convo-server`.
 
-Then, per [../modules.md](../modules.md#registering-a-module-in-barvis):
+Then, per [../modules.md](../modules.md#registering-a-module-in-odysseus):
 
-1. `ODYSSEUS_TRUSTED_READONLY_MCP=convo`, restart Barvis (production: already in
+1. `ODYSSEUS_TRUSTED_READONLY_MCP=convo`, restart Odysseus (production: already in
    `docker-compose.override.yml`, see [../deploy.md](../deploy.md#features-and-modules)).
 2. Paste the server's `INSTRUCTIONS` text (top of `mcp_server.py`) into a Custom preset
    system prompt.
-3. `python scripts/barvis_setup.py --url http://127.0.0.1:7010 --password-file <file>`
-   (sandbox, or the server's test instance; on production `barvis_deploy.sh` runs it).
+3. `python scripts/modules_setup.py --url http://127.0.0.1:7010 --password-file <file>`
+   (sandbox, or the server's test instance; on production `fork_deploy.sh` runs it).
    It creates the `/sound` and `/context` skills from that preset text.
 
 ## Slash skill: `/sound`
 
 - Skill **`sound`**, server **`convo`**: `/sound <question>` gives that one message
-  barvis-sound's 13 tools (plus `ask_user`/`update_plan`) and nothing else. `/context
+  odysseus-sound's 13 tools (plus `ask_user`/`update_plan`) and nothing else. `/context
   <question>` does the same for every trusted module (today only `convo`).
 - The skill's procedure is `INSTRUCTIONS` from `server/convo_server/mcp_server.py`, the
-  same text as the Custom preset. barvis-sound owns it: change it there, update the
-  preset, rerun `barvis_setup.py`.
+  same text as the Custom preset. odysseus-sound owns it: change it there, update the
+  preset, rerun `modules_setup.py`.
 - Needed because with every Odysseus tool on and "Auto", a plain recording question
   is routed to built-ins (calendar, files) and never sees a convo tool. Sandbox
   numbers: [../sandbox.md](../sandbox.md#slash-skills-2026-10-18).
@@ -128,8 +128,8 @@ Then, per [../modules.md](../modules.md#registering-a-module-in-barvis):
 
 ## Action items in Odysseus
 
-Action items stay in barvis-sound; Barvis shows them live and keeps no copy (owner's
-decision). The built-in task **Barvis Action Items** (`src/barvis_action_items.py`,
+Action items stay in odysseus-sound; Odysseus shows them live and keeps no copy (owner's
+decision). The built-in task **Module Action Items** (`src/module_action_items.py`,
 every 15 min, ships paused: resume it in Tasks) reads open items through
 `list_action_items` and pushes new ones, items due today and yesterday's digest
 (`get_daily_digest`) to the phone through the ntfy reminder channel. Its first run only
@@ -139,50 +139,50 @@ It parses the `list_action_items` result lines, so their shape is part of the co
 for it: `- #<id> [<status>] <text>[ (owner <name>)][ due <YYYY-MM-DD>[ (<as said>)]| due <as said>] — from "<title>" <YYYY-MM-DD HH:MM> <link>`.
 Change it only together with the parser (`parse_action_items`) and its test.
 
-Settings: `BARVIS_ACTION_ITEMS_SERVER` (default `convo`), `BARVIS_NOTIFY_CHANNEL`
-(`ntfy`, `browser`, `off`), `BARVIS_DIGEST_HOUR` (`8`, `off`). ntfy needs an enabled
+Settings: `MODULE_ACTION_ITEMS_SERVER` (default `convo`), `MODULE_NOTIFY_CHANNEL`
+(`ntfy`, `browser`, `off`), `MODULE_DIGEST_HOUR` (`8`, `off`). ntfy needs an enabled
 ntfy integration (Settings → Integrations); the topic is the reminder topic
 (`reminder_ntfy_topic`).
 
 ## Conversations page
 
-`/barvis/sound` (sidebar: **Conversations**, admin only) shows open action items live
+`/modules/sound` (sidebar: **Conversations**, admin only) shows open action items live
 (Done / Dismiss call `update_action_item`; Odysseus keeps no copy), the module's
 conversations, and a "who is this?" card for every unnamed speaker. It calls
 `list_action_items`, `update_action_item`, `search_conversations`,
 `list_unnamed_speakers` and `name_speaker` through the MCP
-manager and parses their result lines (`src/barvis_sound_view.py`, test
-`tests/test_barvis_sound_view.py`); change those line shapes together with the parser.
-`BARVIS_SOUND_SERVER` names the server (default `convo`). Transcripts open the module's
-signed `/view` links in a new tab (Barvis' CSP doesn't allow framing another origin).
+manager and parses their result lines (`src/sound_module_view.py`, test
+`tests/test_sound_module_view.py`); change those line shapes together with the parser.
+`SOUND_MODULE_SERVER` names the server (default `convo`). Transcripts open the module's
+signed `/view` links in a new tab (Odysseus' CSP doesn't allow framing another origin).
 Audio isn't kept after transcription, so cards quote lines instead of playing them.
 
 ## Eval and current score
 
-- Script: `server/eval/bakeoff.py` in barvis-sound. Seed fictional data first with
+- Script: `server/eval/bakeoff.py` in odysseus-sound. Seed fictional data first with
   `server/scripts/seed_demo.py` using the same `CONVO_DATA_DIR`.
 - 20 questions; a question passes when the frontend called a convo tool, cited a link to
   the right conversation, and the answer has the expected fact.
-- Barvis run: `python eval/bakeoff.py --frontend odysseus` from `server/`, with
+- Odysseus run: `python eval/bakeoff.py --frontend odysseus` from `server/`, with
   `ODYSSEUS_URL` (default `http://127.0.0.1:7010`), `ODYSSEUS_USER`, and
   `ODYSSEUS_PASSWORD`, `ODYSSEUS_PASSWORD_FILE` or `ODYSSEUS_API_TOKEN`; optional
   `ODYSSEUS_PRESET` (default `custom`) and `ODYSSEUS_APPROVAL`.
 - Results: `server/eval/results/odysseus.jsonl` (gitignored).
 - Sandbox (Qwen3-4B on CPU, questions 1, 4, 16; not comparable with the table below):
-  raw 1/3, Barvis over HTTP 1/3. With every Odysseus tool on and "Auto" (questions 1,
+  raw 1/3, Odysseus over HTTP 1/3. With every Odysseus tool on and "Auto" (questions 1,
   4, 16, 21): plain 0/4, `/sound` 4/4, `/context` 1/4, `--trim` 3/4
   ([../sandbox.md](../sandbox.md#slash-skills-2026-10-18)). Slash-prefixed runs:
-  `scripts/barvis_slash_eval.py` in Barvis. Steps: [../sandbox.md](../sandbox.md#run-the-eval).
+  `scripts/module_slash_eval.py` in Odysseus. Steps: [../sandbox.md](../sandbox.md#run-the-eval).
 
 | Frontend (same model, same MCP server) | Score |
 |---|---|
 | upstream Odysseus | 3/20 |
-| Barvis, PR SDarioosh/Barvis#1 | 9/20 (right fact 18/20, link cited 9/20) |
+| our fork, PR SDarioosh/Barvis#1 | 9/20 (right fact 18/20, link cited 9/20) |
 | tuned Hermes Agent | 15/20 |
 
 **Target: ≥ 15/20.** Remaining failures: answers with the right fact but no transcript
 link, and 2 replies that were just "Done." because the model returned empty text after
-its tool calls. Full analysis: barvis-sound
+its tool calls. Full analysis: odysseus-sound
 [docs/frontend-decision.md](https://github.com/SDarioosh/barvis-sound/blob/main/docs/frontend-decision.md).
 
 ## Known gaps
@@ -190,6 +190,6 @@ its tool calls. Full analysis: barvis-sound
 - Plain questions (no `/sound` or `/context`) don't reach the convo tools when every
   Odysseus tool is on ([../roadmap.md](../roadmap.md)).
 - A malformed date argument (e.g. `'2026-09-30”,'` from the 4B sandbox model) makes
-  `search_conversations` raise instead of returning a readable error, so Barvis only
-  sees `exit_code=1` and the model reports a vague failure. A barvis-sound fix, listed
+  `search_conversations` raise instead of returning a readable error, so Odysseus only
+  sees `exit_code=1` and the model reports a vague failure. An odysseus-sound fix, listed
   under "Next" in SDarioosh/Barvis#9.
