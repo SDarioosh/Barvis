@@ -1,12 +1,9 @@
 """Barvis: barvis-sound action items -> to-dos, calendar, ntfy (src/barvis_action_items.py)."""
 import datetime
-import json
-import re
 
 import pytest
 
 from src import barvis_action_items as bai
-from tests.helpers.database import disposable_database
 
 LIST = """3 all action items (times are Europe/Berlin). When answering, put the link next to each fact you use:
 - #12 [open] Send Alice the revised spreadsheet (owner Me) due 2026-09-19 (Friday) — from "Q4 budget" 2026-09-15 12:00 http://h:8000/view/a?sig=x#t=40
@@ -41,145 +38,74 @@ class FakeModule:
     async def __call__(self, tool, args):
         self.calls.append((tool, args))
         if tool == "list_action_items":
-            return self.text
+            assert args == {"status": "open"}  # read live, never written by the sync
+            return "\n".join(ln for ln in self.text.splitlines() if "[done]" not in ln)
         if tool == "get_daily_digest":
             return self.digest
-        self.set_status(args["item_id"], args["status"])
-        return f"Action item #{args['item_id']} is now {args['status']}."
-
-    def set_status(self, item_id, status):
-        self.text = re.sub(rf"#{item_id} \[\w+\]", f"#{item_id} [{status}]", self.text)
+        raise AssertionError(f"the sync must not call {tool}")
 
 
 @pytest.fixture
-def env(tmp_path, monkeypatch):
-    from core import database
+def pushes(tmp_path, monkeypatch):
     from routes import note_routes
 
-    pushes = []
+    sent = []
 
     async def fake_dispatch(title, body, key, owner="", settings_override=None, **kw):
-        pushes.append({"title": title, "body": body, "key": key, **(settings_override or {})})
+        sent.append({"title": title, "body": body, "key": key, **(settings_override or {})})
         return {"ntfy_sent": True}
 
     monkeypatch.setattr(note_routes, "dispatch_reminder", fake_dispatch)
     monkeypatch.setattr("src.constants.DATA_DIR", str(tmp_path))
-    for var in ("BARVIS_ACTION_ITEMS_CALENDAR", "BARVIS_NOTIFY_CHANNEL", "BARVIS_DIGEST_HOUR"):
+    for var in ("BARVIS_NOTIFY_CHANNEL", "BARVIS_DIGEST_HOUR"):
         monkeypatch.delenv(var, raising=False)
-    with disposable_database(tmp_path) as factory:
-        monkeypatch.setattr(database, "SessionLocal", factory)
-        yield factory, pushes
+    return sent
 
 
-def notes(factory):
-    from core.database import Note
-
-    with factory() as db:
-        return {n.title: n for n in db.query(Note).all()}
+EARLY = datetime.datetime(2026, 10, 19, 7, 0)  # before the digest hour
 
 
 @pytest.mark.asyncio
-async def test_new_items_become_todos_events_and_one_push(env):
-    factory, pushes = env
+async def test_first_run_remembers_the_backlog_then_pushes_only_new_items(pushes):
     module = FakeModule()
-    now = datetime.datetime(2026, 10, 19, 7, 0)  # before the digest hour
-    stats = await bai.sync("alice", module, now=now, session_factory=factory)
-    assert stats == {"created": 2, "events": 1, "closed_in_module": 0, "ticked": 0, "pushed": 1}
-    got = notes(factory)
-    a = got["Send Alice the revised spreadsheet"]
-    assert a.note_type == "checklist" and a.label == "barvis-sound" and a.owner == "alice"
-    assert json.loads(a.items) == [{"text": "Send Alice the revised spreadsheet", "done": False}]
-    assert a.due_date == "2026-09-19T09:00" and "#t=40" in a.content and "#12" in a.content
-    assert got["Pick up Aunt Rosa from the station"].due_date is None
-    assert "Review Ben's pull request" not in got  # already done in the module
-
-    from core.database import CalendarEvent
-    with factory() as db:
-        (ev,) = db.query(CalendarEvent).all()
-        assert ev.all_day and ev.summary == "Due: Send Alice the revised spreadsheet"
-        assert ev.dtstart == datetime.datetime(2026, 9, 19)
-
-    assert len(pushes) == 1 and pushes[0]["title"] == "2 new action items"
-    assert pushes[0]["reminder_channel"] == "ntfy" and pushes[0]["reminder_llm_synthesis"] is False
-    assert "(due 2026-09-19)" in pushes[0]["body"]
-    # second pass: nothing new
-    assert not any((await bai.sync("alice", module, now=now, session_factory=factory)).values())
-
-
-@pytest.mark.asyncio
-async def test_ticking_a_todo_marks_the_module_item_done_and_back(env):
-    factory, _ = env
-    module = FakeModule()
-    now = datetime.datetime(2026, 10, 19, 7, 0)
-    await bai.sync("alice", module, now=now, session_factory=factory)
-    from core.database import Note
-    with factory() as db:
-        n = db.query(Note).filter(Note.title.like("Send Alice%")).one()
-        n.items = json.dumps([{"text": n.title, "done": True}])
-        db.commit()
-    stats = await bai.sync("alice", module, now=now, session_factory=factory)
-    assert stats["closed_in_module"] == 1
-    assert ("update_action_item", {"item_id": 12, "status": "done"}) in module.calls
-
-    # the module closes #13 itself (e.g. via chat): the to-do gets ticked
-    module.set_status(13, "dismissed")
-    stats = await bai.sync("alice", module, now=now, session_factory=factory)
-    assert stats["ticked"] == 1
-    rosa = notes(factory)["Pick up Aunt Rosa from the station"]
-    assert json.loads(rosa.items)[0]["done"] is True
-    assert module.calls.count(("update_action_item", {"item_id": 12, "status": "done"})) == 1
-
-    # reopened in the module: the to-do is unticked, not closed again
-    module.set_status(12, "open")
-    stats = await bai.sync("alice", module, now=now, session_factory=factory)
-    assert stats["ticked"] == 1 and stats["closed_in_module"] == 0
-    spreadsheet = notes(factory)["Send Alice the revised spreadsheet"]
-    assert json.loads(spreadsheet.items)[0]["done"] is False
-
-
-@pytest.mark.asyncio
-async def test_deleted_todo_is_not_recreated(env, monkeypatch):
-    factory, _ = env
-    monkeypatch.setenv("BARVIS_ACTION_ITEMS_CALENDAR", "false")
-    module = FakeModule()
-    now = datetime.datetime(2026, 10, 19, 7, 0)
-    await bai.sync("alice", module, now=now, session_factory=factory)
-    from core.database import CalendarEvent, Note
-    with factory() as db:
-        assert db.query(CalendarEvent).count() == 0
-        db.query(Note).delete()
-        db.commit()
-    await bai.sync("alice", module, now=now, session_factory=factory)
-    assert notes(factory) == {}
-
-
-@pytest.mark.asyncio
-async def test_daily_digest_is_pushed_once_after_the_hour(env):
-    factory, pushes = env
-    module = FakeModule(text="No open action items found.")
-    morning = datetime.datetime(2026, 10, 19, 9, 0)
-    stats = await bai.sync("alice", module, now=morning, session_factory=factory)
-    assert stats["pushed"] == 1
-    assert ("get_daily_digest", {"date": "2026-10-18"}) in module.calls
+    assert await bai.sync("alice", module, now=EARLY) == {"new": 2, "pushed": 0}
+    assert pushes == []
+    module.text += ('\n- #15 [open] Book the restaurant due 2026-10-21 (Wednesday) — from '
+                    '"Dinner" 2026-10-19 06:30 http://h:8000/view/d?sig=w#t=5')
+    assert await bai.sync("alice", module, now=EARLY) == {"new": 1, "pushed": 1}
     (p,) = pushes
-    assert p["title"] == "Yesterday: Dentist and dinner plans"
-    assert "TODO: Pick up Aunt Rosa" in p["body"] and "When answering" not in p["body"]
-    await bai.sync("alice", module, now=morning.replace(hour=20), session_factory=factory)
-    assert len(pushes) == 1
+    assert p["title"] == "New action item" and "Book the restaurant (due 2026-10-21)" in p["body"]
+    assert p["reminder_channel"] == "ntfy" and p["reminder_llm_synthesis"] is False
+    assert await bai.sync("alice", module, now=EARLY) == {"new": 0, "pushed": 0}
+    assert [c[0] for c in module.calls] == ["list_action_items"] * 3
 
 
 @pytest.mark.asyncio
-async def test_missing_digest_is_retried_and_notifications_can_be_off(env, monkeypatch):
-    factory, pushes = env
+async def test_items_due_today_and_digest_are_pushed_once_a_day(pushes):
+    module = FakeModule()
+    await bai.sync("alice", module, now=EARLY)
+    due_day = datetime.datetime(2026, 9, 19, 9, 0)  # #12 is due 2026-09-19
+    await bai.sync("alice", module, now=due_day)
+    titles = [p["title"] for p in pushes]
+    assert titles == ["Action item due today", "Yesterday: Dentist and dinner plans"]
+    assert "Send Alice the revised spreadsheet" in pushes[0]["body"]
+    assert ("get_daily_digest", {"date": "2026-09-18"}) in module.calls
+    assert "TODO: Pick up Aunt Rosa" in pushes[1]["body"]
+    assert "When answering" not in pushes[1]["body"]
+    await bai.sync("alice", module, now=due_day.replace(hour=20))
+    assert len(pushes) == 2
+
+
+@pytest.mark.asyncio
+async def test_missing_digest_is_retried_and_notifications_can_be_off(pushes, monkeypatch):
     module = FakeModule(text="", digest="No digest for 2026-10-18. Try search_conversations.")
     morning = datetime.datetime(2026, 10, 19, 9, 0)
-    await bai.sync("alice", module, now=morning, session_factory=factory)
-    await bai.sync("alice", module, now=morning, session_factory=factory)
-    assert [c for c in module.calls if c[0] == "get_daily_digest"] and pushes == []
-    assert len([c for c in module.calls if c[0] == "get_daily_digest"]) == 2
+    await bai.sync("alice", module, now=morning)
+    await bai.sync("alice", module, now=morning)
+    assert len([c for c in module.calls if c[0] == "get_daily_digest"]) == 2 and pushes == []
     monkeypatch.setenv("BARVIS_NOTIFY_CHANNEL", "off")
     module.digest = DIGEST
-    await bai.sync("alice", module, now=morning, session_factory=factory)
+    await bai.sync("alice", module, now=morning)
     assert pushes == []
 
 

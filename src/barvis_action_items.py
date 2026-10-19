@@ -1,31 +1,23 @@
-"""Barvis: module action items -> Odysseus to-dos, calendar and phone notifications.
+"""Barvis: phone notifications for barvis-sound action items and the daily digest.
 
-A built-in scheduled task ("Barvis Action Items", every 15 minutes) syncs the action
-items of a module MCP server (barvis-sound, server name ``convo``) into Odysseus:
+Action items stay in the module (barvis-sound is the only source; the owner chose a live
+view over copies). A built-in scheduled task ("Barvis Action Items", every 15 minutes)
+reads them through the module's MCP tools and pushes, through Odysseus' reminder
+dispatcher on the ntfy channel:
 
-* every new open item becomes a checklist note (label ``barvis-sound``) whose text
-  links back to the transcript, with a due-date reminder when the item has a date;
-* an item with a due date also gets an all-day calendar event (no alarm: the note's
-  reminder is the one notification);
-* ticking the note's item calls the module's ``update_action_item(done)``; an item
-  closed in the module is ticked in the note;
-* new items and, once a day, yesterday's digest are pushed to the phone through the
-  ntfy integration (the existing reminder dispatcher).
+* new open action items (the first run only remembers the backlog, it doesn't push it);
+* once a day after ``BARVIS_DIGEST_HOUR``: items due today, and yesterday's digest.
 
-Barvis only uses the module's MCP tools (``list_action_items``,
-``update_action_item``, ``get_daily_digest``); it never opens the module's database.
-The module stays the source of truth: notes are copies with a link back, and the sync
-state (item id -> note id / event uid) lives in ``<DATA_DIR>/barvis_action_items_*.json``.
-Ticking a to-do is the user's approval for the ``update_action_item`` call.
+Barvis never opens the module's database and keeps no copy of the items: the only state
+is which item ids and days were already pushed (``<DATA_DIR>/barvis_action_items_*.json``).
+The live list (tick done / dismiss) is on the barvis-sound page, ``/barvis/sound``.
 
 Settings (environment):
 
 * ``BARVIS_ACTION_ITEMS_SERVER``: module MCP server name or id (default ``convo``).
-* ``BARVIS_ACTION_ITEMS_CALENDAR``: ``false`` = no calendar events.
-* ``BARVIS_ACTION_ITEMS_REMINDER_TIME``: local time of a dated reminder (``09:00``).
 * ``BARVIS_NOTIFY_CHANNEL``: ``ntfy`` (default), ``browser`` or ``off``.
-* ``BARVIS_DIGEST_HOUR``: local hour after which yesterday's digest is pushed
-  (default 8; ``off`` = never).
+* ``BARVIS_DIGEST_HOUR``: local hour after which the daily pushes go out (default 8;
+  ``off`` = no daily pushes).
 """
 
 from __future__ import annotations
@@ -34,7 +26,6 @@ import json
 import logging
 import os
 import re
-import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -49,9 +40,8 @@ HOUSEKEEPING_DEFAULT = {
     ACTION: {"name": TASK_NAME, "schedule": "cron", "scheduled_time": None,
              "cron_expression": "*/15 * * * *", "ship_paused": True, "legacy_names": []},
 }
-INFO = ("Copy barvis-sound action items into to-dos (and calendar for dated ones), "
-        "mark them done in the module when ticked, and push new items and the daily "
-        "digest to the phone via ntfy.")
+INFO = ("Push new barvis-sound action items, items due today and the daily digest to "
+        "the phone via ntfy. Reads them live through the module's MCP tools; keeps no copy.")
 MAX_PUSHED_ITEMS = 5
 
 # One line of barvis-sound's list_action_items result, e.g.
@@ -105,15 +95,6 @@ def _env(name: str, default: str) -> str:
 
 def server_key() -> str:
     return _env("BARVIS_ACTION_ITEMS_SERVER", "convo").casefold()
-
-
-def calendar_enabled() -> bool:
-    return _env("BARVIS_ACTION_ITEMS_CALENDAR", "true").lower() not in {"0", "false", "no", "off"}
-
-
-def reminder_time() -> str:
-    value = _env("BARVIS_ACTION_ITEMS_REMINDER_TIME", "09:00")
-    return value if re.fullmatch(r"\d{2}:\d{2}", value) else "09:00"
 
 
 def notify_channel() -> str:
@@ -182,78 +163,6 @@ def mcp_caller(manager: Any, server_id: str) -> CallTool:
     return call
 
 
-# ------------------------------------------------------------------- notes, events
-def _note_body(item: ActionItem) -> str:
-    lines = [f"From \"{item.conversation}\" ({item.when})."]
-    if item.owner:
-        lines.append(f"Owner: {item.owner}.")
-    if item.due or item.due_date:
-        lines.append(f"Due: {item.due_date or ''} {f'({item.due})' if item.due else ''}".strip())
-    lines.append(f"Transcript: {item.link}")
-    lines.append(f"barvis-sound action item #{item.id}")
-    return "\n".join(lines)
-
-
-def create_note(db: Any, owner: str, item: ActionItem) -> str:
-    from core.database import Note
-
-    note = Note(
-        id=str(uuid.uuid4()), owner=owner, title=item.text[:200], content=_note_body(item),
-        items=json.dumps([{"text": item.text, "done": item.status != "open"}]),
-        note_type="checklist", label=LABEL, source="agent",
-        due_date=f"{item.due_date}T{reminder_time()}" if item.due_date else None,
-    )
-    db.add(note)
-    return note.id
-
-
-def note_done(db: Any, note_id: str) -> bool | None:
-    """True/False for the note's first checklist item; None if the note is gone."""
-    from core.database import Note
-
-    note = db.query(Note).filter(Note.id == note_id).first()
-    if note is None:
-        return None
-    try:
-        items = json.loads(note.items or "[]")
-    except ValueError:
-        return False
-    return bool(items and items[0].get("done"))
-
-
-def tick_note(db: Any, note_id: str, done: bool = True) -> None:
-    from core.database import Note
-
-    note = db.query(Note).filter(Note.id == note_id).first()
-    if note is None:
-        return
-    try:
-        items = json.loads(note.items or "[]")
-    except ValueError:
-        items = []
-    for it in items[:1]:
-        it["done"] = done
-    note.items = json.dumps(items)
-
-
-def create_event(db: Any, owner: str, item: ActionItem) -> tuple[str, bool] | None:
-    """All-day event on the due date; returns (uid, needs CalDAV push)."""
-    if not item.due_date:
-        return None
-    from core.database import CalendarEvent
-    from routes.calendar_routes import _ensure_default_calendar
-
-    day = datetime.strptime(item.due_date, "%Y-%m-%d")
-    cal = _ensure_default_calendar(db, owner)
-    uid = str(uuid.uuid4())
-    db.add(CalendarEvent(
-        uid=uid, calendar_id=cal.id, summary=f"Due: {item.text}"[:200],
-        description=_note_body(item), dtstart=day, dtend=day + timedelta(days=1),
-        all_day=True, event_type="admin",
-        caldav_sync_pending="create" if getattr(cal, "source", None) == "caldav" else None))
-    return uid, getattr(cal, "source", None) == "caldav"
-
-
 # --------------------------------------------------------------------------- push
 async def push(owner: str, title: str, body: str, key: str) -> bool:
     """Phone notification through Odysseus' reminder dispatcher (ntfy by default)."""
@@ -269,14 +178,15 @@ async def push(owner: str, title: str, body: str, key: str) -> bool:
     return bool(result.get("ntfy_sent") or result.get("browser_sent"))
 
 
-def _items_message(items: list[ActionItem]) -> tuple[str, str]:
-    title = ("New action item" if len(items) == 1 else f"{len(items)} new action items")
+def _items_message(items: list[ActionItem], what: str = "new action item"
+                   ) -> tuple[str, str]:
+    title = what[:1].upper() + what[1:] if len(items) == 1 else f"{len(items)} {what}s"
     lines = []
     for it in items[:MAX_PUSHED_ITEMS]:
         due = f" (due {it.due_date or it.due})" if (it.due_date or it.due) else ""
         lines.append(f"- {it.text}{due}")
     if len(items) > MAX_PUSHED_ITEMS:
-        lines.append(f"... and {len(items) - MAX_PUSHED_ITEMS} more in Notes")
+        lines.append(f"... and {len(items) - MAX_PUSHED_ITEMS} more on the Conversations page")
     return title, "\n".join(lines)
 
 
@@ -292,89 +202,41 @@ def _digest_message(text: str) -> tuple[str, str] | None:
 
 
 # --------------------------------------------------------------------------- sync
-async def sync(owner: str, call: CallTool, *, now: datetime | None = None,
-               session_factory: Callable[[], Any] | None = None) -> dict[str, int]:
-    """One sync pass. Returns counts: created, events, closed_in_module, ticked (to-dos
-    ticked or unticked to follow the module), pushed."""
-    from core import database
-
+async def sync(owner: str, call: CallTool, *, now: datetime | None = None) -> dict[str, int]:
+    """One pass. Returns counts: new (items first seen), pushed (notifications sent)."""
     now = now or datetime.now()
-    factory = session_factory or database.SessionLocal
     state = load_state(owner)
-    known: dict[str, dict] = state["items"]
-    items = parse_action_items(await call("list_action_items", {"status": "all"}))
-    stats = {"created": 0, "events": 0, "closed_in_module": 0, "ticked": 0, "pushed": 0}
-    new_open: list[ActionItem] = []
-    caldav_push: list[str] = []
-    db = factory()
-    try:
-        for item in items:
-            key = str(item.id)
-            entry = known.get(key)
-            if entry is None:
-                if item.status != "open":
-                    # closed before Barvis saw it: remember, don't copy
-                    known[key] = {"note_id": None, "status": item.status}
-                    continue
-                entry = {"note_id": create_note(db, owner, item), "status": "open"}
-                stats["created"] += 1
-                if calendar_enabled():
-                    made = create_event(db, owner, item)
-                    if made:
-                        entry["event_uid"] = made[0]
-                        stats["events"] += 1
-                        if made[1]:
-                            caldav_push.append(made[0])
-                known[key] = entry
-                new_open.append(item)
-                continue
-            note_id = entry.get("note_id")
-            if item.status != "open":
-                if note_id and entry.get("status") == "open":
-                    tick_note(db, note_id)
-                    stats["ticked"] += 1
-                entry["status"] = item.status
-                continue
-            if entry.get("status") != "open":
-                # reopened in the module (the module wins): untick the to-do
-                if note_id:
-                    tick_note(db, note_id, done=False)
-                    stats["ticked"] += 1
-                entry["status"] = "open"
-            elif note_id and note_done(db, note_id):
-                await call("update_action_item", {"item_id": item.id, "status": "done"})
-                entry["status"] = "done"
-                stats["closed_in_module"] += 1
-            elif note_id and note_done(db, note_id) is None:
-                entry["note_id"] = None  # the user deleted the to-do: don't recreate it
-        db.commit()
-    except BaseException:
-        db.rollback()
-        raise
-    finally:
-        db.close()
+    items = parse_action_items(await call("list_action_items", {"status": "open"}))
+    stats = {"new": 0, "pushed": 0}
+    first_run = "seen" not in state
+    seen = set(state.get("seen", []))
+    new = [i for i in items if i.id not in seen]
+    stats["new"] = len(new)
+    # remember open ids only; a closed item never comes back as new
+    state["seen"] = sorted(seen | {i.id for i in items})
     save_state(owner, state)
-
-    for uid in caldav_push:
-        try:
-            from routes.calendar_routes import _push_caldav_event_after_commit
-
-            await _push_caldav_event_after_commit(owner, uid, "create")
-        except Exception:
-            logger.warning("Barvis: CalDAV push of %s failed; calendar sync retries it", uid)
-
-    if new_open:
-        title, body = _items_message(new_open)
-        key = "barvis-items-" + "-".join(str(i.id) for i in new_open[:20])
+    if new and not first_run:
+        title, body = _items_message(new)
+        key = "barvis-items-" + "-".join(str(i.id) for i in new[:20])
         stats["pushed"] += int(await push(owner, title, body, key))
 
     hour = digest_hour()
+    today = now.date().isoformat()
+    if hour is None or now.hour < hour:
+        return stats
+    if state.get("due_pushed") != today:
+        due = [i for i in items if i.due_date == today]
+        if due:
+            title, body = _items_message(due, "action item due today")
+            stats["pushed"] += int(await push(owner, title, body, f"barvis-due-{today}"))
+        state["due_pushed"] = today
+        save_state(owner, state)
     yesterday = (now.date() - timedelta(days=1)).isoformat()
-    if hour is not None and now.hour >= hour and state.get("digest_pushed") != yesterday:
+    if state.get("digest_pushed") != yesterday:
         msg = _digest_message(await call("get_daily_digest", {"date": yesterday}))
-        if msg:
-            if await push(owner, msg[0], msg[1], f"barvis-digest-{yesterday}"):
-                stats["pushed"] += 1
+        if msg:  # not ready yet: try again next pass
+            stats["pushed"] += int(await push(owner, msg[0], msg[1],
+                                              f"barvis-digest-{yesterday}"))
             state["digest_pushed"] = yesterday
             save_state(owner, state)
     return stats
@@ -395,10 +257,7 @@ async def action_sync_action_items(owner: str, **kwargs) -> tuple[str, bool]:
         return f"Action item sync failed: {e}", False
     if not any(stats.values()):
         raise TaskNoop("no changes")
-    return (f"Action items: {stats['created']} new to-dos ({stats['events']} on the "
-            f"calendar), {stats['closed_in_module']} marked done in barvis-sound, "
-            f"{stats['ticked']} ticked from barvis-sound, {stats['pushed']} "
-            "notifications."), True
+    return (f"Action items: {stats['new']} new, {stats['pushed']} notifications sent."), True
 
 
 def register_builtin_action(actions: dict, info: dict) -> None:
