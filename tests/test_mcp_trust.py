@@ -125,3 +125,47 @@ def test_trusted_read_is_not_an_unverified_external_effect(manager, monkeypatch)
     assert classify(_mcp_capture("mcp__srv1__name_speaker"))["external"] is True
     monkeypatch.delenv(mcp_trust.TRUSTED_READONLY_MCP_ENV)
     assert classify(_mcp_capture(SEARCH))["external"] is True
+
+
+@pytest.fixture
+def no_disables(monkeypatch):
+    from src import skill_mcp_toolsets
+    disabled = {}
+    monkeypatch.setattr(skill_mcp_toolsets, "_disabled_map", lambda: disabled)
+    return disabled
+
+
+def test_follow_up_gets_the_used_trusted_servers_other_tools(manager, monkeypatch, no_disables):
+    """'Speaker 2 was Jenn' after a /sound search must be offered name_speaker."""
+    monkeypatch.setenv(mcp_trust.TRUSTED_READONLY_MCP_ENV, "convo")
+    warm = mcp_trust.with_trusted_server_tools({SEARCH, "manage_notes"})
+    assert {"mcp__srv1__name_speaker", "mcp__srv1__get_transcript", "manage_notes"} <= warm
+    assert "mcp__srv2__search_web" not in warm
+
+
+def test_follow_up_expansion_respects_trust_and_disables(manager, monkeypatch, no_disables):
+    monkeypatch.setenv(mcp_trust.TRUSTED_READONLY_MCP_ENV, "other")
+    assert mcp_trust.with_trusted_server_tools({SEARCH}) == {SEARCH}
+    monkeypatch.delenv(mcp_trust.TRUSTED_READONLY_MCP_ENV)
+    assert mcp_trust.with_trusted_server_tools({SEARCH}) == {SEARCH}
+    monkeypatch.setenv(mcp_trust.TRUSTED_READONLY_MCP_ENV, "convo")
+    no_disables["srv1"] = ["name_speaker"]
+    assert "mcp__srv1__name_speaker" not in mcp_trust.with_trusted_server_tools({SEARCH})
+    # Nothing from the server ran yet: nothing is added.
+    assert mcp_trust.with_trusted_server_tools({"manage_notes"}) == {"manage_notes"}
+
+
+def test_follow_up_contract_offers_write_tool_but_does_not_grant_it(manager, monkeypatch,
+                                                                    no_disables):
+    from src.turn_contract import resolve_turn_contract
+    monkeypatch.setenv(mcp_trust.TRUSTED_READONLY_MCP_ENV, "convo")
+    schemas = [{"type": "function", "function": {"name": f"mcp__srv1__{t['name']}",
+                                                 "parameters": {"type": "object"}}}
+               for t in manager._tools["srv1"]]
+    message = 'Speaker 1 and 3 was "Shahyah", speaker 2 was "Jenn"'
+    contract = resolve_turn_contract(
+        capabilities=(), schemas=schemas, policy=ToolPolicy(), message=message,
+        warm_tools=mcp_trust.with_trusted_server_tools({SEARCH}))
+    assert "mcp__srv1__name_speaker" in contract.offered
+    auth = create_request_authority(message, owner="alice", session_id="s", policy=ToolPolicy())
+    assert not auth.permits(ExactOperation.normalize("mcp__srv1__name_speaker", "{}"))

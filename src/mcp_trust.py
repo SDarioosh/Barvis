@@ -92,3 +92,32 @@ def is_trusted_readonly_mcp_tool(tool_name: Any, manager=None) -> bool:
     if not trusted_readonly_server_keys():
         return False
     return tool_name.strip() in trusted_readonly_mcp_tools(manager)
+
+
+def with_trusted_server_tools(names: Iterable[str], manager=None,
+                              enabled: dict[str, set[str]] | None = None) -> frozenset[str]:
+    """``names`` plus every enabled tool of each trusted server already in it.
+
+    Upstream restores only the exact tools that ran earlier in a chat ("warm
+    tools") on a follow-up turn. For a module server that hides its write
+    tools: after ``/sound`` searched a conversation, "Speaker 2 was Jenn" got
+    the search tools back but never ``name_speaker``. A trusted module is one
+    surface, so a used tool brings back its server's other enabled tools.
+    This only offers them: write tools still need approval, and policy,
+    per-tool disables and ``disable_mcp`` still filter the turn.
+    """
+    names = frozenset(str(n) for n in names or () if n)
+    keys = trusted_readonly_server_keys()
+    if not keys or not any(n.startswith("mcp__") for n in names):
+        return names
+    manager = manager if manager is not None else _manager()
+    if manager is None:
+        return names
+    if enabled is None:
+        from src.skill_mcp_toolsets import enabled_mcp_tools
+        enabled = enabled_mcp_tools(manager)
+    out = set(names)
+    for server_id in _trusted_server_ids(manager, keys):
+        if any(n.startswith(f"mcp__{server_id}__") for n in names):
+            out |= enabled.get(server_id, set())
+    return frozenset(out)

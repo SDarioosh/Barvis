@@ -3620,6 +3620,9 @@ def setup_chat_routes(
                 last_user_message=message,
             )
             _warm_tools = _successful_session_tool_names(sess)
+            # Barvis: a used trusted module's other tools stay offered on follow-ups (src/mcp_trust.py)
+            from src.mcp_trust import with_trusted_server_tools
+            _warm_tools = with_trusted_server_tools(_warm_tools)
             _selected_tools = selected_tools_for_request(message)
             if _selected_tools is None and _contextual_browser_turn_followup:
                 # A referential retry targets the browser state established by
