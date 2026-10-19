@@ -266,3 +266,12 @@ def test_chat_route_escalates_slash_skills_to_agent_mode():
     src = inspect.getsource(chat_routes)
     hook = src.index("invoked_skill_needs_tools(message, effective_user(request))")
     assert src.index("auto_escalated = False") < hook < src.index("pin_skill_contract(_turn_contract")
+
+
+def test_crlf_message_from_the_web_ui_is_recognized(owner_skills):
+    """Browsers send a textarea's line breaks as CRLF; the UI's /sound must still match."""
+    crlf = _message().replace("\n", "\r\n")
+    assert parse_invoke_message(crlf) == parse_invoke_message(_message())
+    assert invoked_skill_needs_tools(crlf, "alice")
+    _, pinned = _pin(crlf)
+    assert pinned.offered == {_q(t) for t in CONVO} | {"ask_user", "update_plan"}

@@ -66,8 +66,12 @@ class InvokedSkill:
 
 
 def parse_invoke_message(message: object) -> InvokedSkill | None:
-    """The skill name and request of a composed slash message, else None."""
-    text = str(message or "")
+    """The skill name and request of a composed slash message, else None.
+
+    Browsers submit a textarea's line breaks as CRLF (HTML form encoding), so the
+    web UI's copy of the message arrives with ``\r\n``; normalize before matching.
+    """
+    text = str(message or "").replace("\r\n", "\n")
     if not text.startswith(INVOKE_PREFIX):
         return None
     body = text[len(INVOKE_PREFIX):]
