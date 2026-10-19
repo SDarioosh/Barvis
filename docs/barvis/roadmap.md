@@ -19,7 +19,7 @@ _Last updated: 2026-10-19_
 | 8 | Several tools in a row: a turn may read every personal store it offers (calendar, tasks, notes, memory, documents, skills), so a calendar lookup after a tasks lookup is no longer refused; writes unchanged | merged (SDarioosh/Barvis#16) | [../../BARVIS.md](../../BARVIS.md) |
 | 9 | Action items and digest on the phone (roadmap 3–4): built-in task "Barvis Action Items" pushes new items, items due today and the daily digest via ntfy; items stay live in barvis-sound (owner's decision, 2026-10-19) | merged (SDarioosh/Barvis#17), ships paused | [../../BARVIS.md](../../BARVIS.md), `src/barvis_action_items.py` |
 | 10 | barvis-sound page `/barvis/sound`: live action items (done/dismiss), conversations list and "who is this?" cards for unnamed speakers (roadmap 3, 5) | merged (SDarioosh/Barvis#19); barvis-sound's `list_unnamed_speakers` merged (SDarioosh/barvis-sound#24) | [../../BARVIS.md](../../BARVIS.md) |
-| 11 | Stdio MCP servers added over the API keep working after that request (sandbox finding 2): each stdio connection has its own owner task | PR open | [../../BARVIS.md](../../BARVIS.md), `src/mcp_stdio_owner.py` |
+| 11 | Stdio MCP servers added over the API keep working after that request (sandbox finding 2): each stdio connection has its own owner task | PR SDarioosh/Barvis#20 | [../../BARVIS.md](../../BARVIS.md), `src/mcp_stdio_owner.py` |
 
 ## Next
 
