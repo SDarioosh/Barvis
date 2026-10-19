@@ -180,3 +180,25 @@ def with_approved_tool_grant(authority, exact_approval, manager=None):
     if grants is authority.grants and backends is authority.backend_resources:
         return authority
     return replace(authority, grants=grants, backend_resources=backends)
+
+
+def ran_trusted_server_tool(tool_events: Iterable[Any], manager=None) -> bool:
+    """True when this turn ran a tool of a trusted module server successfully.
+
+    After a module search the model sometimes ends the turn with no text (a
+    thinking model spends its whole reply on reasoning). The chat then shows
+    the route's placeholder "Done." instead of the answer. Upstream already
+    has a one-shot, tool-free "your last response was empty, answer now"
+    recovery, but only for unattended runs. The agent loop also uses it for
+    interactive turns when this returns True. A turn that stopped on a
+    question or approval card is waiting for the owner, so it doesn't count.
+    """
+    events = [e for e in tool_events or () if isinstance(e, dict)]
+    if any(e.get("ask_user") for e in events):
+        return False
+    for event in events:
+        if event.get("error") or event.get("exit_code") not in (None, 0):
+            continue
+        if is_trusted_server_tool(str(event.get("tool") or "").strip(), manager):
+            return True
+    return False
