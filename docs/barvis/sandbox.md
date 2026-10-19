@@ -239,10 +239,17 @@ These are real bugs, not sandbox quirks. 1–3 and 5 are Barvis bugs (tracked in
    setup uses HTTP, so this affected the server too. Fixed with one line; results in
    [HTTP annotation fix](#http-annotation-fix-finding-1-2026-10-18). Upstream issue to
    file.
-2. **Stdio MCP servers added over the API fail on every call** in the sandbox:
+2. **Fixed: stdio MCP servers added over the API fail on every call**:
    `MCP tool call failed: <name>:` with an empty message and `exit_code=1`, while the
-   same server works from the same `mcp` client library outside Barvis. Use HTTP until
-   this is understood.
+   same server works from the same `mcp` client library outside Barvis. Cause: the
+   server was connected inside the HTTP request, and Starlette's `BaseHTTPMiddleware`
+   cancels its task group once the response is sent, which also cancelled the stdio
+   transport's reader/writer tasks (the empty message is anyio's `ClosedResourceError`).
+   The call inside the adding request worked; every later one failed. Built-in servers
+   were not affected (they hold their connection in their own task). Fixed by opening
+   every stdio connection in a long-lived owner task (`src/mcp_stdio_owner.py`, BARVIS.md).
+   Reproduced and checked under uvicorn with a one-tool FastMCP server; regression test
+   `tests/test_mcp_stdio_owner.py`. Upstream issue to file.
 3. **Empty answers:** some Barvis replies are empty after tool calls (question 16 in the
    HTTP run). That matches the "Done." replies in the server eval.
 4. **barvis-sound: failed summaries are never retried.** If llama-server is down when a
