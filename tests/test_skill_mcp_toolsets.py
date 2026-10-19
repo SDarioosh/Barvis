@@ -15,6 +15,7 @@ from services.memory.skills import SkillsManager
 from src import skill_invocation
 from src.skill_invocation import (
     INVOKE_PREFIX,
+    invoked_skill_needs_tools,
     is_managed_skill,
     parse_invoke_message,
     pin_skill_contract,
@@ -246,3 +247,22 @@ def test_write_tools_keep_approval(monkeypatch):
     monkeypatch.setenv("ODYSSEUS_TRUSTED_READONLY_MCP", "convo")
     assert is_trusted_readonly_mcp_tool(_q("search_transcripts"), mgr)
     assert not is_trusted_readonly_mcp_tool(_q("update_action_item"), mgr)
+
+
+def test_slash_skill_with_tools_needs_agent_mode(owner_skills):
+    """Chat mode never builds a turn contract, so the route must switch to agent mode."""
+    assert invoked_skill_needs_tools(_message(), "alice")
+    assert not invoked_skill_needs_tools(_message(name="plain"), "alice")
+    assert not invoked_skill_needs_tools(_message(name="not-mine"), "alice")
+    assert not invoked_skill_needs_tools("What did Alice say about the budget?", "alice")
+
+
+def test_chat_route_escalates_slash_skills_to_agent_mode():
+    """The hook sits in the chat→agent escalation, before the turn contract is built."""
+    import inspect
+
+    import routes.chat_routes as chat_routes
+
+    src = inspect.getsource(chat_routes)
+    hook = src.index("invoked_skill_needs_tools(message, effective_user(request))")
+    assert src.index("auto_escalated = False") < hook < src.index("pin_skill_contract(_turn_contract")

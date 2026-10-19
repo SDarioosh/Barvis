@@ -100,6 +100,25 @@ def _invokable_skill(name: str, owner):
     return next((s for s in manager.load(owner=owner) if s.get("name") == name), None)
 
 
+def invoked_skill_needs_tools(message, owner) -> bool:
+    """True when ``message`` slash-invokes one of ``owner``'s skills that declares tools.
+
+    The chat route uses this to run such a turn in agent mode: in chat mode the turn
+    contract (and so :func:`pin_skill_contract`) never runs, and the lexical tool-intent
+    classifier doesn't see a tool request in the composed skill message, so the model
+    would answer with no tools at all.
+    """
+    invoked = parse_invoke_message(message)
+    if invoked is None:
+        return False
+    try:
+        skill = _invokable_skill(invoked.name, owner)
+    except Exception:
+        logger.debug("slash skill lookup failed", exc_info=True)
+        return False
+    return bool((skill or {}).get("requires_toolsets"))
+
+
 def pin_skill_contract(contract, *, message, owner, schemas, policy, manager=None):
     """Return a contract offering the invoked skill's tools, or ``contract`` unchanged.
 
