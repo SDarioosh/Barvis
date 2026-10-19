@@ -33,14 +33,24 @@ Source: `server/convo_server/mcp_server.py` (`build_mcp`).
 | `list_facts` | `subject`, `query`, `limit` | read-only |
 | `get_daily_digest` | `date` | read-only |
 | `list_people` | — | read-only |
+| `list_unnamed_speakers` | `limit` | read-only |
 | `update_action_item` | `item_id`, `status` (open/done/dismissed) | **write** |
 | `name_speaker` | `conversation_id`, `speaker_label`, `name`, `remember_voice` | **write** |
+| `reassign_line` | `line_id`, `name` | **write** |
+| `rename_speaker_everywhere` | `old_name`, `new_name` | **write, destructive** |
 
 - Read-only tools: `readOnlyHint: true`, `openWorldHint: false`. With `convo` in
   `ODYSSEUS_TRUSTED_READONLY_MCP`, Barvis runs them without approval.
 - Write tools: `readOnlyHint: false`, `destructiveHint: false`, `idempotentHint: true`,
-  `openWorldHint: false`. They keep Barvis' normal approval. `name_speaker` renames the
-  speaker's lines, redoes the summary and (with `remember_voice`) stores the voice.
+  `openWorldHint: false`. `rename_speaker_everywhere` has `destructiveHint: true`
+  (merging two names can't be undone). They keep Barvis' normal approval.
+- `name_speaker` renames the speaker's lines, redoes the summary and (with
+  `remember_voice`) adds a voice sample; since MCP version 0.2.0 it also renames
+  unnamed speakers in other conversations whose voice clearly matches, and says how many.
+- `get_transcript` and `search_transcripts` lines start with `#<line id>`, the
+  `line_id` for `reassign_line` (fix one line given to the wrong person).
+- `list_unnamed_speakers` lists voices nobody has named yet ("Speaker N") with a few
+  quotes, links and the closest known voice; for "who is this?" questions and cards.
 - Dates are `YYYY-MM-DD` in `CONVO_TIMEZONE`.
 - Links in results have the form `<CONVO_PUBLIC_URL>/view/<conversation_id>?sig=…#t=<seconds>`:
   a signed HTML transcript page that opens in a phone browser without a token. Rotating
@@ -90,7 +100,7 @@ Then, per [../modules.md](../modules.md#registering-a-module-in-barvis):
 ## Slash skill: `/sound`
 
 - Skill **`sound`**, server **`convo`**: `/sound <question>` gives that one message
-  barvis-sound's 10 tools (plus `ask_user`/`update_plan`) and nothing else. `/context
+  barvis-sound's 13 tools (plus `ask_user`/`update_plan`) and nothing else. `/context
   <question>` does the same for every trusted module (today only `convo`).
 - The skill's procedure is `INSTRUCTIONS` from `server/convo_server/mcp_server.py`, the
   same text as the Custom preset. barvis-sound owns it: change it there, update the
@@ -104,7 +114,7 @@ Then, per [../modules.md](../modules.md#registering-a-module-in-barvis):
 - Write tools (`update_action_item`, `name_speaker`) are offered on `/sound` turns and
   still ask for approval.
 - Follow-ups in the same chat don't need `/sound` again: once a convo tool has run in a
-  chat, every later message there is offered all 10 tools (write tools still ask). So
+  chat, every later message there is offered all 13 tools (write tools still ask). So
   "Speaker 1 and 3 were Shahyah, speaker 2 was Jenn" after `/sound what did we talk about
   last night?` calls `name_speaker`.
 - Approving a write tool once covers more calls of that same tool in the same reply:
@@ -141,7 +151,10 @@ ntfy integration (Settings → Integrations); the topic is the reminder topic
   `ODYSSEUS_PRESET` (default `custom`) and `ODYSSEUS_APPROVAL`.
 - Results: `server/eval/results/odysseus.jsonl` (gitignored).
 - Sandbox (Qwen3-4B on CPU, questions 1, 4, 16; not comparable with the table below):
-  raw 1/3, Barvis over HTTP 1/3. Steps: [../sandbox.md](../sandbox.md#run-the-eval).
+  raw 1/3, Barvis over HTTP 1/3. With every Odysseus tool on and "Auto" (questions 1,
+  4, 16, 21): plain 0/4, `/sound` 4/4, `/context` 1/4, `--trim` 3/4
+  ([../sandbox.md](../sandbox.md#slash-skills-2026-10-18)). Slash-prefixed runs:
+  `scripts/barvis_slash_eval.py` in Barvis. Steps: [../sandbox.md](../sandbox.md#run-the-eval).
 
 | Frontend (same model, same MCP server) | Score |
 |---|---|
@@ -156,8 +169,6 @@ its tool calls. Full analysis: barvis-sound
 
 ## Known gaps
 
-- No test yet asserts the annotation of every tool (required by
-  [../modules.md](../modules.md#interface-mcp-server)).
 - Plain questions (no `/sound` or `/context`) don't reach the convo tools when every
   Odysseus tool is on ([../roadmap.md](../roadmap.md)).
 - A malformed date argument (e.g. `'2026-09-30”,'` from the 4B sandbox model) makes
