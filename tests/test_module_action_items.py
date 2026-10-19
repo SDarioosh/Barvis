@@ -138,3 +138,14 @@ def test_registered_as_builtin_task():
     assert bai.ACTION in BUILTIN_ACTION_INFO
     assert HOUSEKEEPING_DEFAULTS[bai.ACTION]["ship_paused"] is True
     assert bai.ACTION in TaskScheduler._SILENT_ACTIONS
+
+
+def test_parse_voice_note_and_due_word_items():
+    a, b = bai.parse_action_items(
+        '- #20 [open] Buy milk due 2026-10-17 (tomorrow) — from "Grocery list" (voice note) '
+        "2026-10-16 08:00 http://h:8000/view/n1?sig=a#t=3\n"
+        '- #22 [open] Check the due date with Ana due next week — from '
+        '"Invoices" 2026-10-16 08:00 http://h:8000/view/x?sig=a#t=9')
+    assert (a.id, a.text, a.due_date, a.due, a.conversation) == (
+        20, "Buy milk", "2026-10-17", "tomorrow", "Grocery list")
+    assert (b.text, b.due_date, b.due) == ("Check the due date with Ana", None, "next week")

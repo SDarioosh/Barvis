@@ -16,16 +16,17 @@ from typing import Any, Awaitable, Callable
 CallTool = Callable[[str, dict], Awaitable[str]]
 
 _CONV = re.compile(
-    r"^- (?P<start>\d{4}-\d{2}-\d{2} \d{2}:\d{2})–(?P<end>\d{2}:\d{2}) \"(?P<title>.*)\" "
-    r"id (?P<id>\S+); people: (?P<people>.*)$")
+    r"^- (?P<start>\d{4}-\d{2}-\d{2} \d{2}:\d{2})–(?P<end>\d{2}:\d{2}) \"(?P<title>.*)\""
+    r"(?: \(voice note\))? id (?P<id>\S+); people: (?P<people>.*)$")
 _UNNAMED = re.compile(
     r"^- (?P<label>.+?) in \"(?P<title>.*)\" (?P<when>\d{4}-\d{2}-\d{2} \d{2}:\d{2}) "
     r"\(conversation id (?P<conv>[^)]+)\), (?P<lines>\d+) lines"
     r"(?:; sounds like (?P<guess>.+) \((?P<score>[0-9.]+)\))?$")
 _ITEM = re.compile(
     r"^- #(?P<id>\d+) \[(?P<status>open|done|dismissed)\] (?P<rest>.*) — from "
-    r"\"(?P<title>.*)\" (?P<when>\d{4}-\d{2}-\d{2} \d{2}:\d{2}) (?P<link>\S+)$")
-_DUE = re.compile(r" due (?P<due>.+)$")
+    r"\"(?P<title>.*)\"(?: \(voice note\))? (?P<when>\d{4}-\d{2}-\d{2} \d{2}:\d{2}) (?P<link>\S+)$")
+# the last " due ": the item text itself may say "due" ("Confirm the due date")
+_DUE = re.compile(r" due (?P<due>(?:(?! due ).)+)$")
 _OWNER = re.compile(r" \(owner (?P<owner>[^)]*)\)$")
 _QUOTE = re.compile(r"^#(?P<id>\d+) \"(?P<text>.*)\" (?P<link>https?://\S+)$")
 
