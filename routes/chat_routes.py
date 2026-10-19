@@ -2686,6 +2686,10 @@ def setup_chat_routes(
             chat_mode = "agent"
             auto_escalated = True
             logger.info("chat→agent auto-escalation: explicit private browser workflow")
+        # Barvis: a slash-invoked skill that declares tools runs in agent mode (src/skill_invocation.py)
+        from src.skill_invocation import invoked_skill_needs_tools
+        if chat_mode == "chat" and invoked_skill_needs_tools(message, effective_user(request)):
+            chat_mode, auto_escalated = "agent", True
         active_doc_id = form_data.get("active_doc_id", "").strip()
         active_doc_state = form_data.get("active_doc_state", "").strip().casefold()
         logger.info(
