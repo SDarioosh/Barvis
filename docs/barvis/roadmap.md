@@ -20,6 +20,7 @@ _Last updated: 2026-10-19_
 | 9 | Action items and digest on the phone (roadmap 3–4): built-in task "Barvis Action Items" pushes new items, items due today and the daily digest via ntfy; items stay live in barvis-sound (owner's decision, 2026-10-19) | merged (SDarioosh/Barvis#17), ships paused | [../../BARVIS.md](../../BARVIS.md), `src/barvis_action_items.py` |
 | 10 | barvis-sound page `/barvis/sound`: live action items (done/dismiss), conversations list and "who is this?" cards for unnamed speakers (roadmap 3, 5) | merged (SDarioosh/Barvis#19); barvis-sound's `list_unnamed_speakers` merged (SDarioosh/barvis-sound#24) | [../../BARVIS.md](../../BARVIS.md) |
 | 11 | Stdio MCP servers added over the API keep working after that request (sandbox finding 2): each stdio connection has its own owner task | PR SDarioosh/Barvis#20 | [../../BARVIS.md](../../BARVIS.md), `src/mcp_stdio_owner.py` |
+| 12 | One-command deploy: `barvis_deploy.sh deploy` runs each module's deploy command first (barvis-sound: update, install, background services that survive reboot), works from any directory | PR SDarioosh/Barvis#21; barvis-sound side SDarioosh/barvis-sound#30 | [deploy.md](deploy.md#update-production), [modules.md](modules.md#deploying-a-module) |
 
 ## Next
 

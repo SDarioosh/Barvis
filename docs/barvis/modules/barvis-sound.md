@@ -78,6 +78,10 @@ cd server
 CONVO_MCP_TOKEN=... CONVO_MCP_HOST=172.17.0.1 .venv/bin/convo-server mcp --http   # docker bridge IP
 ```
 
+On the owner's server `barvis-deploy deploy` runs this as a background service
+(barvis-sound's `server/scripts/deploy.sh`, settings in `server/.env`;
+[../deploy.md](../deploy.md#one-command-setup-once)).
+
 Then add an HTTP server named `convo` with URL
 `http://host.docker.internal:8001/mcp?access_token=<CONVO_MCP_TOKEN>` (Barvis in Docker)
 or `http://127.0.0.1:8001/mcp?access_token=<CONVO_MCP_TOKEN>` (Barvis native, e.g. the

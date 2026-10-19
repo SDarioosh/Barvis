@@ -50,7 +50,7 @@ possible, small hooks in core files, no renames or reformatting.
 | **Managed skills.** Skills with `source: managed` (created by `barvis_setup.py`) are slash-invokable without the LLM skill audit that "Auto-approve skills" requires, and an audit verdict doesn't hide them. Only the owner's own skills are affected. | hook in `services/memory/skills.py` (`index_for`), check in `src/skill_invocation.py` | with discussion |
 | **Setup.** Keeps every Odysseus feature: leaves the tool toggles alone, sets the default model to "Auto" tool mode, checks that module MCP servers are connected, and creates or updates the `/sound` skill (requires `mcp:convo`, procedure = the module's instructions from the Custom preset) and `/context` (requires every server in `ODYSSEUS_TRUSTED_READONLY_MCP`). `--trim` turns off the built-ins a memory-only setup doesn't use, hides the built-in email/browser/image MCP tools and sets "Regular tools"; `--untrim` turns them back on. Configuration through the admin API, not code. Untagged questions in "Auto" still don't reach module tools; use `/sound` or `/context` ([roadmap](docs/barvis/roadmap.md)). | `scripts/barvis_setup.py` (new) | no |
 | **Slash eval.** Runs a module's bakeoff (barvis-sound's `eval/bakeoff.py`, unmodified) with each question sent as `/<skill> <question>`, and reports approvals and `tools_sent` from the Barvis log. Development tool. | `scripts/barvis_slash_eval.py` (new) | no |
-| **Deployment.** Production runs the locally built `barvis:<commit>` image with Docker Compose; one command builds, backs up data, switches, health-checks and rolls back. | `scripts/barvis_deploy.sh`, `docker/barvis.override.yml` (new); [docs/barvis/deploy.md](docs/barvis/deploy.md) | no |
+| **Deployment.** Production runs the locally built `barvis:<commit>` image with Docker Compose; one command (from any directory) first runs each module's own deploy command (`BARVIS_MODULES`), then builds, backs up data, switches, health-checks and rolls back. | `scripts/barvis_deploy.sh`, `docker/barvis.override.yml` (new); [docs/barvis/deploy.md](docs/barvis/deploy.md) | no |
 
 Tests: `tests/test_mcp_trust.py`, `tests/test_mcp_empty_answer.py`, `tests/test_mcp_http_annotations.py`,
 `tests/test_mcp_stdio_owner.py`,
@@ -69,7 +69,8 @@ Tests: `tests/test_mcp_trust.py`, `tests/test_mcp_empty_answer.py`, `tests/test_
    [docs/barvis/modules.md](docs/barvis/modules.md#registering-a-module-in-barvis);
    barvis-sound specifics:
    [docs/barvis/modules/barvis-sound.md](docs/barvis/modules/barvis-sound.md#connect-it).
-3. Update with `scripts/barvis_deploy.sh deploy`; it re-runs `scripts/barvis_setup.py`.
+3. Update with `scripts/barvis_deploy.sh deploy`; it updates and restarts the modules
+   listed in `BARVIS_MODULES` first and re-runs `scripts/barvis_setup.py`.
 
 ## Branches and upstream sync
 
