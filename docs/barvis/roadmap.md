@@ -15,8 +15,10 @@ _Last updated: 2026-10-19_
 | 4 | Sandbox stack (whole system on CPU in the cloud sandbox) | working; baseline raw 1/3, Barvis 1/3 | [sandbox.md](sandbox.md) |
 | 5 | HTTP MCP servers keep tool annotations (no approvals for trusted reads over HTTP) | merged (SDarioosh/Barvis#5); sandbox 2/3 → 2/3, approvals 2 → 0 | [sandbox.md](sandbox.md#http-annotation-fix-finding-1-2026-10-18) |
 | 6 | Production: Barvis replaces the owner's Odysseus on port 7000 with all Odysseus features; deploy/rollback script; `barvis_setup.py` no longer trims tools by default | merged (SDarioosh/Barvis#8); production switched 2026-10-18 | [deploy.md](deploy.md) |
-| 9 | barvis-sound page `/barvis/sound`: live action items (done/dismiss), conversations list and "who is this?" cards for unnamed speakers (roadmap 3, 5) | PR open; needs barvis-sound's `list_unnamed_speakers` (barvis-sound recognition PR) | [../../BARVIS.md](../../BARVIS.md) |
-| 7 | `/sound` and `/context`: slash-invoked skills offer module tools for one message (MCP entries in `requires_toolsets`, skill tools pinned on the invoked turn, managed skills from `barvis_setup.py`) | PR SDarioosh/Barvis#9; sandbox results in [sandbox.md](sandbox.md#slash-skills-2026-10-18) | [deploy.md](deploy.md#features-and-modules) |
+| 7 | `/sound` and `/context`: slash-invoked skills offer module tools for one message (MCP entries in `requires_toolsets`, skill tools pinned on the invoked turn, managed skills from `barvis_setup.py`) | merged (SDarioosh/Barvis#9); sandbox, every tool on + Auto: plain 0/4, `/sound` 4/4, `/context` 1/4 ([sandbox.md](sandbox.md#slash-skills-2026-10-18)) | [deploy.md](deploy.md#features-and-modules) |
+| 8 | Several tools in a row: a turn may read every personal store it offers (calendar, tasks, notes, memory, documents, skills), so a calendar lookup after a tasks lookup is no longer refused; writes unchanged | PR SDarioosh/Barvis#16 | [../../BARVIS.md](../../BARVIS.md) |
+| 9 | Action items and digest on the phone (roadmap 3–4): built-in task "Barvis Action Items" pushes new items, items due today and the daily digest via ntfy; items stay live in barvis-sound (owner's decision, 2026-10-19) | PR open, ships paused | [../../BARVIS.md](../../BARVIS.md), `src/barvis_action_items.py` |
+| 10 | barvis-sound page `/barvis/sound`: live action items (done/dismiss), conversations list and "who is this?" cards for unnamed speakers (roadmap 3, 5) | PR open; needs barvis-sound's `list_unnamed_speakers` (barvis-sound recognition PR) | [../../BARVIS.md](../../BARVIS.md) |
 
 ## Next
 
@@ -31,22 +33,20 @@ _Last updated: 2026-10-19_
    stdio servers added over the API fail on every call. (The HTTP annotation bug is
    item 5 above; its upstream issue is drafted in that PR, for the owner to file.)
 2. **Citations to ≥ 15/20.** Most remaining failures have the right fact and no
-   transcript link. Two replies were just "Done." because the model returned empty text
-   after its tool calls. Find why Barvis turns that into "Done." and why links get
-   dropped; fix in Barvis, or in the module's result text if that's the cause. Rerun
+   transcript link. Replies that were just "Done." (the model returned empty text after
+   its tool calls, and the chat route saves "Done." for an empty answer) now get one
+   tool-free answer round (BARVIS.md, "Empty replies after module tools"). Still open:
+   why links get dropped; fix in Barvis, or in the module's result text if that's the
+   cause. Rerun
    `server/eval/bakeoff.py --frontend odysseus` after each change.
-3. **Action items → tasks and calendar.** barvis-sound action items flow into Odysseus
-   tasks and CalDAV. Barvis reads them through the module's MCP tools
-   (`list_action_items`, `update_action_item`); it never writes the module's database.
-   Until then, with every Odysseus tool on, the empty tasks/calendar can attract
-   questions meant for the conversation store (see the all-tools eval in
-   [sandbox.md](sandbox.md#all-odysseus-tools-on-2026-10-18)).
-4. **ntfy notifications.** Notify the phone (for example new action items or the daily
-   digest) through the existing ntfy service. Local only.
-5. **Conversations view** (status item 9). `/barvis/sound` lists conversations and opens
-   the module's signed transcripts; "who is this?" cards name unnamed speakers. Next:
-   follow the user's theme (the page uses the default dark tokens only), and a live view
-   of action items if the owner prefers it over the copy (item 8).
+3. **Action items, live** (status item 9). Decided 2026-10-19: no copies in Odysseus
+   to-dos or calendar; Barvis shows the module's items live (on the barvis-sound page,
+   with done/dismiss through `update_action_item`) and pushes reminders.
+4. **ntfy notifications** (status item 9). New action items and yesterday's digest go
+   to the phone through the ntfy reminder channel.
+5. **Conversations view** (status item 10). `/barvis/sound` lists conversations, live
+   action items (done/dismiss) and "who is this?" cards for unnamed speakers. Next:
+   follow the user's theme (the page uses the default dark tokens only).
 6. **Phone access.** Use Barvis from the Android phone over Tailscale (Odysseus has a
    PWA). Lock services to Tailscale per the owner's security decision.
 7. **Shared search.** One `context` search tool that queries every module with the
@@ -66,5 +66,3 @@ No repos exist yet. Each would follow [modules.md](modules.md).
 ## Open questions for the owner
 
 - Which future modules are planned, and in what order?
-- For the tasks/calendar sync: does Barvis copy action items into Odysseus tasks
-  (two sources), or show them live from the module?
