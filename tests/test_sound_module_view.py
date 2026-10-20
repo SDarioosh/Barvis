@@ -149,8 +149,9 @@ class FakeManager:
 
 @pytest.fixture
 def client(monkeypatch):
-    from core.middleware import require_admin
-    from routes.sound_module_routes import setup_sound_module_routes
+    # The routes module's own require_admin: another test may swap core.middleware in
+    # sys.modules, and then a fresh import names a different function.
+    from routes.sound_module_routes import require_admin, setup_sound_module_routes
 
     manager = FakeManager()
     monkeypatch.setattr("src.tool_utils.get_mcp_manager", lambda: manager)
