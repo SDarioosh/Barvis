@@ -53,6 +53,11 @@ def _items(raw: Any) -> list[dict[str, Any]]:
     return out
 
 
+# Note types whose items are a checklist. ``manage_notes`` (and the notes UI) treat all
+# three the same; "todo" is what the Module Action Items task files.
+CHECKLIST_TYPES = frozenset({"checklist", "todo", "goal"})
+
+
 def _is_calendar_reminder(note: Any) -> bool:
     return getattr(note, "source", None) == "calendar" and getattr(note, "label", None) == "calendar"
 
@@ -67,7 +72,7 @@ def notes_to_json(notes: Iterable[Any]) -> dict[str, Any]:
     """Serialize notes (already selected) in the documented shape and order."""
     out = []
     for n in sorted((n for n in notes if not _is_calendar_reminder(n)), key=_sort_key):
-        checklist = (getattr(n, "note_type", None) or "note") == "checklist"
+        checklist = (getattr(n, "note_type", None) or "note") in CHECKLIST_TYPES
         out.append({
             "id": n.id,
             "title": getattr(n, "title", None) or "",
