@@ -3579,6 +3579,9 @@ def setup_chat_routes(
         _request_authority = with_unclassified_web_search(
             _request_authority, web_search_enabled="web_search" not in disabled_tools,
             client_runtime_context=client_runtime_context)
+        # Fork: read-only actions of the personal-store tools on every turn (src/personal_read_grants.py)
+        from src.personal_read_grants import with_personal_store_reads
+        _request_authority = with_personal_store_reads(_request_authority)
         if exact_tool_approval is not None:
             from src.agent_runtime.authority import RequestAuthority
             _request_authority = (
