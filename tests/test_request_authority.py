@@ -604,13 +604,13 @@ def test_contact_list_is_not_permitted_without_a_contacts_request():
 
 
 @pytest.mark.parametrize("prior", [
-    "Search for the Jennifer Log contact and add that she is my Fiance",
-    "Can you notate that Jennifer Log is my fiance?",
+    "Search for the Alex Example contact and add that she is my Fiance",
+    "Can you notate that Alex Example is my fiance?",
 ])
 def test_named_contact_store_outranks_family_inherited_from_prior_turn(prior):
     history = [{"role": "user", "content": prior}, {"role": "assistant", "content": "ok"}]
     granted = create_request_authority(
-        "list the Jennifer Log contact and add that she is my fiance",
+        "list the Alex Example contact and add that she is my fiance",
         owner="alice", session_id="s", history=history)
     assert granted.permits(ExactOperation.normalize(
-        "manage_contact", '{"action": "search", "name": "Jennifer Log"}'))
+        "manage_contact", '{"action": "search", "name": "Alex Example"}'))

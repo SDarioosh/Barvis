@@ -5014,7 +5014,7 @@ def requested_capabilities(message: str, history: Iterable = (), *, active_docum
     if (
         not recent_family
         and _REFERENCE.search(text)
-        # A store the message itself names ("the Jennifer contact") outranks
+        # A store the message itself names ("the Alex contact") outranks
         # the tool family inherited from an earlier turn.
         and not any(
             re.search(pattern, text, re.I)
