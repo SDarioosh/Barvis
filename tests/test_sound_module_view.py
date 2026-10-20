@@ -116,6 +116,20 @@ def test_parse_transcript():
     assert (len(last.lines), last.more, last.next_start) == (2, False, None)
 
 
+def test_parse_transcript_one_time_per_line():
+    # newer modules print only the offset; the clock time comes from the header
+    t = view.parse_transcript(
+        '"Alice hands over vendor contracts" 2026-10-14 17:00:30 http://h:8000/view/c1?sig=a\n'
+        "#31 [0s] Alice: Morning.\n#32 [45s] Me: Wow, congratulations!\n"
+        "When answering, put the link next to each fact you use. To show the transcript, "
+        "give the link above and a short summary; don't copy these lines into your answer.")
+    assert t.title == "Alice hands over vendor contracts"
+    assert [(ln.id, ln.offset, ln.time, ln.speaker, ln.text) for ln in t.lines] == [
+        (31, 0, "17:00:30", "Alice", "Morning."), (32, 45, "17:01:15", "Me", "Wow, congratulations!")]
+    assert t.lines[1].link == "http://h:8000/view/c1?sig=a#t=45"
+    assert (t.more, t.next_start) == (False, None)
+
+
 class FakeManager:
     _connections = {"srv1": {"name": "convo", "status": "connected"}}
 

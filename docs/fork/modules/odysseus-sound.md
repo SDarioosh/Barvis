@@ -49,6 +49,13 @@ Source: `server/convo_server/mcp_server.py` (`build_mcp`).
   unnamed speakers in other conversations whose voice clearly matches, and says how many.
 - `get_transcript` and `search_transcripts` lines start with `#<line id>`, the
   `line_id` for `reassign_line` (fix one line given to the wrong person).
+- `get_transcript` prints `"<title>" <YYYY-MM-DD HH:MM:SS> <link>`, then one
+  `#<line id> [<seconds>s] <speaker>: <text>` per line, 100 lines a page by default.
+  Modules before 2026-10-20 printed `[<seconds>s <HH:MM:SS>]`, minute-precision start
+  times and 200 lines; `src/sound_module_view.py` reads both. The result and the
+  `INSTRUCTIONS` tell the model to answer "show me the transcript" with the link and a
+  short summary instead of retyping the lines: at ~40 tokens/s, retyping a 200-line page
+  took most of a 20 s `/sound` answer.
 - Voice notes (the owner recording a memo for themselves) are stored as their own kind.
   Results mark them `"<title>" (voice note)`, and `search_conversations` with
   `kind="note"` returns only voice notes (`"conversation"`: only the others; empty: both).
