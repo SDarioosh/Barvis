@@ -119,7 +119,17 @@ async function loadWho() {
 // Odysseus calendar / to-dos by src/module_action_items.py; conversation items are
 // suggestions until the owner taps Add. Every change answers with the item as it is
 // now, and the card is drawn again from that answer.
-const KIND_ICON = { event: '📅', task: '☑️', reminder: '⏰' };
+// Monochrome icons in the sidebar's style (calendar, checked box, bell).
+const _ICON = (body) => '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" ' +
+  'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+  body + '</svg>';
+const KIND_ICON = {
+  event: _ICON('<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" ' +
+    'x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>'),
+  task: _ICON('<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 12l3 3 5-6"/>'),
+  reminder: _ICON('<path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/>' +
+    '<path d="M13.73 21a2 2 0 0 1-3.46 0"/>'),
+};
 const KIND_NAME = { event: 'Event', task: 'To-do', reminder: 'Reminder' };
 const WHERE = { calendar: 'In calendar', todo: 'In to-dos' };
 
@@ -257,7 +267,8 @@ function itemCard(it, note = '') {
                            'data-voice-note': it.voice_note ? '1' : '0' },
     el('h2', { className: 'bs-item-title' },
       el('span', { className: 'bs-kind', title: KIND_NAME[kind] || 'To-do',
-                   'aria-label': KIND_NAME[kind] || 'To-do' }, KIND_ICON[kind] || KIND_ICON.task),
+                   'aria-label': KIND_NAME[kind] || 'To-do',
+                   html: KIND_ICON[kind] || KIND_ICON.task }),
       el('span', {}, it.text)),
     el('div', { className: 'bs-row bs-facts' },
       due ? el('span', { className: 'bs-due' }, due) : null,
