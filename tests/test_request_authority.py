@@ -601,3 +601,16 @@ def test_contact_list_is_permitted_for_look_at_phrasing(text):
 def test_contact_list_is_not_permitted_without_a_contacts_request():
     granted = create_request_authority("I imported it. Do you see them?", owner="alice", session_id="s")
     assert not granted.permits(ExactOperation.normalize("manage_contact", '{"action": "list"}'))
+
+
+@pytest.mark.parametrize("prior", [
+    "Search for the Jennifer Log contact and add that she is my Fiance",
+    "Can you notate that Jennifer Log is my fiance?",
+])
+def test_named_contact_store_outranks_family_inherited_from_prior_turn(prior):
+    history = [{"role": "user", "content": prior}, {"role": "assistant", "content": "ok"}]
+    granted = create_request_authority(
+        "list the Jennifer Log contact and add that she is my fiance",
+        owner="alice", session_id="s", history=history)
+    assert granted.permits(ExactOperation.normalize(
+        "manage_contact", '{"action": "search", "name": "Jennifer Log"}'))

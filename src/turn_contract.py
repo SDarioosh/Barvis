@@ -5014,6 +5014,13 @@ def requested_capabilities(message: str, history: Iterable = (), *, active_docum
     if (
         not recent_family
         and _REFERENCE.search(text)
+        # A store the message itself names ("the Jennifer contact") outranks
+        # the tool family inherited from an earlier turn.
+        and not any(
+            re.search(pattern, text, re.I)
+            for family, pattern in _FAMILY_WORDS.items()
+            if family not in {"search_browser", "ocr"}
+        )
         and (
             _has_action_signal(text)
             or re.search(r"\b(?:check|chek|verify|confirm)\b", text, re.I)
