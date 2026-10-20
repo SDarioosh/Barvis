@@ -1,7 +1,8 @@
 """Fork: data for the odysseus-sound page (conversations, "who is this?" cards).
 
 Everything comes from the module's MCP tools (``search_conversations``,
-``list_unnamed_speakers``, ``name_speaker``) through Odysseus' MCP manager; Odysseus never
+``get_conversation``, ``get_transcript``, ``list_unnamed_speakers``, ``name_speaker``,
+``reassign_line``, ``rename_speaker_everywhere``, action items) through Odysseus' MCP manager; Odysseus never
 opens the module's database. The tools return compact text for models, so this file
 parses their documented line shapes (see docs/fork/modules/odysseus-sound.md). Lines
 that don't match are skipped, so a wording change degrades to fewer rows, not an error.
@@ -17,7 +18,7 @@ CallTool = Callable[[str, dict], Awaitable[str]]
 
 _CONV = re.compile(
     r"^- (?P<start>\d{4}-\d{2}-\d{2} \d{2}:\d{2})–(?P<end>\d{2}:\d{2}) \"(?P<title>.*)\""
-    r"(?: \(voice note\))? id (?P<id>\S+); people: (?P<people>.*)$")
+    r"(?P<note> \(voice note\))? id (?P<id>\S+); people: (?P<people>.*)$")
 _UNNAMED = re.compile(
     r"^- (?P<label>.+?) in \"(?P<title>.*)\" (?P<when>\d{4}-\d{2}-\d{2} \d{2}:\d{2}) "
     r"\(conversation id (?P<conv>[^)]+)\), (?P<lines>\d+) lines"
@@ -29,6 +30,19 @@ _ITEM = re.compile(
 _DUE = re.compile(r" due (?P<due>(?:(?! due ).)+)$")
 _OWNER = re.compile(r" \(owner (?P<owner>[^)]*)\)$")
 _QUOTE = re.compile(r"^#(?P<id>\d+) \"(?P<text>.*)\" (?P<link>https?://\S+)$")
+# get_conversation
+_HEAD = re.compile(r"^\"(?P<title>.*)\"(?: \(voice note\))? — (?P<when>.+)$")
+_SPEAKERS = re.compile(r"^Speakers: (?P<speakers>.*)\. People: (?P<people>.*)$")
+_CONV_ITEM = re.compile(
+    r"^Action #(?P<id>\d+) \[(?P<status>open|done|dismissed)\]: (?P<rest>.*) "
+    r"(?P<link>https?://\S+)$")
+_FACT = re.compile(r"^Fact \[(?P<subject>[^\]]*)\]: (?P<fact>.*) (?P<link>https?://\S+)$")
+# get_transcript
+_T_HEAD = re.compile(r"^\"(?P<title>.*)\" (?P<when>\S+(?: \S+)?) (?P<link>https?://\S+)$")
+_T_LINE = re.compile(
+    r"^#(?P<id>\d+) \[(?P<offset>\d+)s (?P<time>\S+)\] (?P<speaker>.+?): (?P<text>.*)$")
+_T_MORE = re.compile(r"^… \d+ more lines")
+_CONV_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,200}$")
 
 
 @dataclass
@@ -40,6 +54,7 @@ class Conversation:
     people: list[str]
     summary: str = ""
     link: str = ""
+    voice_note: bool = False
 
 
 @dataclass
@@ -73,18 +88,79 @@ class ActionItem:
     link: str
 
 
+@dataclass
+class ConversationItem:
+    id: int
+    status: str
+    text: str
+    owner: str | None
+    due: str | None
+    link: str
+
+
+@dataclass
+class Fact:
+    subject: str
+    fact: str
+    link: str
+
+
+@dataclass
+class ConversationDetail:
+    id: str
+    title: str = ""
+    when: str = ""  # "2026-10-14 17:00–17:12 (Europe/Berlin), device omi"
+    speakers: list[str] = field(default_factory=list)
+    people: list[str] = field(default_factory=list)
+    link: str = ""
+    summary: str = ""
+    key_points: list[str] = field(default_factory=list)
+    action_items: list[ConversationItem] = field(default_factory=list)
+    facts: list[Fact] = field(default_factory=list)
+
+
+@dataclass
+class TranscriptLine:
+    id: int
+    offset: int
+    time: str
+    speaker: str
+    text: str
+    link: str
+
+
+@dataclass
+class Transcript:
+    title: str = ""
+    link: str = ""
+    lines: list[TranscriptLine] = field(default_factory=list)
+    more: bool = False
+    next_start: int | None = None
+
+
+def _names(text: str) -> list[str]:
+    text = text.strip()
+    return [] if text in {"", "—"} else [p.strip() for p in text.split(",") if p.strip()]
+
+
+def _split_item(rest: str) -> tuple[str, str | None, str | None]:
+    """"text (owner X) due D" -> (text, owner, due); see parse_action_items."""
+    due = owner = None
+    if d := _DUE.search(rest):
+        due, rest = d["due"], rest[:d.start()]
+    if o := _OWNER.search(rest):
+        owner, rest = o["owner"], rest[:o.start()]
+    return rest.strip(), owner, due
+
+
 def parse_action_items(text: str) -> list[ActionItem]:
     out = []
     for raw in (text or "").splitlines():
         m = _ITEM.match(raw.strip())
         if not m:
             continue
-        rest, due, owner = m["rest"], None, None
-        if d := _DUE.search(rest):
-            due, rest = d["due"], rest[:d.start()]
-        if o := _OWNER.search(rest):
-            owner, rest = o["owner"], rest[:o.start()]
-        out.append(ActionItem(int(m["id"]), m["status"], rest.strip(), owner, due,
+        rest, owner, due = _split_item(m["rest"])
+        out.append(ActionItem(int(m["id"]), m["status"], rest, owner, due,
                               m["title"], m["when"], m["link"]))
     return out
 
@@ -96,7 +172,8 @@ def parse_conversations(text: str) -> list[Conversation]:
         if m:
             people = [] if m["people"].strip() in {"", "—"} else [
                 p.strip() for p in m["people"].split(",") if p.strip()]
-            out.append(Conversation(m["id"], m["start"], m["end"], m["title"], people))
+            out.append(Conversation(m["id"], m["start"], m["end"], m["title"], people,
+                                    voice_note=bool(m["note"])))
             continue
         if not out or not raw.startswith("  "):
             continue
@@ -123,6 +200,57 @@ def parse_unnamed(text: str) -> list[UnnamedSpeaker]:
     return out
 
 
+def parse_conversation(text: str, conversation_id: str) -> ConversationDetail:
+    """``get_conversation`` output; unknown lines are skipped."""
+    c = ConversationDetail(conversation_id)
+    in_summary = False
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not c.title and (m := _HEAD.match(line)):
+            c.title, c.when = m["title"], m["when"]
+        elif m := _SPEAKERS.match(line):
+            c.speakers, c.people = _names(m["speakers"]), _names(m["people"])
+        elif line.startswith("Link: ") and not c.link:
+            c.link = line[len("Link: "):].strip()
+        elif line.startswith("Summary: ") and not c.summary:
+            c.summary, in_summary = line[len("Summary: "):].strip(), True
+            continue
+        elif line.startswith("* "):
+            c.key_points.append(line[2:].strip())
+        elif m := _CONV_ITEM.match(line):
+            rest, owner, due = _split_item(m["rest"])
+            c.action_items.append(ConversationItem(int(m["id"]), m["status"], rest, owner,
+                                                   due, m["link"]))
+        elif m := _FACT.match(line):
+            c.facts.append(Fact(m["subject"], m["fact"], m["link"]))
+        elif in_summary and line and not line.startswith("When answering"):
+            c.summary += "\n" + line  # a summary that spans lines
+            continue
+        in_summary = False
+    return c
+
+
+def parse_transcript(text: str) -> Transcript:
+    """``get_transcript`` output; each line links to its moment in the module's view."""
+    t = Transcript()
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if m := _T_LINE.match(line):
+            off = int(m["offset"])
+            link = (t.link.split("#", 1)[0] + f"#t={off}") if t.link else ""
+            t.lines.append(TranscriptLine(int(m["id"]), off, m["time"], m["speaker"],
+                                          m["text"], link))
+        elif not t.title and not t.lines and (m := _T_HEAD.match(line)):
+            t.title, t.link = m["title"], m["link"]
+        elif _T_MORE.match(line):
+            t.more = True
+    if t.more and t.lines:
+        t.next_start = t.lines[-1].offset
+    else:
+        t.more = False  # nothing to continue from
+    return t
+
+
 def as_dicts(rows: list[Any]) -> list[dict]:
     return [asdict(r) for r in rows]
 
@@ -140,16 +268,72 @@ def server_id(manager: Any, key: str) -> str | None:
 
 
 async def conversations(call: CallTool, *, query: str = "", person: str = "",
-                        since: str = "", until: str = "", limit: int = 30) -> list[dict]:
-    text = await call("search_conversations", {
-        "query": query, "person": person, "since": since, "until": until,
-        "limit": max(1, min(int(limit), 50))})
+                        since: str = "", until: str = "", kind: str = "",
+                        limit: int = 30) -> list[dict]:
+    args: dict[str, Any] = {"query": query, "person": person, "since": since,
+                            "until": until, "limit": max(1, min(int(limit), 50))}
+    if kind in ("note", "conversation"):  # odysseus-sound >= kind filter; "" = both
+        args["kind"] = kind
+    text = await call("search_conversations", args)
     return as_dicts(parse_conversations(text))
 
 
 async def unnamed_speakers(call: CallTool, limit: int = 10) -> list[dict]:
     text = await call("list_unnamed_speakers", {"limit": max(1, min(int(limit), 50))})
     return as_dicts(parse_unnamed(text))
+
+
+def check_conversation_id(conversation_id: str) -> str:
+    if not _CONV_ID.match(conversation_id or ""):
+        raise ValueError("conversation id must be 1-200 characters of A-Z a-z 0-9 _ . : -")
+    return conversation_id
+
+
+def check_name(name: str, what: str = "name") -> str:
+    name = (name or "").strip()
+    if not name or len(name) > 100:
+        raise ValueError(f"{what} must be 1-100 characters")
+    return name
+
+
+def _missing(text: str) -> bool:
+    return (text or "").startswith("No conversation")
+
+
+async def conversation(call: CallTool, conversation_id: str) -> dict:
+    """Raises LookupError when the module doesn't know the id."""
+    conversation_id = check_conversation_id(conversation_id)
+    text = await call("get_conversation", {"conversation_id": conversation_id})
+    if _missing(text):
+        raise LookupError(text.strip())
+    return asdict(parse_conversation(text, conversation_id))
+
+
+async def transcript(call: CallTool, conversation_id: str, start_seconds: int = 0) -> dict:
+    """Up to 200 lines from ``start_seconds``; raises LookupError for an unknown id."""
+    conversation_id = check_conversation_id(conversation_id)
+    text = await call("get_transcript", {"conversation_id": conversation_id,
+                                         "start_seconds": max(0, int(start_seconds)),
+                                         "max_lines": 200})
+    if _missing(text):
+        raise LookupError(text.strip())
+    return asdict(parse_transcript(text))
+
+
+async def reassign_line(call: CallTool, line_id: int, name: str) -> dict:
+    if int(line_id) < 1:
+        raise ValueError("line id must be positive")
+    message = await call("reassign_line", {"line_id": int(line_id), "name": check_name(name)})
+    ok = message.startswith("Line #") and ("moved" in message or "is already" in message)
+    return {"ok": ok, "message": message}
+
+
+async def rename_speaker(call: CallTool, old_name: str, new_name: str) -> dict:
+    """The module's rename_speaker_everywhere: a merge if ``new_name`` exists already."""
+    message = await call("rename_speaker_everywhere", {
+        "old_name": check_name(old_name, "old_name"),
+        "new_name": check_name(new_name, "new_name")})
+    return {"ok": message.startswith("Renamed"), "message": message}
 
 
 async def name_speaker(call: CallTool, conversation_id: str, speaker_label: str,

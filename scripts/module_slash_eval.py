@@ -8,7 +8,8 @@ Scoring and the results file are bakeoff's own (``eval/results/odysseus.jsonl``)
 Without ``--skill`` the questions go in plain, like bakeoff itself.
 
 ``--extra`` adds the person + relative date question used in the sandbox eval
-(docs/fork/sandbox.md, "Slash skills"); it is question 21. It assumes the
+(docs/fork/sandbox.md, "Slash skills"); it comes after bakeoff's own questions
+(question 22 since bakeoff's voice-note question 21; it was 21 before). It assumes the
 fictional seed data (seed_demo.py, 2026-10-16 is a Friday).
 
 Per question it prints the Odysseus log's approvals and ``tools_sent=`` counts when
@@ -41,7 +42,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--bakeoff", type=Path, default=Path("eval/bakeoff.py"),
                     help="path to bakeoff.py (default: eval/bakeoff.py)")
     ap.add_argument("--log", type=Path, help="Odysseus log, for approvals and tools_sent")
-    ap.add_argument("--extra", action="store_true", help="add the person + date question (21)")
+    ap.add_argument("--extra", action="store_true", help="add the person + date question (22)")
     args = ap.parse_args(argv)
 
     sys.path.insert(0, str(args.bakeoff.resolve().parent))

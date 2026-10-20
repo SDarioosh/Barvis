@@ -3,7 +3,12 @@
 ``GET /modules/sound`` serves ``static/sound-module.html`` (the former ``/barvis/sound``
 redirects there); its script calls:
 
-* ``GET  /api/modules/sound/conversations``  (query, person, since, until, limit)
+* ``GET  /api/modules/sound/conversations``  (query, person, since, until, kind, limit)
+* ``GET  /api/modules/sound/conversations/{id}``  one conversation (``get_conversation``)
+* ``GET  /api/modules/sound/conversations/{id}/transcript``  (start_seconds; 200 lines a page)
+* ``POST /api/modules/sound/lines/{line_id}``  {name}: ``reassign_line``
+* ``POST /api/modules/sound/rename-speaker``   {old_name, new_name}:
+  ``rename_speaker_everywhere`` (a merge when new_name exists; the page confirms first)
 * ``GET  /api/modules/sound/unnamed``        (limit)
 * ``POST /api/modules/sound/name-speaker``   {conversation_id, speaker_label, name}
 * ``GET  /api/modules/sound/action-items``   (status)
@@ -47,6 +52,15 @@ class NameSpeaker(BaseModel):
     name: str = Field(min_length=1, max_length=100)
 
 
+class ReassignLine(BaseModel):
+    name: str  # 1-100 after trimming, checked by the view (400)
+
+
+class RenameSpeaker(BaseModel):
+    old_name: str
+    new_name: str
+
+
 def _caller() -> view.CallTool:
     from src.tool_utils import get_mcp_manager
 
@@ -82,10 +96,52 @@ def setup_sound_module_routes() -> APIRouter:
 
     @router.get("/api/modules/sound/conversations", dependencies=[Depends(require_admin)])
     async def conversations(query: str = "", person: str = "", since: str = "",
-                            until: str = "", limit: int = 30) -> dict[str, Any]:
+                            until: str = "", kind: str = "", limit: int = 30) -> dict[str, Any]:
         rows = await view.conversations(_caller(), query=query[:200], person=person[:100],
-                                        since=since[:32], until=until[:32], limit=limit)
+                                        since=since[:32], until=until[:32], kind=kind[:16],
+                                        limit=limit)
         return {"conversations": rows}
+
+    @router.get("/api/modules/sound/conversations/{conversation_id}",
+                dependencies=[Depends(require_admin)])
+    async def conversation(conversation_id: str) -> dict[str, Any]:
+        try:
+            view.check_conversation_id(conversation_id)
+            return {"conversation": await view.conversation(_caller(), conversation_id)}
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        except LookupError as e:
+            raise HTTPException(404, str(e)) from e
+
+    @router.get("/api/modules/sound/conversations/{conversation_id}/transcript",
+                dependencies=[Depends(require_admin)])
+    async def transcript(conversation_id: str, start_seconds: int = 0) -> dict[str, Any]:
+        try:
+            view.check_conversation_id(conversation_id)
+            return await view.transcript(_caller(), conversation_id, start_seconds)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        except LookupError as e:
+            raise HTTPException(404, str(e)) from e
+
+    @router.post("/api/modules/sound/lines/{line_id}", dependencies=[Depends(require_admin)])
+    async def reassign_line(line_id: int, body: ReassignLine) -> dict[str, Any]:
+        try:
+            if line_id < 1:
+                raise ValueError("line id must be positive")
+            view.check_name(body.name)
+            return await view.reassign_line(_caller(), line_id, body.name)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+
+    @router.post("/api/modules/sound/rename-speaker", dependencies=[Depends(require_admin)])
+    async def rename_speaker(body: RenameSpeaker) -> dict[str, Any]:
+        try:
+            view.check_name(body.old_name, "old_name")
+            view.check_name(body.new_name, "new_name")
+            return await view.rename_speaker(_caller(), body.old_name, body.new_name)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
 
     @router.get("/api/modules/sound/unnamed", dependencies=[Depends(require_admin)])
     async def unnamed(limit: int = 10) -> dict[str, Any]:

@@ -31,6 +31,11 @@ decision comes from the owner's skill store, not from the message text. A
 user who pastes the format by hand gets exactly what typing the slash command
 would give them.
 
+Plain module questions: the same two hooks also cover a message with no slash
+command that asks about a trusted module's data ("What did Alice say?"); see
+``src/module_turn_scope.py``. Sharing the hooks keeps the fork's footprint in
+routes/chat_routes.py unchanged.
+
 Managed skills: skills an admin creates through configuration (source
 ``managed``, e.g. ``scripts/modules_setup.py``) are slash-invokable without the
 LLM audit that "Auto-approve skills" requires for learned skills.
@@ -107,6 +112,9 @@ def _invokable_skill(name: str, owner):
 def invoked_skill_needs_tools(message, owner) -> bool:
     """True when ``message`` slash-invokes one of ``owner``'s skills that declares tools.
 
+    Without a slash command it answers whether the message is a plain question
+    about a trusted module (``src/module_turn_scope.py``).
+
     The chat route uses this to run such a turn in agent mode: in chat mode the turn
     contract (and so :func:`pin_skill_contract`) never runs, and the lexical tool-intent
     classifier doesn't see a tool request in the composed skill message, so the model
@@ -114,7 +122,8 @@ def invoked_skill_needs_tools(message, owner) -> bool:
     """
     invoked = parse_invoke_message(message)
     if invoked is None:
-        return False
+        from src.module_turn_scope import module_turn_requested
+        return module_turn_requested(message)
     try:
         skill = _invokable_skill(invoked.name, owner)
     except Exception:
@@ -126,14 +135,17 @@ def invoked_skill_needs_tools(message, owner) -> bool:
 def pin_skill_contract(contract, *, message, owner, schemas, policy, manager=None):
     """Return a contract offering the invoked skill's tools, or ``contract`` unchanged.
 
-    Unchanged when the message isn't a slash invocation, the skill isn't one
+    A message without a slash command goes to
+    :func:`src.module_turn_scope.with_module_tools` (plain module questions).
+    Unchanged when the skill isn't one
     the owner may invoke, or the skill declares no ``requires_toolsets``.
     An MCP entry that matches no connected, enabled server is reported as
     unavailable (the turn then says which one) instead of being dropped.
     """
     invoked = parse_invoke_message(message)
     if invoked is None:
-        return contract
+        from src.module_turn_scope import with_module_tools
+        return with_module_tools(contract, message=message, schemas=schemas, manager=manager)
     try:
         skill = _invokable_skill(invoked.name, owner)
     except Exception:

@@ -26,7 +26,7 @@ Source: `server/convo_server/mcp_server.py` (`build_mcp`).
 | Tool | Arguments | Annotations |
 |---|---|---|
 | `search_transcripts` | `speaker`, `query`, `since`, `until`, `limit` | read-only |
-| `search_conversations` | `query`, `person`, `since`, `until`, `limit` | read-only |
+| `search_conversations` | `query`, `person`, `since`, `until`, `kind` (note/conversation/empty), `limit` | read-only |
 | `get_conversation` | `conversation_id` | read-only |
 | `get_transcript` | `conversation_id`, `start_seconds`, `end_seconds`, `max_lines` | read-only |
 | `list_action_items` | `status` (open/done/dismissed/all), `person`, `since`, `until` | read-only |
@@ -49,6 +49,11 @@ Source: `server/convo_server/mcp_server.py` (`build_mcp`).
   unnamed speakers in other conversations whose voice clearly matches, and says how many.
 - `get_transcript` and `search_transcripts` lines start with `#<line id>`, the
   `line_id` for `reassign_line` (fix one line given to the wrong person).
+- Voice notes (the owner recording a memo for themselves) are stored as their own kind.
+  Results mark them `"<title>" (voice note)`, and `search_conversations` with
+  `kind="note"` returns only voice notes (`"conversation"`: only the others; empty: both).
+  The server `INSTRUCTIONS` tell the model to use it for "my voice notes / notes / memos";
+  without it, "my latest voice notes" got the latest conversations.
 - `list_unnamed_speakers` lists voices nobody has named yet ("Speaker N") with a few
   quotes, links and the closest known voice; for "who is this?" questions and cards.
 - Dates are `YYYY-MM-DD` in `CONVO_TIMEZONE`.
@@ -148,25 +153,42 @@ ntfy integration (Settings → Integrations); the topic is the reminder topic
 
 `/modules/sound` (sidebar: **Conversations**, admin only) shows open action items live
 (Done / Dismiss call `update_action_item`; Odysseus keeps no copy), the module's
-conversations, and a "who is this?" card for every unnamed speaker. It calls
-`list_action_items`, `update_action_item`, `search_conversations`,
+conversations (filter by words, person, dates and type: all, conversations, voice notes;
+voice notes are labelled), and a "who is this?" card for every unnamed speaker. **Open** reads one
+conversation in place (`get_conversation`, `get_transcript` 200 lines a page); tapping a
+speaker fixes one line (`reassign_line`), a whole unnamed `Speaker N` (`name_speaker`) or
+a name everywhere (`rename_speaker_everywhere`, confirmed first). **Ask in chat** opens
+`/?ask=/sound About the conversation "<title>" (id <id>, <start>): ` for the owner to
+finish and send. It calls
+`list_action_items`, `update_action_item`, `search_conversations`, `get_conversation`,
+`get_transcript`, `reassign_line`, `rename_speaker_everywhere`,
 `list_unnamed_speakers` and `name_speaker` through the MCP
 manager and parses their result lines (`src/sound_module_view.py`, test
 `tests/test_sound_module_view.py`); change those line shapes together with the parser.
-`SOUND_MODULE_SERVER` names the server (default `convo`). Transcripts open the module's
-signed `/view` links in a new tab (Odysseus' CSP doesn't allow framing another origin).
+`SOUND_MODULE_SERVER` names the server (default `convo`). The external "Transcript" link
+and per-line times open the module's signed `/view` links in a new tab (Odysseus' CSP doesn't allow framing another origin).
 Audio isn't kept after transcription, so cards quote lines instead of playing them.
 
 ## Eval and current score
 
 - Script: `server/eval/bakeoff.py` in odysseus-sound. Seed fictional data first with
   `server/scripts/seed_demo.py` using the same `CONVO_DATA_DIR`.
-- 20 questions; a question passes when the frontend called a convo tool, cited a link to
+- 21 questions; a question passes when the frontend called a convo tool, cited a link to
   the right conversation, and the answer has the expected fact.
 - Odysseus run: `python eval/bakeoff.py --frontend odysseus` from `server/`, with
   `ODYSSEUS_URL` (default `http://127.0.0.1:7010`), `ODYSSEUS_USER`, and
   `ODYSSEUS_PASSWORD`, `ODYSSEUS_PASSWORD_FILE` or `ODYSSEUS_API_TOKEN`; optional
   `ODYSSEUS_PRESET` (default `custom`) and `ODYSSEUS_APPROVAL`.
+- Question 21 ("What was my latest voice note about?") needs the two demo voice notes:
+  rerun `seed_demo.py` on an older demo store (it adds only what is missing). Scores
+  below are out of 20 (questions 1–20, unchanged); compare new runs on `--only 1 … 20`
+  plus 21 separately.
+- Voice notes, sandbox 2026-10-20 (Qwen3-4B, `--trim`), question 21: before the `kind`
+  filter 0/1 plain and 0/1 `/sound` (the model said it has no access to voice notes);
+  after it `/sound` 1/1 (answered with the latest note, not the newer conversation) and
+  plain 0/1 (the model wrote `search_conversations {"kind": "note"}` as text instead of
+  a tool call). `/sound` on 1, 4, 16 with it: 2/3; 16 also fails with the old
+  instructions (2/2), so it is model noise, not this change.
 - Results: `server/eval/results/odysseus.jsonl` (gitignored).
 - Sandbox (Qwen3-4B on CPU, questions 1, 4, 16; not comparable with the table below):
   raw 1/3, Odysseus over HTTP 1/3. With every Odysseus tool on and "Auto" (questions 1,
