@@ -27,6 +27,15 @@ def test_checklist_items_keep_their_order_and_done_flags():
     assert out["content"] is None
 
 
+def test_todo_and_goal_notes_are_checklists():
+    for note_type in ("todo", "goal"):
+        n = _note("t", note_type=note_type, content="From a voice note",
+                  items=json.dumps([{"text": "Call Jason", "done": False}]))
+        out = notes_to_json([n])["notes"][0]
+        assert out["type"] == "checklist", note_type
+        assert out["items"] == [{"text": "Call Jason", "done": False}]
+
+
 def test_plain_note_has_content_and_no_items():
     out = notes_to_json([_note("n2", title="Idea", content="Call the bank")])["notes"][0]
     assert out["type"] == "note"
