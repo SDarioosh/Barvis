@@ -20,6 +20,11 @@ picking a built-in (tasks, calendar, chat search) over a module tool.
 Don't combine "Regular tools" with every tool on: all ~230 tool schemas go into
 each request (~35k tokens), more than a 32k context holds.
 
+Action items: resumes the built-in "Module Action Items" task (src/module_action_items.py,
+ships paused), which files voice-note action items into the calendar and to-dos and
+pushes them to the phone; ``--no-action-items`` leaves it alone. (It logs a warning at
+run time when the module's CONVO_TIMEZONE isn't Odysseus' timezone.)
+
 Slash-command skills: ``/sound <question>`` offers odysseus-sound's tools for that
 one message, and ``/context <question>`` the tools of every trusted module. This
 script creates or updates those skills through the skills API (source
@@ -71,6 +76,11 @@ BUILTIN_MCP_OFF = {"email", "builtin_browser", "image_gen"}
 MODEL_MODES = {"full": "full", "auto": "", "unchanged": None}
 TRUSTED_ENV = "ODYSSEUS_TRUSTED_READONLY_MCP"
 MANAGED_SOURCE = "managed"  # src/skill_invocation.py: skips the skill audit gates
+# src/module_action_items.py's built-in task (ships paused): files voice-note items into
+# the calendar and to-dos and pushes them. Named here, not imported: this script only
+# talks to the admin API.
+ACTION_ITEMS_ACTION = "barvis_sync_action_items"
+ACTION_ITEMS_TASK = "Module Action Items"
 CONTEXT_PROCEDURE = [
     ("Answer from the user's own data in the connected modules (recorded conversations "
      "and any other module listed in requires_toolsets), not from general knowledge."),
@@ -116,6 +126,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                     help=f"comma-separated servers for the context skill (default: ${TRUSTED_ENV}, "
                          "else the --module list)")
     ap.add_argument("--no-skills", action="store_true", help="don't create or update skills")
+    ap.add_argument("--no-action-items", action="store_true",
+                    help=f"leave the {ACTION_ITEMS_TASK!r} scheduled task as it is "
+                         "(default: resume it)")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args(argv)
     if args.no_model_modes:
@@ -254,6 +267,29 @@ def report_modules(c: httpx.Client, modules: list[str]) -> list[str]:
     return warnings
 
 
+def enable_action_items(c: httpx.Client, dry_run: bool) -> list[str]:
+    """Resume the module action-item task; return warnings.
+
+    Odysseus re-pauses ship-paused built-ins until the Tasks page has been opened once,
+    so this marks it opened (without resuming every other built-in, as "enable" would)."""
+    tasks = c.get("/api/tasks").json()
+    tasks = tasks.get("tasks", []) if isinstance(tasks, dict) else tasks
+    task = next((t for t in tasks or [] if t.get("action") == ACTION_ITEMS_ACTION), None)
+    if task is None:
+        return [f"scheduled task {ACTION_ITEMS_TASK!r} not found (is this our Odysseus fork?)"]
+    if task.get("status") == "active":
+        print(f"task {ACTION_ITEMS_TASK!r}: active")
+        return []
+    print(f"task {ACTION_ITEMS_TASK!r}: {task.get('status')} -> active")
+    if dry_run:
+        return []
+    onboarding = c.get("/api/tasks/onboarding").json()
+    if not (isinstance(onboarding, dict) and onboarding.get("opened")):
+        c.post("/api/tasks/onboarding", json={"enabled": False}).raise_for_status()
+    c.post(f"/api/tasks/{task['id']}/resume").raise_for_status()
+    return []
+
+
 def run(c: httpx.Client, args: argparse.Namespace) -> int:
     pw = args.password_file.expanduser().read_text().strip()
     c.post("/api/auth/login", json={"username": args.user, "password": pw,
@@ -289,6 +325,9 @@ def run(c: httpx.Client, args: argparse.Namespace) -> int:
             print("no default chat model; skipping tool mode", file=sys.stderr)
 
     warnings = report_modules(c, args.module)
+    if not args.no_action_items:
+        plan["action_items_task"] = "active"
+        warnings += enable_action_items(c, args.dry_run)
     if not args.no_skills:
         specs = skill_specs(c, args)
         plan["skills"] = [{"name": s["name"], "requires_toolsets": s["requires_toolsets"]}

@@ -206,3 +206,37 @@ def test_skill_toolsets_are_casefolded(tmp_path, monkeypatch):
     assert sound["requires_toolsets"] == ["mcp:convo"]
     assert context["requires_toolsets"] == ["mcp:convo"]
 
+
+
+class TasksApi(FakeApi):
+    def __init__(self, status="paused", opened=False, **kw):
+        super().__init__(**kw)
+        self.status, self.opened = status, opened
+
+    def __call__(self, request):
+        path = request.url.path
+        if path == "/api/tasks" and request.method == "GET":
+            self.calls.append(("GET", path, None))
+            return httpx.Response(200, json={"tasks": [
+                {"id": "t1", "action": "tidy_sessions", "status": "paused"},
+                {"id": "t9", "action": modules_setup.ACTION_ITEMS_ACTION,
+                 "status": self.status}]})
+        if path == "/api/tasks/onboarding" and request.method == "GET":
+            self.calls.append(("GET", path, None))
+            return httpx.Response(200, json={"opened": self.opened, "enabled": False})
+        return super().__call__(request)
+
+
+def test_resumes_the_action_items_task(tmp_path):
+    api = _run(tmp_path, ["--model-mode", "unchanged"], TasksApi())
+    assert api.writes() == [("POST", "/api/tasks/onboarding", {"enabled": False}),
+                            ("POST", "/api/tasks/t9/resume", None)]
+    api = _run(tmp_path, ["--model-mode", "unchanged"], TasksApi(opened=True))
+    assert api.writes() == [("POST", "/api/tasks/t9/resume", None)]
+
+
+def test_action_items_task_left_alone_when_active_dry_run_or_opted_out(tmp_path):
+    for argv, api in ((["--dry-run"], TasksApi()), ([], TasksApi(status="active")),
+                      (["--no-action-items"], TasksApi())):
+        api = _run(tmp_path, ["--model-mode", "unchanged", *argv], api)
+        assert api.writes() == []

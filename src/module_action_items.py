@@ -19,18 +19,36 @@ Settings (environment; the former ``BARVIS_*`` names are still read as a fallbac
 * ``MODULE_NOTIFY_CHANNEL``: ``ntfy`` (default), ``browser`` or ``off``.
 * ``MODULE_DIGEST_HOUR``: local hour after which the daily pushes go out (default 8;
   ``off`` = no daily pushes).
+* ``MODULE_FILE_ITEMS``: ``auto`` (default) or ``off``. ``off`` keeps the behaviour above
+  exactly (text result, "new action item" pushes, nothing filed).
+
+Filing (``MODULE_FILE_ITEMS=auto``, every 5 minutes): the task reads the items as JSON
+(``list_action_items {"status": "all", "format": "json"}``) and files new open items from
+voice notes into Odysseus itself: events into the default calendar (``do_manage_calendar``,
+idempotent uid, 30-minute reminder when timed), tasks and reminders into to-dos
+(``do_manage_notes``, checklist note, due at the stated time or at ``MODULE_DIGEST_HOUR``).
+One push per pass lists what went where; items from ordinary conversations are only
+suggestions on ``/modules/sound`` (``file_item``) and are not pushed. Status then follows
+both ways (to-do ticked/archived or event over -> done, event deleted -> dismissed; module
+done/dismissed -> to-do ticked, module dismissed -> event deleted), each change once.
+The state file then also holds ``filed`` (item id -> where it went) and ``file_since``.
+An older module that answers with text instead of JSON gets the old behaviour.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
 import re
+import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date as Date
+from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 from typing import Any, Awaitable, Callable
+from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
@@ -40,11 +58,13 @@ LABEL = "odysseus-sound"
 TASK_NAME = "Module Action Items"
 HOUSEKEEPING_DEFAULT = {
     ACTION: {"name": TASK_NAME, "schedule": "cron", "scheduled_time": None,
-             "cron_expression": "*/15 * * * *", "ship_paused": True,
+             "cron_expression": "*/5 * * * *", "ship_paused": True,
+             "old_cron_expressions": ["*/15 * * * *"],
              "legacy_names": ["Barvis Action Items"]},
 }
-INFO = ("Push new odysseus-sound action items, items due today and the daily digest to "
-        "the phone via ntfy. Reads them live through the module's MCP tools; keeps no copy.")
+INFO = ("File odysseus-sound action items from voice notes into the calendar and to-dos, "
+        "keep their status in step, and push what was filed, items due today and the "
+        "daily digest to the phone via ntfy. Reads them through the module's MCP tools.")
 MAX_PUSHED_ITEMS = 5
 
 # One line of odysseus-sound's list_action_items result, e.g.
@@ -209,7 +229,21 @@ def _digest_message(text: str) -> tuple[str, str] | None:
 
 # --------------------------------------------------------------------------- sync
 async def sync(owner: str, call: CallTool, *, now: datetime | None = None) -> dict[str, int]:
-    """One pass. Returns counts: new (items first seen), pushed (notifications sent)."""
+    """One pass. Returns counts: new (items first seen), pushed (notifications sent) and,
+    when filing, filed (items put into Odysseus) and synced (status changes applied)."""
+    if file_mode() == "off":
+        return await _sync_text(owner, call, now=now)
+    rows = parse_items_json(await call("list_action_items", {"status": "all", "format": "json"}))
+    if rows is None:  # an older module: text only, so the old behaviour (nothing filed)
+        logger.info("odysseus-sound answered list_action_items with text; not filing")
+        return await _sync_text(owner, call, now=now)
+    async with _lock(owner):
+        return await _sync_json(owner, call, rows, now=now)
+
+
+async def _sync_text(owner: str, call: CallTool, *, now: datetime | None = None
+                     ) -> dict[str, int]:
+    """The behaviour before filing (``MODULE_FILE_ITEMS=off``, or a text-only module)."""
     now = now or datetime.now()
     state = load_state(owner)
     items = parse_action_items(await call("list_action_items", {"status": "open"}))
@@ -225,13 +259,378 @@ async def sync(owner: str, call: CallTool, *, now: datetime | None = None) -> di
         title, body = _items_message(new)
         key = "module-items-" + "-".join(str(i.id) for i in new[:20])
         stats["pushed"] += int(await push(owner, title, body, key))
+    await _daily_pushes(owner, call, state,
+                        lambda today: [i for i in items if i.due_date == today], now, stats)
+    return stats
 
+
+# ------------------------------------------------------------------------- filing
+KINDS = {"task", "event", "reminder"}
+TARGETS = {"calendar", "todo"}
+CLOSED = {"done", "dismissed"}
+REMINDER_MINUTES = 30
+DEFAULT_EVENT_MINUTES = 60
+MAX_FILE_ATTEMPTS = 3
+_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def file_mode() -> str:
+    """``MODULE_FILE_ITEMS``: ``auto`` (default) or ``off``."""
+    return "off" if _env("FILE_ITEMS", "auto").lower() in {"off", "no", "false", "0"} \
+        else "auto"
+
+
+def _lock(owner: str) -> asyncio.Lock:
+    """One state writer per owner (the task and the page's buttons share the file)."""
+    return _LOCKS.setdefault(owner or "", asyncio.Lock())
+
+
+def parse_items_json(result: str) -> list[dict] | None:
+    """The module's ``format="json"`` list, or None when it answered with text."""
+    try:
+        rows = json.loads(result or "")
+    except ValueError:
+        return None
+    if not isinstance(rows, list):
+        return None
+    out = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        try:
+            row = {**row, "id": int(row["id"])}
+        except (KeyError, TypeError, ValueError):
+            continue
+        out.append(row)
+    return out
+
+
+def _row_item(row: dict) -> ActionItem:
+    """A JSON row as the text parser's ActionItem (for the shared push messages)."""
+    return ActionItem(row["id"], str(row.get("status") or "open"), str(row.get("text") or ""),
+                      row.get("owner"), row.get("due_date"), row.get("due"),
+                      str(row.get("conversation_title") or ""),
+                      str(row.get("conversation_at") or ""), str(row.get("link") or ""))
+
+
+def _zone(name: str | None) -> tzinfo:
+    """The item's zone (CONVO_TIMEZONE), else the Odysseus user's zone."""
+    if name:
+        try:
+            return ZoneInfo(str(name))
+        except (ValueError, KeyError, OSError):
+            logger.warning("odysseus-sound timezone %r is unknown; using Odysseus'", name)
+    from src.user_time import user_timezone
+
+    return user_timezone()
+
+
+def _valid_zone(name: str | None) -> str | None:
+    if not name:
+        return None
+    try:
+        ZoneInfo(str(name))
+    except (ValueError, KeyError, OSError):
+        return None
+    return str(name)
+
+
+def _warn_timezone(state: dict, name: str | None, now_utc: datetime) -> None:
+    """Log once when the module's local time isn't the Odysseus user's."""
+    if not _valid_zone(name):
+        return
+    from src.user_time import user_timezone
+
+    hub = user_timezone()
+    if ZoneInfo(name).utcoffset(now_utc.replace(tzinfo=None)) == \
+            now_utc.astimezone(hub).utcoffset():
+        return
+    key = f"{name}|{hub}"
+    if state.get("tz_warned") != key:
+        logger.warning("odysseus-sound times are in %s but Odysseus runs in %s; filed items "
+                       "keep the module's wall time (converted). Set CONVO_TIMEZONE to match.",
+                       name, hub)
+        state["tz_warned"] = key
+
+
+def _aware_utc(now: datetime | None) -> datetime:
+    if now is None:
+        return datetime.now(timezone.utc)
+    return now.astimezone(timezone.utc)  # naive = server local time
+
+
+def _event_uid(item_id: int, rev: int = 0) -> str:
+    base = f"odysseus-sound:item:{server_key()}:{item_id}"
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, base + (f":{rev}" if rev else "")))
+
+
+def _hhmm(value: Any) -> str | None:
+    text = str(value or "").strip()
+    return text if re.fullmatch(r"\d{2}:\d{2}", text) else None
+
+
+def _ymd(value: Any) -> str | None:
+    text = str(value or "").strip()
+    return text if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text) else None
+
+
+def default_target(item: dict) -> str:
+    """Events with a date go to the calendar; everything else to to-dos."""
+    return "calendar" if item.get("kind") == "event" and _ymd(item.get("due_date")) else "todo"
+
+
+def _source_line(item: dict) -> str:
+    where = "voice note" if item.get("conversation_kind") == "note" else "conversation"
+    title = str(item.get("conversation_title") or "").strip()
+    link = str(item.get("link") or "").strip()
+    return " — ".join(p for p in (f"From your {where}" + (f' "{title}"' if title else ""),
+                                  link) if p)
+
+
+def open_url(target: str, ref: str) -> str:
+    return f"/#event-{ref}" if target == "calendar" else f"/#open=notes&note={ref}"
+
+
+async def _file_one(owner: str, item: dict, target: str, *, rev: int = 0,
+                    now_utc: datetime | None = None) -> dict:
+    """Create the Odysseus calendar event or to-do for ``item``; the ``filed`` entry."""
+    from src.tools.calendar import do_manage_calendar
+    from src.tools.notes import do_manage_notes
+
+    text = str(item.get("text") or "").strip() or f"Action item #{item['id']}"
+    day, clock = _ymd(item.get("due_date")), _hhmm(item.get("due_time"))
+    zone_name = _valid_zone(item.get("timezone"))
+    if target == "calendar":
+        if not day:
+            raise ValueError("an event needs a date; add it to to-dos or set a date first")
+        args: dict[str, Any] = {"action": "create_event", "summary": text,
+                                "description": _source_line(item)}
+        if item.get("location"):
+            args["location"] = str(item["location"])
+        if clock:
+            minutes = item.get("duration_minutes")
+            minutes = int(minutes) if isinstance(minutes, int) and minutes > 0 \
+                else DEFAULT_EVENT_MINUTES
+            args.update(local_start={"date": day, "time": clock}, duration=f"{minutes}m",
+                        reminder_minutes=REMINDER_MINUTES)
+            if zone_name:
+                args["timezone"] = zone_name
+        else:
+            args.update(all_day=True, local_start={"date": day})
+        res = await do_manage_calendar(json.dumps(args), owner=owner or None,
+                                       import_event_uid=_event_uid(item["id"], rev))
+        if res.get("error") or not res.get("uid"):
+            raise RuntimeError(f"calendar: {res.get('error') or 'no event created'}")
+        ref = res["uid"]
+    elif target == "todo":
+        args = {"action": "add", "note_type": "todo", "title": text,
+                "checklist_items": [{"text": text, "done": False}], "label": LABEL,
+                "content": _source_line(item)}
+        if day:
+            hour = digest_hour()
+            at = clock or f"{8 if hour is None else hour:02d}:00"
+            local = datetime.fromisoformat(f"{day}T{at}").replace(tzinfo=_zone(zone_name))
+            args["due_date"] = local.isoformat()
+        res = await do_manage_notes(json.dumps(args), owner=owner or None)
+        if res.get("error") or not res.get("note_id"):
+            raise RuntimeError(f"to-dos: {res.get('error') or 'no to-do created'}")
+        ref = res["note_id"]
+    else:
+        raise ValueError("target must be calendar or todo")
+    return {"kind": str(item.get("kind") or "task"), "target": target, "ref": ref,
+            "at": _aware_utc(now_utc).isoformat(timespec="seconds"), "rev": rev,
+            "module": "open", "hub": "open"}
+
+
+def _note(owner: str, ref: str):
+    from core.database import Note, SessionLocal
+
+    db = SessionLocal()
+    try:
+        q = db.query(Note).filter(Note.id == ref)
+        if owner:
+            q = q.filter(Note.owner == owner)
+        note = q.first()
+        if note is not None:
+            db.expunge(note)
+        return note
+    finally:
+        db.close()
+
+
+def _event(owner: str, ref: str):
+    from core.database import CalendarCal, CalendarEvent, SessionLocal
+
+    db = SessionLocal()
+    try:
+        q = db.query(CalendarEvent).join(CalendarCal).filter(CalendarEvent.uid == ref)
+        if owner:
+            q = q.filter(CalendarCal.owner == owner)
+        ev = q.first()
+        if ev is not None:
+            db.expunge(ev)
+        return ev
+    finally:
+        db.close()
+
+
+def _note_items(note) -> list[dict]:
+    try:
+        items = json.loads(note.items or "[]")
+    except (TypeError, ValueError):
+        return []
+    return [i for i in items if isinstance(i, dict)] if isinstance(items, list) else []
+
+
+def hub_status(owner: str, entry: dict, *, now_utc: datetime | None = None,
+               zone: str | None = None) -> str:
+    """Where the filed copy stands: open, done (ticked/archived/over) or dismissed (gone)."""
+    now_utc = _aware_utc(now_utc)
+    if entry["target"] == "todo":
+        note = _note(owner, entry["ref"])
+        if note is None:
+            return "dismissed"
+        items = _note_items(note)
+        if note.archived or (items and all(i.get("done") or i.get("checked") for i in items)):
+            return "done"
+        return "open"
+    ev = _event(owner, entry["ref"])
+    if ev is None or (ev.status or "") == "cancelled":
+        return "dismissed"
+    if ev.all_day:
+        return "done" if now_utc.astimezone(_zone(zone)).date() >= ev.dtend.date() else "open"
+    if ev.is_utc:
+        ended = ev.dtend <= now_utc.replace(tzinfo=None)
+    else:  # naive local wall time (older events)
+        ended = ev.dtend <= now_utc.astimezone(_zone(zone)).replace(tzinfo=None)
+    return "done" if ended else "open"
+
+
+async def _set_note_done(owner: str, ref: str, done: bool) -> bool:
+    from src.tools.notes import do_manage_notes
+
+    note = _note(owner, ref)
+    if note is None:
+        return False
+    items = [{"text": str(i.get("text") or ""), "done": done}
+             for i in _note_items(note) if str(i.get("text") or "").strip()]
+    if not items:
+        return False
+    res = await do_manage_notes(json.dumps({"action": "update", "id": ref,
+                                            "checklist_items": items}), owner=owner or None)
+    if res.get("error"):
+        raise RuntimeError(f"to-dos: {res['error']}")
+    return True
+
+
+async def _remove_entry(owner: str, entry: dict, *, archive: bool) -> None:
+    """Delete the event; archive (Undo) or delete (move) the to-do. Gone already is fine."""
+    from src.tools.calendar import do_manage_calendar
+    from src.tools.notes import do_manage_notes
+
+    if entry["target"] == "calendar":
+        if _event(owner, entry["ref"]) is None:
+            return
+        res = await do_manage_calendar(json.dumps({"action": "delete_event",
+                                                   "uid": entry["ref"]}), owner=owner or None)
+        if res.get("error"):
+            raise RuntimeError(f"calendar: {res['error']}")
+        return
+    if _note(owner, entry["ref"]) is None:
+        return
+    args = ({"action": "update", "id": entry["ref"], "archived": True} if archive
+            else {"action": "delete", "id": entry["ref"]})
+    res = await do_manage_notes(json.dumps(args), owner=owner or None)
+    if res.get("error"):
+        raise RuntimeError(f"to-dos: {res['error']}")
+
+
+async def _set_module_status(call: CallTool, item_id: int, status: str) -> None:
+    res = await call("update_action_item", {"item_id": item_id, "status": status})
+    if not str(res).startswith("Action item"):
+        raise RuntimeError(f"update_action_item: {res}")
+
+
+async def _sync_status(owner: str, call: CallTool, item_id: int, entry: dict,
+                       row: dict | None, now_utc: datetime) -> int:
+    """Carry one status change across, once. Edge-triggered on both sides: a change is
+    a status that differs from the one recorded last pass, so nothing ping-pongs."""
+    if entry.get("undone") or row is None:
+        return 0
+    module = str(row.get("status") or "open")
+    zone = row.get("timezone")
+    last_module, last_hub = entry.get("module", "open"), entry.get("hub", "open")
+    hub = hub_status(owner, entry, now_utc=now_utc, zone=zone)
+    changes = 0
+    if module != last_module:  # changed in the module (page, chat): follow it here
+        if entry["target"] == "todo" and hub != "dismissed" and (hub in CLOSED) != (
+                module in CLOSED):
+            changes += int(await _set_note_done(owner, entry["ref"], module in CLOSED))
+        elif entry["target"] == "calendar" and module == "dismissed" and hub == "open":
+            await _remove_entry(owner, entry, archive=False)
+            changes += 1
+        hub = hub_status(owner, entry, now_utc=now_utc, zone=zone)
+    elif hub != last_hub:  # changed in Odysseus: tell the module
+        if hub in CLOSED and module == "open":
+            await _set_module_status(call, item_id, hub)
+            module, changes = hub, 1
+        elif hub == "open" and module in CLOSED:
+            await _set_module_status(call, item_id, "open")
+            module, changes = "open", 1
+    entry["module"], entry["hub"] = module, hub
+    return changes
+
+
+def _when_label(item: dict) -> str:
+    day, clock = _ymd(item.get("due_date")), _hhmm(item.get("due_time"))
+    if not day:
+        return ""
+    label = Date.fromisoformat(day).strftime("%a %d %b")
+    return f"{label} {clock}" if clock else label
+
+
+def _filed_line(item: dict, target: str) -> str:
+    text = str(item.get("text") or "").strip()
+    when = _when_label(item)
+    if target == "calendar":
+        line = f"📅 {text}" + (f" · {when}" if when else "") + " → Calendar"
+    else:
+        icon = "⏰" if item.get("kind") == "reminder" else "☑️"
+        line = f"{icon} {text}" + (f" · due {when}" if when else "") + " → To-dos"
+    if item.get("time_unclear"):
+        line += " ⚠️ check the time"
+    return line
+
+
+def _filed_message(filed: list[tuple[dict, str]]) -> tuple[str, str]:
+    title = ("Filed from your voice note" if len(filed) == 1
+             else f"Filed {len(filed)} items from your voice notes")
+    lines = [_filed_line(item, target) for item, target in filed[:MAX_PUSHED_ITEMS]]
+    if len(filed) > MAX_PUSHED_ITEMS:
+        lines.append(f"... and {len(filed) - MAX_PUSHED_ITEMS} more on the odysseus-sound page")
+    return title, "\n".join(lines)
+
+
+def _created_before(row: dict, since: str | None) -> bool:
+    try:
+        created = datetime.fromisoformat(str(row.get("created_at")).replace("Z", "+00:00"))
+        start = datetime.fromisoformat(str(since))
+    except (TypeError, ValueError):
+        return False
+    if created.tzinfo is None or start.tzinfo is None:
+        return False
+    return created < start
+
+
+async def _daily_pushes(owner: str, call: CallTool, state: dict, due_today: Callable[[str], list],
+                        now: datetime, stats: dict[str, int]) -> None:
+    """Items due today and yesterday's digest, once a day after the digest hour."""
     hour = digest_hour()
     today = now.date().isoformat()
     if hour is None or now.hour < hour:
-        return stats
+        return
     if state.get("due_pushed") != today:
-        due = [i for i in items if i.due_date == today]
+        due = due_today(today)
         if due:
             title, body = _items_message(due, "action item due today")
             stats["pushed"] += int(await push(owner, title, body, f"module-due-{today}"))
@@ -245,7 +644,188 @@ async def sync(owner: str, call: CallTool, *, now: datetime | None = None) -> di
                                               f"module-digest-{yesterday}"))
             state["digest_pushed"] = yesterday
             save_state(owner, state)
+
+
+async def _sync_json(owner: str, call: CallTool, rows: list[dict], *,
+                     now: datetime | None = None) -> dict[str, int]:
+    now_utc = _aware_utc(now)
+    zone_name = next((r.get("timezone") for r in rows if r.get("timezone")), None)
+    local_now = now if (now is not None and now.tzinfo is None) \
+        else now_utc.astimezone(_zone(zone_name))
+    state = load_state(owner)
+    stats = {"new": 0, "filed": 0, "synced": 0, "pushed": 0}
+    _warn_timezone(state, zone_name, now_utc)
+    first_run = "file_since" not in state
+    if first_run:  # remember the backlog; file only what comes after
+        state["file_since"] = now_utc.isoformat(timespec="seconds")
+    seen = set(state.get("seen", []))
+    filed: dict[str, dict] = state.setdefault("filed", {})
+    attempts: dict[str, int] = state.setdefault("file_attempts", {})
+    by_id = {r["id"]: r for r in rows}
+    new = [r for r in rows if r["id"] not in seen]
+    stats["new"] = sum(1 for r in new if r.get("status") == "open")
+    retry = set()
+    newly: list[tuple[dict, str]] = []
+    for row in new if not first_run else []:
+        key = str(row["id"])
+        if (row.get("status") != "open" or row.get("conversation_kind") != "note"
+                or key in filed or _created_before(row, state.get("file_since"))):
+            continue
+        target = default_target(row)
+        try:
+            filed[key] = await _file_one(owner, row, target, now_utc=now_utc)
+        except Exception as e:  # keep it unseen, try again next pass (a few times)
+            attempts[key] = attempts.get(key, 0) + 1
+            logger.warning("filing odysseus-sound item #%s failed (%s/%s): %s", key,
+                           attempts[key], MAX_FILE_ATTEMPTS, e)
+            if attempts[key] < MAX_FILE_ATTEMPTS:
+                retry.add(row["id"])
+            continue
+        attempts.pop(key, None)
+        newly.append((row, target))
+        stats["filed"] += 1
+    state["seen"] = sorted((seen | set(by_id)) - retry)
+    save_state(owner, state)
+
+    for key, entry in filed.items():
+        try:
+            stats["synced"] += await _sync_status(owner, call, int(key), entry,
+                                                  by_id.get(int(key)), now_utc)
+        except Exception as e:  # the next pass sees the same difference and retries
+            logger.warning("status sync for odysseus-sound item #%s failed: %s", key, e)
+    save_state(owner, state)
+
+    if newly:
+        title, body = _filed_message(newly)
+        key = "module-filed-" + "-".join(str(r["id"]) for r, _ in newly[:20])
+        stats["pushed"] += int(await push(owner, title, body, key))
+
+    def due_today(today: str) -> list[ActionItem]:
+        return [_row_item(r) for r in rows
+                if r.get("status") == "open" and r.get("due_date") == today
+                and str(r["id"]) not in filed]
+
+    await _daily_pushes(owner, call, state, due_today, local_now, stats)
     return stats
+
+
+# ------------------------------------------------------------------ page helpers
+async def _find_row(call: CallTool, item_id: int) -> dict:
+    rows = parse_items_json(await call("list_action_items", {"status": "all", "format": "json"}))
+    if rows is None:
+        raise RuntimeError("this odysseus-sound version can't list items as JSON; update it")
+    for row in rows:
+        if row["id"] == int(item_id):
+            return row
+    raise LookupError(f"No action item #{item_id}.")
+
+
+def _public(entry: dict) -> dict:
+    return {"target": entry["target"], "ref": entry["ref"],
+            "open_url": open_url(entry["target"], entry["ref"])}
+
+
+async def file_item(owner: str, item: dict, call: CallTool, *,
+                    target: str | None = None) -> dict:
+    """File one item now ("Add to calendar" / "Add to to-dos" on a suggestion).
+
+    ``item`` is the module's JSON row. ``target`` defaults from its kind. An earlier
+    Odysseus entry for the item is replaced; a closed item is reopened in the module.
+    Returns ``{"target", "ref", "open_url"}``.
+    """
+    item = {**item, "id": int(item["id"])}
+    target = target or default_target(item)
+    if target not in TARGETS:
+        raise ValueError("target must be calendar or todo")
+    async with _lock(owner):
+        state = load_state(owner)
+        entry = await _refile(owner, state, item, target)
+        if str(item.get("status") or "open") != "open":
+            await _set_module_status(call, item["id"], "open")
+        return _public(entry)
+
+
+async def _refile(owner: str, state: dict, item: dict, target: str) -> dict:
+    """Replace the item's Odysseus entry (if any) with a new one at ``target``; saves."""
+    filed = state.setdefault("filed", {})
+    key = str(item["id"])
+    old = filed.get(key)
+    if old and not old.get("undone"):
+        # first, so a to-do with the same title and due time isn't taken for a duplicate
+        await _remove_entry(owner, old, archive=False)
+        old.update(undone=True, module="dismissed", hub="dismissed")
+        save_state(owner, state)
+    entry = await _file_one(owner, item, target, rev=(old.get("rev", 0) + 1) if old else 0)
+    filed[key] = entry
+    state["seen"] = sorted(set(state.get("seen", [])) | {item["id"]})
+    save_state(owner, state)
+    return entry
+
+
+async def unfile_item(owner: str, item_id: int, call: CallTool) -> dict:
+    """Undo: remove the event / archive the to-do and dismiss the item in the module.
+    The item stays recorded as filed, so the task never files it again."""
+    async with _lock(owner):
+        state = load_state(owner)
+        entry = state.get("filed", {}).get(str(int(item_id)))
+        if not entry or entry.get("undone"):
+            raise LookupError(f"Action item #{item_id} isn't filed in Odysseus.")
+        await _remove_entry(owner, entry, archive=True)
+        await _set_module_status(call, int(item_id), "dismissed")
+        entry.update(undone=True, module="dismissed", hub="dismissed",
+                     undone_at=_aware_utc(None).isoformat(timespec="seconds"))
+        save_state(owner, state)
+        return {"ok": True, "target": entry["target"], "ref": entry["ref"]}
+
+
+async def move_item(owner: str, item_id: int, call: CallTool, *, kind: str,
+                    due_date: str | None = None, due_time: str | None = None) -> dict:
+    """Move to calendar / to-dos or change the time: update the module item (kind, date,
+    time), remove the old Odysseus entry and file the item again where its kind belongs.
+    ``due_date`` / ``due_time``: None = unchanged, ``"none"`` = clear."""
+    if kind not in KINDS:
+        raise ValueError("kind must be task, event or reminder")
+    if due_date not in (None, "none") and not _ymd(due_date):
+        raise ValueError("due_date must be YYYY-MM-DD or none")
+    if due_time not in (None, "none") and not _hhmm(due_time):
+        raise ValueError("due_time must be HH:MM or none")
+    row = await _find_row(call, item_id)
+    day = row.get("due_date") if due_date is None else (None if due_date == "none" else due_date)
+    if kind == "event" and not _ymd(day):
+        raise ValueError("an event needs a date")
+    args: dict[str, Any] = {"item_id": int(item_id), "kind": kind}
+    if due_date is not None:
+        args["due_date"] = due_date
+    if due_time is not None:
+        args["due_time"] = due_time
+    res = await call("update_action_item", args)
+    if not str(res).startswith("Action item"):
+        raise ValueError(str(res))
+    row = await _find_row(call, item_id)
+    target = "calendar" if kind == "event" else "todo"
+    async with _lock(owner):
+        entry = await _refile(owner, load_state(owner), row, target)
+        if str(row.get("status") or "open") != "open":
+            await _set_module_status(call, int(item_id), "open")
+        return _public(entry)
+
+
+async def filed_state(owner: str) -> dict[int, dict]:
+    """Where each item went: ``{id: {"target", "ref", "open_url", "kind", "at", "undone",
+    "removed"}}``. ``undone``: the owner pressed Undo; ``removed``: the event or to-do is
+    gone from Odysseus (deleted there). Either way it is no longer filed, and the task
+    never files it again. ``owner`` "" and None are the same (auth off)."""
+    filed = load_state(owner).get("filed", {})
+    out = {}
+    for key, entry in filed.items():
+        undone = bool(entry.get("undone"))
+        try:
+            removed = not undone and hub_status(owner, entry) == "dismissed"
+        except Exception:  # the page still lists the item
+            removed = False
+        out[int(key)] = {**_public(entry), "kind": entry.get("kind"), "at": entry.get("at"),
+                         "undone": undone, "removed": removed}
+    return out
 
 
 async def action_sync_action_items(owner: str, **kwargs) -> tuple[str, bool]:
@@ -263,7 +843,10 @@ async def action_sync_action_items(owner: str, **kwargs) -> tuple[str, bool]:
         return f"Action item sync failed: {e}", False
     if not any(stats.values()):
         raise TaskNoop("no changes")
-    return (f"Action items: {stats['new']} new, {stats['pushed']} notifications sent."), True
+    filed = (f"{stats['filed']} filed, {stats['synced']} status changes, "
+             if "filed" in stats else "")
+    return (f"Action items: {stats['new']} new, {filed}"
+            f"{stats['pushed']} notifications sent."), True
 
 
 def register_builtin_action(actions: dict, info: dict) -> None:
