@@ -6,7 +6,7 @@ Our Odysseus fork runs on the owner's server in two places:
 |---|---|---|
 | What | the owner's daily install: all Odysseus features plus modules | throwaway copy for checks and evals |
 | How | Docker Compose, image `odysseus-fork:<commit>` built locally | from source (`uvicorn`), its own data dir |
-| Where | `/home/steam/models/odysseus`, port 7000 | `~/projects/barvis`, `127.0.0.1:7010` (`~/.hermes/cache/scratch/barvis-run.sh`) |
+| Where | `~/models/odysseus`, port 7000 | `~/projects/barvis`, `127.0.0.1:7010` (`~/.hermes/cache/scratch/barvis-run.sh`) |
 | Changed by | the owner only, with `scripts/fork_deploy.sh` | verification steps in PRs |
 
 Production ran upstream Odysseus until 2026-10-18 and was converted in place, so it kept
@@ -71,7 +71,7 @@ path if the folder was renamed):
 
 ```bash
 mkdir -p ~/.local/bin ~/.config/odysseus-fork
-ln -sf /home/steam/models/odysseus/scripts/fork_deploy.sh ~/.local/bin/odysseus-deploy
+ln -sf ~/models/odysseus/scripts/fork_deploy.sh ~/.local/bin/odysseus-deploy
 cat > ~/.config/odysseus-fork/deploy.env <<'EOF'
 FORK_MODULES=~/projects/barvis-ai-wt/main/server/scripts/deploy.sh
 FORK_PY=~/projects/barvis/venv/bin/python
@@ -102,10 +102,10 @@ and says "barvis_setup.py failed"; that is expected, the next deploy runs
 `modules_setup.py`. Then switch to the new names:
 
 ```bash
-cd /home/steam/models/odysseus
+cd ~/models/odysseus
 cp docker/fork.override.yml docker-compose.override.yml   # image: odysseus-fork:...
 rm -f ~/.local/bin/barvis-deploy
-ln -sf /home/steam/models/odysseus/scripts/fork_deploy.sh ~/.local/bin/odysseus-deploy
+ln -sf ~/models/odysseus/scripts/fork_deploy.sh ~/.local/bin/odysseus-deploy
 odysseus-deploy deploy        # keeps barvis:current as the rollback image
 ```
 
@@ -199,7 +199,7 @@ except Exception as e: print('NOT reachable:', e)"
 How an upstream Odysseus Compose install becomes fork production. Kept for a rebuild.
 
 ```bash
-cd /home/steam/models/odysseus
+cd ~/models/odysseus
 git status                                    # local edits to tracked files? move them to .env first
 sudo docker compose stop odysseus
 sudo tar czf ~/odysseus-data-$(date +%F).tgz data/
@@ -231,5 +231,5 @@ Pitfalls met during the switch:
   (5–15 s); `deploy` waits for `/api/health`.
 - Harmless warnings: `ODYSSEUS_TTS_CACHE_MAX_BYTES variable is not set` (upstream's
   compose file has no default for it) and "current commit information was not captured"
-  during `sudo docker build` (root can't read a repo owned by `steam`; the script labels
+  during `sudo docker build` (root can't read a repo owned by your user; the script labels
   the image with the commit instead).

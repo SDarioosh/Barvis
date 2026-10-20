@@ -320,7 +320,7 @@ answers, devices or deployment has a **Server verification** section listing:
 - the result to expect (e.g. "score ≥ previous 9/20");
 - anything that needs a real device, with the steps.
 
-Agents never run these themselves. Production (`/home/steam/models/odysseus`, port
+Agents never run these themselves. Production (`~/models/odysseus`, port
 7000) is changed only by the owner with `scripts/fork_deploy.sh`
 ([deploy.md](deploy.md)); a Server verification may end with that deploy step. The owner
 pastes the result into the PR; the agent continues from there.

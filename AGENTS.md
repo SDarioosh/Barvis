@@ -134,7 +134,7 @@ the two PRs to each other.
 - The owner runs it and pastes the result into the PR. Continue from that result; you
   don't run anything on the server.
 - On the server there are two instances of the fork ([docs/fork/deploy.md](docs/fork/deploy.md)).
-  **Production** (Docker, `/home/steam/models/odysseus`, port 7000) is the owner's daily
+  **Production** (Docker, `~/models/odysseus`, port 7000) is the owner's daily
   install, with all Odysseus features. Only the owner changes it, and only with
   `scripts/fork_deploy.sh` after the PR is merged and verified on the test instance.
   Never write verification steps that edit, restart, rebuild or reconfigure production
