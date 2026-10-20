@@ -130,33 +130,60 @@ def test_known_people_are_cues():
 # --- chat → agent ------------------------------------------------------------
 
 def test_cue_requests_a_module_turn():
-    assert asyncio.run(module_turn_requested("What did Alice say?", FakeManager()))
+    assert module_turn_requested("What did Alice say?", FakeManager())
 
 
-def test_known_person_requests_a_module_turn_and_is_cached():
+def test_known_person_requests_a_module_turn_once_cached():
     manager = FakeManager()
-    assert asyncio.run(module_turn_requested("What is Jonas allergic to?", manager))
-    assert asyncio.run(module_turn_requested("Is Jonas vegetarian?", manager))
-    assert manager.calls == 1  # list_people is cached
+    assert not module_turn_requested("What is Jonas allergic to?", manager)  # cache empty
+    asyncio.run(refresh_known_people(manager))
+    assert module_turn_requested("What is Jonas allergic to?", manager)
+    assert asyncio.run(refresh_known_people(manager)) == parse_people(PEOPLE)
+    assert manager.calls == 1  # cached for 10 minutes
+
+
+def test_stale_cache_refreshes_in_the_background():
+    manager = FakeManager()
+
+    async def turn():
+        first = module_turn_requested("What is Jonas allergic to?", manager)
+        for _ in range(5):
+            await asyncio.sleep(0)
+        return first, module_turn_requested("What is Jonas allergic to?", manager)
+
+    assert asyncio.run(turn()) == (False, True)
 
 
 def test_no_module_turn_without_a_connected_trusted_server(monkeypatch):
-    assert not asyncio.run(module_turn_requested("What did Alice say?",
-                                                 FakeManager(status="error")))
+    assert not module_turn_requested("What did Alice say?", FakeManager(status="error"))
     monkeypatch.setenv("ODYSSEUS_TRUSTED_READONLY_MCP", "")
-    assert not asyncio.run(module_turn_requested("What did Alice say?", FakeManager()))
+    assert not module_turn_requested("What did Alice say?", FakeManager())
 
 
 def test_no_module_turn_for_slash_or_plain_questions():
     manager = FakeManager()
-    assert not asyncio.run(module_turn_requested(SLASH, manager))
-    assert not asyncio.run(module_turn_requested("What is the capital of France?", manager))
+    assert not module_turn_requested(SLASH, manager)
+    assert not module_turn_requested("What is the capital of France?", manager)
 
 
 def test_people_lookup_failure_is_quiet():
     manager = FakeManager(fail=True)
-    assert not asyncio.run(module_turn_requested("What is Jonas allergic to?", manager))
     assert asyncio.run(refresh_known_people(manager)) == frozenset()
+    assert not module_turn_requested("What is Jonas allergic to?", manager)
+
+
+def test_slash_hooks_hand_plain_questions_to_this_module(monkeypatch):
+    from src import skill_invocation
+
+    manager = FakeManager()
+    monkeypatch.setattr(scope, "_manager", lambda: manager)
+    assert skill_invocation.invoked_skill_needs_tools("What did Alice say?", "owner")
+    assert not skill_invocation.invoked_skill_needs_tools("Capital of France?", "owner")
+    message = "What did Alice say about the budget?"
+    contract = skill_invocation.pin_skill_contract(
+        _contract(message, set()), message=message, owner="owner", schemas=SCHEMAS,
+        policy=build_effective_tool_policy(), manager=manager)
+    assert MODULE_READS <= contract.offered
 
 
 # --- contract -----------------------------------------------------------------

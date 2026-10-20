@@ -162,12 +162,6 @@ def _run_loop(monkeypatch, synthesis_text, links):
     return finals, synthesis_calls
 
 
-def test_recovery_round_asks_for_links(monkeypatch):
-    _finals, calls = _run_loop(monkeypatch, "Fifteen percent.", [])
-    assert len(calls) == 1
-    assert mc.RECOVERY_CITE_RULE in str(calls[0]["messages"][-1]["content"])
-
-
 def test_loop_final_answer_gets_sources(monkeypatch):
     links = mc.links_from_output(TRANSCRIPT)
     finals, _calls = _run_loop(

@@ -12,7 +12,10 @@ the budget?") in "Auto" got none of them:
   sees the module.
 
 Two small steps fix that, both for servers in ``ODYSSEUS_TRUSTED_READONLY_MCP``
-only:
+only. Both run from the existing slash-skill hooks in routes/chat_routes.py
+(``invoked_skill_needs_tools`` and ``pin_skill_contract`` in
+``src/skill_invocation.py`` hand a message without a slash command to this
+file), so this feature adds no lines to upstream files:
 
 * :func:`module_turn_requested`: a chat-mode message with a module cue runs in
   agent mode. A cue is conversation vocabulary ("said", "told me", "meeting",
@@ -154,7 +157,40 @@ def _is_slash(message: Any) -> bool:
     return parse_invoke_message(message) is not None
 
 
-async def module_turn_requested(message: Any, manager=None) -> bool:
+def known_people(manager=None) -> frozenset[str]:
+    """The cached people list; a stale or empty cache is refreshed in the background.
+
+    The chat route's hooks are synchronous, so the lookup never blocks a turn: the
+    first question after startup (or after 10 minutes) uses the words alone.
+    """
+    if not _people_at or time.monotonic() - _people_at >= _PEOPLE_TTL:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop is not None and not _refresh_running:
+            _start_refresh(loop, manager)
+    return _people
+
+
+_refresh_running = False
+
+
+def _start_refresh(loop, manager) -> None:
+    global _refresh_running
+    _refresh_running = True
+
+    async def run():
+        global _refresh_running
+        try:
+            await refresh_known_people(manager)
+        finally:
+            _refresh_running = False
+
+    loop.create_task(run())
+
+
+def module_turn_requested(message: Any, manager=None) -> bool:
     """A plain (non-slash) message with a module cue while a trusted module is connected."""
     from src.mcp_trust import trusted_readonly_mcp_tools
 
@@ -163,9 +199,7 @@ async def module_turn_requested(message: Any, manager=None) -> bool:
     manager = manager if manager is not None else _manager()
     if manager is None or not trusted_readonly_mcp_tools(manager):
         return False
-    if _CUE_RE.search(message):
-        return True
-    return module_cue(message, await refresh_known_people(manager))
+    return module_cue(message, known_people(manager))
 
 
 def with_module_tools(contract, *, message: Any, schemas, manager=None):
@@ -176,11 +210,11 @@ def with_module_tools(contract, *, message: Any, schemas, manager=None):
         return contract
     if contract.required_read_operation is not None or contract.unavailable:
         return contract
+    manager = manager if manager is not None else _manager()
     families = set(contract.capabilities)
-    cue = module_cue(message)
+    cue = module_cue(message, known_people(manager))
     if not families <= (CUE_FAMILIES if cue else PERSONAL_FAMILIES):
         return contract
-    manager = manager if manager is not None else _manager()
     module_tools = {n for n in trusted_readonly_mcp_tools(manager) if n in contract.executable}
     if not module_tools:
         return contract

@@ -5,16 +5,14 @@ fact, and every result asks the model to put the link next to each fact used.
 Called directly the same model cites almost every time; through Odysseus about
 half the answers had the right fact and no link (the eval's 9/20).
 
-Two small helpers for the agent loop:
-
-* :func:`with_module_sources` adds a short "Sources:" list to a final answer
-  that used a trusted module's results but cites none of their links. The
-  links are the ones the tools returned, ranked by how many words the answer
-  shares with the result line each came from; nothing is invented. Answers
-  that already cite a link, that say nothing was found, or that share too
-  little with any result line are left alone.
-* :data:`RECOVERY_CITE_RULE` is added to the one tool-free "answer now"
-  round that runs after an empty reply, which otherwise never mentions links.
+:func:`with_module_sources` (one hook in the agent loop, at the final answer)
+adds a short "Sources:" list to a final answer that used a trusted module's
+results but cites none of their links. The links are the ones the tools
+returned, ranked by how many words the answer shares with the result line each
+came from; nothing is invented. Answers that already cite a link, that say
+nothing was found, or that share too little with any result line are left
+alone. It also covers answers from the tool-free "answer now" round after an
+empty reply.
 """
 
 from __future__ import annotations
@@ -22,10 +20,6 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 from typing import Any
-
-RECOVERY_CITE_RULE = (
-    "Put the transcript link from the tool results next to each fact you use."
-)
 
 MAX_SOURCES = 3
 MIN_OVERLAP = 2

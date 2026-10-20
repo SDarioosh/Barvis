@@ -2969,11 +2969,6 @@ def setup_chat_routes(
                     _tool_intent.category,
                     _tool_intent.reason,
                 )
-            # Fork: a plain question about a module's data runs in agent mode (src/module_turn_scope.py)
-            from src.module_turn_scope import module_turn_requested
-            if chat_mode == "chat" and _effective_tool_schema_mode != "full" and await module_turn_requested(message):
-                chat_mode, auto_escalated = "agent", True
-                logger.info("chat→agent auto-escalation: module question")
             _contextual_browser_turn_followup = bool(
                 isinstance(message, str)
                 and _is_contextual_browser_followup(message, sess)
@@ -3729,10 +3724,6 @@ def setup_chat_routes(
             # Fork: a slash-invoked skill pins its requires_toolsets for this message (src/skill_invocation.py)
             from src.skill_invocation import pin_skill_contract
             _turn_contract = pin_skill_contract(_turn_contract, message=message, owner=_user, schemas=_contract_schemas, policy=_contract_policy)
-            # Fork: plain module questions are offered the module's read tools (src/module_turn_scope.py)
-            from src.module_turn_scope import refresh_known_people, with_module_tools
-            await refresh_known_people()
-            _turn_contract = with_module_tools(_turn_contract, message=message, schemas=_contract_schemas)
             _request_authority = _request_authority.restrict(_contract_policy)
             # Resolution already applies user, owner, and global policy. An
             # admitted tool must not later be rejected by the stale

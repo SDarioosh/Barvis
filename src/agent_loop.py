@@ -37280,9 +37280,6 @@ async def stream_agent_loop(
                     "briefly identify the uncertainty."
                     + _exhaustion_media_evidence_note
             )
-            if _fork_module_empty_final:  # Fork: keep the cite rule in this round (src/module_citations.py)
-                from src.module_citations import RECOVERY_CITE_RULE
-                _exhaustion_instruction += " " + RECOVERY_CITE_RULE
             _exhaustion_content: Any = _exhaustion_instruction
             if _exhaustion_latest_screenshot and not _is_qwen38_tool_router(model):
                 _exhaustion_content = [
