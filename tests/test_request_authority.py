@@ -586,3 +586,18 @@ async def test_authority_denial_cannot_create_completion_receipt(monkeypatch):
     assert journal.actions[0].execution_id is None
     assert journal.actions[0].outcome["authoritative"] is False
     assert journal.actions[0].outcome["blocked"] is True
+
+
+@pytest.mark.parametrize("text", [
+    "look at my contacts, do you see them?",
+    "look at my contacts",
+    "list my contacts",
+])
+def test_contact_list_is_permitted_for_look_at_phrasing(text):
+    granted = create_request_authority(text, owner="alice", session_id="s")
+    assert granted.permits(ExactOperation.normalize("manage_contact", '{"action": "list"}'))
+
+
+def test_contact_list_is_not_permitted_without_a_contacts_request():
+    granted = create_request_authority("I imported it. Do you see them?", owner="alice", session_id="s")
+    assert not granted.permits(ExactOperation.normalize("manage_contact", '{"action": "list"}'))
