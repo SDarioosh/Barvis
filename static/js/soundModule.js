@@ -172,6 +172,7 @@ function convCard(c) {
   return el('div', { className: 'bs-card' },
     el('h2', {}, c.title),
     el('div', { className: 'bs-meta' },
+      (c.voice_note ? 'Voice note · ' : '') +
       `${c.start}–${c.end}` + (c.people.length ? ` · ${c.people.join(', ')}` : '')),
     c.summary ? el('p', { className: 'bs-summary' }, c.summary) : null,
     link ? el('div', { className: 'bs-row' },
@@ -190,7 +191,7 @@ async function loadList() {
   try {
     const { conversations } = await api(`/api/modules/sound/conversations?${params}`);
     if (!conversations.length) {
-      status(box, 'No conversations found.');
+      status(box, params.get('kind') === 'note' ? 'No voice notes found.' : 'No conversations found.');
       return;
     }
     box.replaceChildren(...conversations.map(convCard));

@@ -65,6 +65,11 @@
       <input class="bs-input" name="person" placeholder="Person" aria-label="Person">
       <input class="bs-input" name="since" type="date" aria-label="From">
       <input class="bs-input" name="until" type="date" aria-label="To">
+      <select class="bs-input" name="kind" aria-label="Type">
+        <option value="">All recordings</option>
+        <option value="conversation">Conversations</option>
+        <option value="note">Voice notes</option>
+      </select>
       <button type="submit" class="bs-btn">Search</button>
     </form>
     <div id="bs-list"><div class="bs-status">Loading…</div></div>

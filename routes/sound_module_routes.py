@@ -3,7 +3,7 @@
 ``GET /modules/sound`` serves ``static/sound-module.html`` (the former ``/barvis/sound``
 redirects there); its script calls:
 
-* ``GET  /api/modules/sound/conversations``  (query, person, since, until, limit)
+* ``GET  /api/modules/sound/conversations``  (query, person, since, until, kind, limit)
 * ``GET  /api/modules/sound/unnamed``        (limit)
 * ``POST /api/modules/sound/name-speaker``   {conversation_id, speaker_label, name}
 * ``GET  /api/modules/sound/action-items``   (status)
@@ -82,9 +82,10 @@ def setup_sound_module_routes() -> APIRouter:
 
     @router.get("/api/modules/sound/conversations", dependencies=[Depends(require_admin)])
     async def conversations(query: str = "", person: str = "", since: str = "",
-                            until: str = "", limit: int = 30) -> dict[str, Any]:
+                            until: str = "", kind: str = "", limit: int = 30) -> dict[str, Any]:
         rows = await view.conversations(_caller(), query=query[:200], person=person[:100],
-                                        since=since[:32], until=until[:32], limit=limit)
+                                        since=since[:32], until=until[:32], kind=kind[:16],
+                                        limit=limit)
         return {"conversations": rows}
 
     @router.get("/api/modules/sound/unnamed", dependencies=[Depends(require_admin)])

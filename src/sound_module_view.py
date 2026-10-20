@@ -17,7 +17,7 @@ CallTool = Callable[[str, dict], Awaitable[str]]
 
 _CONV = re.compile(
     r"^- (?P<start>\d{4}-\d{2}-\d{2} \d{2}:\d{2})–(?P<end>\d{2}:\d{2}) \"(?P<title>.*)\""
-    r"(?: \(voice note\))? id (?P<id>\S+); people: (?P<people>.*)$")
+    r"(?P<note> \(voice note\))? id (?P<id>\S+); people: (?P<people>.*)$")
 _UNNAMED = re.compile(
     r"^- (?P<label>.+?) in \"(?P<title>.*)\" (?P<when>\d{4}-\d{2}-\d{2} \d{2}:\d{2}) "
     r"\(conversation id (?P<conv>[^)]+)\), (?P<lines>\d+) lines"
@@ -40,6 +40,7 @@ class Conversation:
     people: list[str]
     summary: str = ""
     link: str = ""
+    voice_note: bool = False
 
 
 @dataclass
@@ -96,7 +97,8 @@ def parse_conversations(text: str) -> list[Conversation]:
         if m:
             people = [] if m["people"].strip() in {"", "—"} else [
                 p.strip() for p in m["people"].split(",") if p.strip()]
-            out.append(Conversation(m["id"], m["start"], m["end"], m["title"], people))
+            out.append(Conversation(m["id"], m["start"], m["end"], m["title"], people,
+                                    voice_note=bool(m["note"])))
             continue
         if not out or not raw.startswith("  "):
             continue
@@ -140,10 +142,13 @@ def server_id(manager: Any, key: str) -> str | None:
 
 
 async def conversations(call: CallTool, *, query: str = "", person: str = "",
-                        since: str = "", until: str = "", limit: int = 30) -> list[dict]:
-    text = await call("search_conversations", {
-        "query": query, "person": person, "since": since, "until": until,
-        "limit": max(1, min(int(limit), 50))})
+                        since: str = "", until: str = "", kind: str = "",
+                        limit: int = 30) -> list[dict]:
+    args: dict[str, Any] = {"query": query, "person": person, "since": since,
+                            "until": until, "limit": max(1, min(int(limit), 50))}
+    if kind in ("note", "conversation"):  # odysseus-sound >= kind filter; "" = both
+        args["kind"] = kind
+    text = await call("search_conversations", args)
     return as_dicts(parse_conversations(text))
 
 

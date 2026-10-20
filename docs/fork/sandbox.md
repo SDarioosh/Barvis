@@ -224,7 +224,7 @@ Rerun D:
 cd $SOUND/server && . $SBX/convo.env
 ODYSSEUS_URL=http://127.0.0.1:7010 ODYSSEUS_PASSWORD_FILE=$SBX/admin.txt \
   .venv/bin/python $FORK/scripts/module_slash_eval.py --skill sound \
-  --log $SBX/logs/odysseus.log --extra -- --only 1 4 16 21
+  --log $SBX/logs/odysseus.log --extra -- --only 1 4 16 22
 ```
 
 ## Findings from the first sandbox run

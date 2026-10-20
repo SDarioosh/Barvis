@@ -26,6 +26,7 @@ def test_parse_conversations():
     assert (a.id, a.start, a.end, a.title, a.people) == (
         "c1", "2026-10-14 17:00", "17:12", "Alice hands over vendor contracts", ["Alice", "Me"])
     assert a.summary.startswith("Alice moves") and a.link == "http://h:8000/view/c1?sig=a"
+    assert not a.voice_note
     assert (b.people, b.summary, b.link) == ([], "", "http://h:8000/view/c2?sig=b")
     assert view.parse_conversations("No conversations found.") == []
 
@@ -92,6 +93,11 @@ def test_routes_call_only_module_tools(client):
     name, args = client.manager.calls[-1]
     assert name == "mcp__srv1__search_conversations"
     assert args["since"] == "2026-10-01" and args["limit"] == 50
+    assert "kind" not in args  # older module versions don't take it
+    client.get("/api/modules/sound/conversations", params={"kind": "note"})
+    assert client.manager.calls[-1][1]["kind"] == "note"
+    client.get("/api/modules/sound/conversations", params={"kind": "bogus"})
+    assert "kind" not in client.manager.calls[-1][1]
     assert len(client.get("/api/modules/sound/unnamed").json()["speakers"]) == 2
 
     r = client.post("/api/modules/sound/name-speaker",
@@ -144,8 +150,8 @@ def test_parse_voice_note_rows():
     convs = view.parse_conversations(
         '- 2026-10-16 08:00–08:01 "Grocery list" (voice note) id n1; people: Me\n'
         "  Buy milk and eggs.\n  http://h:8000/view/n1?sig=a")
-    assert [(c.id, c.title, c.people, c.link) for c in convs] == [
-        ("n1", "Grocery list", ["Me"], "http://h:8000/view/n1?sig=a")]
+    assert [(c.id, c.title, c.people, c.link, c.voice_note) for c in convs] == [
+        ("n1", "Grocery list", ["Me"], "http://h:8000/view/n1?sig=a", True)]
     items = view.parse_action_items(
         '- #20 [open] Buy milk due 2026-10-17 (tomorrow) — from "Grocery list" (voice note) '
         "2026-10-16 08:00 http://h:8000/view/n1?sig=a#t=3")
