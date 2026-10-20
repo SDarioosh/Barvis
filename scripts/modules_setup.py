@@ -180,7 +180,8 @@ def skill_specs(c: httpx.Client, args: argparse.Namespace) -> list[dict]:
             "name": name,
             "description": f"Use the {server} module's tools for this message",
             "category": "modules",
-            "requires_toolsets": [f"mcp:{server}"],
+            # casefolded: with_mcp_toolsets offers "mcp:<casefolded name>" for every server
+            "requires_toolsets": [f"mcp:{server.casefold()}"],
             "procedure": steps,
         })
     if args.context_skill and args.trusted:
@@ -189,7 +190,7 @@ def skill_specs(c: httpx.Client, args: argparse.Namespace) -> list[dict]:
             "description": "Search every connected module for this message: "
                            + ", ".join(args.trusted),
             "category": "modules",
-            "requires_toolsets": [f"mcp:{s}" for s in args.trusted],
+            "requires_toolsets": [f"mcp:{s.casefold()}" for s in args.trusted],
             "procedure": list(CONTEXT_PROCEDURE),
         })
     return specs

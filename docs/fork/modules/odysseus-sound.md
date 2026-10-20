@@ -136,7 +136,7 @@ every 15 min, ships paused: resume it in Tasks) reads open items through
 remembers the existing items.
 
 It parses the `list_action_items` result lines, so their shape is part of the contract
-for it: `- #<id> [<status>] <text>[ (owner <name>)][ due <YYYY-MM-DD>[ (<as said>)]| due <as said>] — from "<title>" <YYYY-MM-DD HH:MM> <link>`.
+for it: `- #<id> [<status>] <text>[ (owner <name>)][ due <YYYY-MM-DD>[ (<as said>)]| due <as said>] — from "<title>"[ (voice note)] <YYYY-MM-DD HH:MM> <link>`.
 Change it only together with the parser (`parse_action_items`) and its test.
 
 Settings: `MODULE_ACTION_ITEMS_SERVER` (default `convo`), `MODULE_NOTIFY_CHANNEL`

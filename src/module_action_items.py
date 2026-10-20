@@ -52,9 +52,10 @@ MAX_PUSHED_ITEMS = 5
 #   "Q4 budget" 2026-09-15 10:00 http://host:8000/view/abc?sig=...#t=40
 _LINE = re.compile(
     r"^- #(?P<id>\d+) \[(?P<status>open|done|dismissed)\] (?P<rest>.*) — from "
-    r"\"(?P<title>.*)\" (?P<when>\d{4}-\d{2}-\d{2} \d{2}:\d{2}) (?P<link>\S+)$")
+    r"\"(?P<title>.*)\"(?: \(voice note\))? (?P<when>\d{4}-\d{2}-\d{2} \d{2}:\d{2}) (?P<link>\S+)$")
 _DUE_DATE = re.compile(r" due (?P<date>\d{4}-\d{2}-\d{2})(?: \((?P<said>[^)]*)\))?$")
-_DUE_TEXT = re.compile(r" due (?P<said>.+)$")
+# the last " due ": the item text itself may say "due" ("Check the due date")
+_DUE_TEXT = re.compile(r" due (?P<said>(?:(?! due ).)+)$")
 _OWNER = re.compile(r" \(owner (?P<owner>[^)]*)\)$")
 
 
