@@ -17,9 +17,12 @@ empty reply.
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Iterable
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 MAX_SOURCES = 3
 MIN_OVERLAP = 2
@@ -149,5 +152,6 @@ def with_module_sources(answer: str, tool_events: Iterable[Any], manager=None) -
     sources = rank_sources(text, links)
     if not sources:
         return text
+    logger.info("[module-sources] answer cited no link; added %d", len(sources))
     items = "\n".join(f"- [{label}]({url})" for url, label in sources)
     return f"{text.rstrip()}\n\nSources:\n{items}"
