@@ -110,7 +110,8 @@ class ActionItem:
     location: str | None = None
     timezone: str | None = None
     created_at: str | None = None
-    filed: dict | None = None  # {"target", "ref", "open_url"}; see merge_filed
+    list_name: str | None = None  # the to-do list the user named ("shopping")
+    filed: dict | None = None  # {"target", "ref", "open_url", "list"?}; see merge_filed
 
 
 @dataclass
@@ -246,7 +247,7 @@ def item_from_json(row: dict) -> ActionItem | None:
         voice_note=row.get("conversation_kind") == "note",
         conversation_id=_text(row.get("conversation_id")), duration_minutes=duration,
         location=_text(row.get("location")), timezone=_text(row.get("timezone")),
-        created_at=_text(row.get("created_at")))
+        created_at=_text(row.get("created_at")), list_name=_text(row.get("list_name")))
 
 
 def parse_action_items_result(text: str) -> list[ActionItem]:
@@ -282,8 +283,11 @@ def filed_for(filed: dict | None, item_id: int) -> dict | None:
             or entry.get("undone") or entry.get("removed")):
         return None
     target = entry["target"]
-    return {"target": target, "ref": entry.get("ref"),
-            "open_url": entry.get("open_url") or open_url(target, entry.get("ref"))}
+    out = {"target": target, "ref": entry.get("ref"),
+           "open_url": entry.get("open_url") or open_url(target, entry.get("ref"))}
+    if entry.get("list"):
+        out["list"] = str(entry["list"])
+    return out
 
 
 def merge_filed(items: list[ActionItem], filed: dict | None) -> list[ActionItem]:
@@ -519,6 +523,18 @@ def check_target(target: str) -> str:
     if target not in {"calendar", "todo"}:
         raise ValueError("target must be calendar or todo")
     return target
+
+
+def check_list_name(list_name: str | None) -> str | None:
+    """A to-do list name for move: None = unchanged, "none" = no list (a to-do of its own)."""
+    name = " ".join((list_name or "").split())
+    if not name:
+        return None
+    if name.lower() == "none":
+        return "none"
+    if len(name) > 40 or any(not ch.isprintable() for ch in name):
+        raise ValueError("list_name must be a short list name (up to 40 characters)")
+    return name
 
 
 def check_move(kind: str, due_date: str | None, due_time: str | None

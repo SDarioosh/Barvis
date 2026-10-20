@@ -15,8 +15,9 @@ redirects there); its script calls:
 * ``POST /api/modules/sound/action-items/{id}`` {status}
 * ``POST /api/modules/sound/action-items/{id}/file`` {target: calendar|todo}: Add to
   calendar / to-dos (a conversation's suggestion)
-* ``POST /api/modules/sound/action-items/{id}/move`` {kind, due_date?, due_time?}: Move to
-  calendar / to-dos, Change time
+* ``POST /api/modules/sound/action-items/{id}/move`` {kind, due_date?, due_time?,
+  list_name?}: Move to calendar / to-dos / a to-do list, Change time
+* ``GET  /api/modules/sound/todo-lists``: the owner's to-do list titles (the list picker)
 * ``POST /api/modules/sound/action-items/{id}/undo``: remove the Odysseus entry, dismiss
 
 Action items are read live from the module, the source of truth; Done/Dismiss call its
@@ -63,6 +64,7 @@ class MoveItem(BaseModel):
     kind: str  # task | event | reminder, checked by the view (400)
     due_date: str | None = Field(default=None, max_length=10)  # YYYY-MM-DD or "none"
     due_time: str | None = Field(default=None, max_length=5)  # HH:MM or "none"
+    list_name: str | None = Field(default=None, max_length=60)  # a to-do list or "none"
 
 
 class NameSpeaker(BaseModel):
@@ -269,13 +271,22 @@ def setup_sound_module_routes() -> APIRouter:
         try:
             view.check_item_id(item_id)
             kind, due_date, due_time = view.check_move(body.kind, body.due_date, body.due_time)
+            list_name = view.check_list_name(body.list_name)
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
         mai, call, owner = _filing(), _caller(), _owner(request)
+        extra = {"list_name": list_name} if list_name is not None else {}
         filed = await _filing_call("move", mai.move_item(
-            owner, item_id, call, kind=kind, due_date=due_date, due_time=due_time))
+            owner, item_id, call, kind=kind, due_date=due_date, due_time=due_time, **extra))
         return {"ok": True, "message": "Saved.", "filed": filed,
                 "item": await _item_now(call, owner, item_id)}
+
+    @router.get("/api/modules/sound/todo-lists", dependencies=[Depends(require_admin)])
+    async def todo_lists(request: Request) -> dict[str, Any]:
+        """The owner's to-do list titles, for "Add to list" on an item."""
+        mai = _filing()
+        fn = getattr(mai, "todo_lists", None)
+        return {"lists": fn(_owner(request)) if fn else []}
 
     @router.post("/api/modules/sound/action-items/{item_id}/undo",
                  dependencies=[Depends(require_admin)])

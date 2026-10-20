@@ -132,6 +132,7 @@ const KIND_ICON = {
 };
 const KIND_NAME = { event: 'Event', task: 'To-do', reminder: 'Reminder' };
 const WHERE = { calendar: 'In calendar', todo: 'In to-dos' };
+const whereLabel = (filed) => (filed.list ? `On ${filed.list} list` : (WHERE[filed.target] || 'Filed'));
 
 function hubLink(url) {
   // filed entries open in Odysseus itself: only same-origin paths
@@ -177,6 +178,35 @@ function timeEditor(it, onSave, onCancel) {
     save, cancel,
     it.time_unclear ? el('div', { className: 'bs-meta bs-wide' },
       'The time was unclear in the recording; saving a time clears the warning.') : null);
+}
+
+// Inline to-do list picker for "Add to a list" / "Change list"; an empty name takes the
+// item off its list (a to-do of its own). Suggests the owner's existing lists.
+let listEditorSeq = 0;
+function listEditor(it, onSave, onCancel) {
+  const id = `bs-lists-${++listEditorSeq}`;
+  const options = el('datalist', { id });
+  const current = (it.filed && it.filed.list) || it.list_name || '';
+  const input = el('input', { className: 'bs-input', type: 'text', list: id, maxlength: '40',
+                              'aria-label': 'To-do list', placeholder: 'e.g. Shopping',
+                              value: current });
+  api('/api/modules/sound/todo-lists').then((r) => {
+    (r.lists || []).forEach((name) => options.append(el('option', { value: name })));
+  }).catch(() => {});
+  const save = el('button', { type: 'button', className: 'bs-btn primary', onclick: () => {
+    const name = input.value.trim();
+    if (!name && !current) return onCancel();
+    const kind = it.kind === 'event' ? 'task' : (it.kind || 'task');
+    onSave({ kind, list_name: name || 'none' });
+  } }, 'Save');
+  const cancel = el('button', { type: 'button', className: 'bs-btn', onclick: onCancel }, 'Cancel');
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') save.click(); });
+  return el('div', { className: 'bs-edit bs-row bs-list-edit' },
+    el('label', { className: 'bs-field' }, el('span', { className: 'bs-meta' }, 'List'), input),
+    options, save, cancel,
+    el('div', { className: 'bs-meta bs-wide' },
+      current ? 'Clear the name to make it a to-do of its own.'
+        : 'Adds it as a line on that to-do list; a new list is made if there is none.'));
 }
 
 function itemCard(it, note = '') {
@@ -230,6 +260,16 @@ function itemCard(it, note = '') {
   };
   const filed = it.filed;
   const kind = it.kind || 'task';
+  function listButton() {
+    btn(filed && filed.list ? 'Change list' : 'Add to a list', () => {
+      if (busy || card.querySelector('.bs-list-edit')) return;
+      const editor = listEditor(it,
+        (body) => run('Saving', () => postJSON(`${base}/move`, body)),
+        () => editor.remove());
+      actions.after(editor);
+      editor.querySelector('input').focus();
+    });
+  }
   if (filed) {
     if (filed.target === 'calendar') {
       btn('Move to to-dos', () => run('Moving', () => postJSON(`${base}/move`, { kind: 'task' })));
@@ -244,12 +284,14 @@ function itemCard(it, note = '') {
       actions.after(editor);
       editor.querySelector('input').focus();
     });
+    if (filed.target === 'todo') listButton();
     btn('Undo', () => run('Undoing', () => postJSON(`${base}/undo`)));
   } else {
     btn('Add to calendar', () => run('Adding', () => postJSON(`${base}/file`, { target: 'calendar' })),
       kind === 'event');
     btn('Add to to-dos', () => run('Adding', () => postJSON(`${base}/file`, { target: 'todo' })),
       kind !== 'event');
+    if (kind !== 'event') listButton();
   }
   btn('Done', () => setStatus('done'));
   btn('Dismiss', () => setStatus('dismissed'));
@@ -257,9 +299,12 @@ function itemCard(it, note = '') {
   const link = safeLink(it.link);
   const where = filed ? (hubLink(filed.open_url)
     ? el('a', { className: 'bs-chip bs-where', href: hubLink(filed.open_url),
-                title: filed.target === 'calendar' ? 'Open the Odysseus calendar' : 'Open the to-do' },
-      WHERE[filed.target] || 'Filed')
-    : el('span', { className: 'bs-chip bs-where' }, WHERE[filed.target] || 'Filed')) : null;
+                title: filed.target === 'calendar' ? 'Open the Odysseus calendar'
+                  : (filed.list ? 'Open the list' : 'Open the to-do') },
+      whereLabel(filed))
+    : el('span', { className: 'bs-chip bs-where' }, whereLabel(filed)))
+    : (it.list_name ? el('span', { className: 'bs-chip', title: 'The list named in the recording' },
+      `for ${it.list_name} list`) : null);
   const due = dueLabel(it);
   const source = it.voice_note ? 'voice note' : 'conversation';
   const actions = el('div', { className: 'bs-row bs-actions' }, ...buttons);

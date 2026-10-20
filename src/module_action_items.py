@@ -32,6 +32,13 @@ suggestions on ``/modules/sound`` (``file_item``) and are not pushed. Status the
 both ways (to-do ticked/archived or event over -> done, event deleted -> dismissed; module
 done/dismissed -> to-do ticked, module dismissed -> event deleted), each change once.
 The state file then also holds ``filed`` (item id -> where it went) and ``file_since``.
+
+Named lists: an item the module gives a ``list_name`` ("add milk to my shopping list" ->
+``shopping``) goes onto that to-do list as one line instead of a to-do of its own: the
+open checklist / to-do note whose title is that name ("Shopping", "shopping list"), or a
+new one titled with it. The line carries the due date in its text (a line has no
+reminder). Its status follows the line: ticked -> done, removed -> dismissed, list
+archived -> done; Undo and moving the item remove the line only.
 An older module that answers with text instead of JSON gets the old behaviour.
 """
 
@@ -422,6 +429,11 @@ async def _file_one(owner: str, item: dict, target: str, *, rev: int = 0,
         if res.get("error") or not res.get("uid"):
             raise RuntimeError(f"calendar: {res.get('error') or 'no event created'}")
         ref = res["uid"]
+    elif target == "todo" and list_title(item.get("list_name")):
+        return {"kind": str(item.get("kind") or "task"), "target": target,
+                **await _add_to_list(owner, item, text),
+                "at": _aware_utc(now_utc).isoformat(timespec="seconds"), "rev": rev,
+                "module": "open", "hub": "open"}
     elif target == "todo":
         args = {"action": "add", "note_type": "todo", "title": text,
                 "checklist_items": [{"text": text, "done": False}], "label": LABEL,
@@ -440,6 +452,148 @@ async def _file_one(owner: str, item: dict, target: str, *, rev: int = 0,
     return {"kind": str(item.get("kind") or "task"), "target": target, "ref": ref,
             "at": _aware_utc(now_utc).isoformat(timespec="seconds"), "rev": rev,
             "module": "open", "hub": "open"}
+
+
+# ------------------------------------------------------------------ named to-do lists
+LIST_TYPES = ("checklist", "todo")
+_LIST_WORDS = re.compile(r"^(?:my|the|our)\s+|\s+(?:to-?do\s+|to\s+do\s+)?(?:list|to-?dos)$",
+                         re.IGNORECASE)
+
+
+def list_key(name: Any) -> str:
+    """"My Shopping list" and "shopping" are the same list."""
+    key = re.sub(r"\s+", " ", str(name or "").strip().lower())
+    for _ in range(2):
+        key = _LIST_WORDS.sub("", key).strip()
+    return "" if key in {"list", "to-do", "todo", "to do", "to-dos", "todos"} else key
+
+
+def list_title(name: Any) -> str | None:
+    """The title a new list gets ("shopping" -> "Shopping"); None for no usable name."""
+    text = re.sub(r"\s+", " ", str(name or "").strip())
+    if not list_key(text) or len(text) > 60 or text.lower() == "none":
+        return None
+    return text[:1].upper() + text[1:]
+
+
+def _lists(owner: str) -> list:
+    """The owner's open checklists and to-do notes, most recently changed first."""
+    from core.database import Note, SessionLocal
+
+    db = SessionLocal()
+    try:
+        q = db.query(Note).filter(Note.archived == False,  # noqa: E712
+                                  Note.note_type.in_(LIST_TYPES))
+        if owner:
+            q = q.filter(Note.owner == owner)
+        notes = q.order_by(Note.updated_at.desc()).limit(500).all()
+        for n in notes:
+            db.expunge(n)
+        return notes
+    finally:
+        db.close()
+
+
+def find_list(owner: str, name: Any):
+    """The to-do list called ``name`` (any case, with or without "list"), or None."""
+    key = list_key(name)
+    return next((n for n in _lists(owner) if key and list_key(n.title) == key), None)
+
+
+def todo_lists(owner: str) -> list[str]:
+    """Titles of the owner's to-do lists, for the page's picker. A to-do of its own (its
+    only line is its title, as filed for an item without a list) isn't a list."""
+    out, seen = [], set()
+    for n in _lists(owner):
+        key, items = list_key(n.title), _note_items(n)
+        single = len(items) <= 1 and all(_norm_line(i.get("text")) == _norm_line(n.title)
+                                         for i in items)
+        if key and key not in seen and not single:
+            seen.add(key)
+            out.append(n.title.strip())
+    return sorted(out, key=str.lower)
+
+
+def _norm_line(text: Any) -> str:
+    return re.sub(r"\s+", " ", str(text or "").strip()).lower()
+
+
+def _raw_items(note) -> list:
+    """A list's lines exactly as stored (also lines that aren't objects), so changing one
+    line writes the others back unchanged."""
+    try:
+        items = json.loads(note.items or "[]")
+    except (TypeError, ValueError):
+        return []
+    return items if isinstance(items, list) else []
+
+
+def _ticked(item: Any) -> bool:
+    return isinstance(item, dict) and bool(item.get("done") or item.get("checked"))
+
+
+def _line_index(items: list, line: str) -> int | None:
+    """The line's index: an open one with that text first, else a ticked one."""
+    want = _norm_line(line)
+    same = [i for i, it in enumerate(items)
+            if isinstance(it, dict) and _norm_line(it.get("text")) == want]
+    return next((i for i in same if not _ticked(items[i])), same[0] if same else None)
+
+
+def _line_text(item: dict, text: str) -> str:
+    when = _when_label(item)
+    return f"{text} (due {when})" if when else text
+
+
+async def _add_to_list(owner: str, item: dict, text: str) -> dict:
+    """Add ``item`` as a line to its named list (made if missing); the entry's
+    ``ref`` (note id), ``line`` and ``list`` (title). An open line with the same text
+    is reused, not repeated."""
+    from src.tools.notes import do_manage_notes
+
+    name = list_title(item.get("list_name"))
+    line = _line_text(item, text)
+    note = find_list(owner, name)
+    if note is None:
+        res = await do_manage_notes(json.dumps({
+            "action": "add", "note_type": "todo", "title": name, "label": LABEL,
+            "checklist_items": [{"text": line, "done": False}]}), owner=owner or None)
+        if res.get("error") or not res.get("note_id"):
+            raise RuntimeError(f"to-dos: {res.get('error') or 'no list created'}")
+        return {"ref": res["note_id"], "line": line, "list": name}
+    items = _raw_items(note)
+    i = _line_index(items, line)
+    if i is None or _ticked(items[i]):
+        res = await do_manage_notes(json.dumps({
+            "action": "update", "id": note.id,
+            "checklist_items": items + [{"text": line, "done": False}]}), owner=owner or None)
+        if res.get("error"):
+            raise RuntimeError(f"to-dos: {res['error']}")
+    return {"ref": note.id, "line": line, "list": (note.title or name).strip()}
+
+
+async def _change_line(owner: str, ref: str, line: str, *, done: bool | None = None,
+                       remove: bool = False) -> bool:
+    """Tick / untick or remove one line of a list, keeping the others as they are."""
+    from src.tools.notes import do_manage_notes
+
+    note = _note(owner, ref)
+    if note is None:
+        return False
+    items = _raw_items(note)
+    i = _line_index(items, line)
+    if i is None:
+        return False
+    if remove:
+        items.pop(i)
+    else:
+        items[i] = {**items[i], "done": bool(done)}
+        items[i].pop("checked", None)
+    res = await do_manage_notes(json.dumps({"action": "update", "id": ref,
+                                            "checklist_items": items}), owner=owner or None)
+    if res.get("error"):
+        raise RuntimeError(f"to-dos: {res['error']}")
+    return True
 
 
 def _note(owner: str, ref: str):
@@ -491,6 +645,13 @@ def hub_status(owner: str, entry: dict, *, now_utc: datetime | None = None,
         if note is None:
             return "dismissed"
         items = _note_items(note)
+        if "line" in entry:  # one line on a named list
+            if note.archived:
+                return "done"
+            i = _line_index(items, entry["line"])
+            if i is None:
+                return "dismissed"
+            return "done" if _ticked(items[i]) else "open"
         if note.archived or (items and all(i.get("done") or i.get("checked") for i in items)):
             return "done"
         return "open"
@@ -506,9 +667,11 @@ def hub_status(owner: str, entry: dict, *, now_utc: datetime | None = None,
     return "done" if ended else "open"
 
 
-async def _set_note_done(owner: str, ref: str, done: bool) -> bool:
+async def _set_note_done(owner: str, ref: str, done: bool, line: str | None = None) -> bool:
     from src.tools.notes import do_manage_notes
 
+    if line is not None:
+        return await _change_line(owner, ref, line, done=done)
     note = _note(owner, ref)
     if note is None:
         return False
@@ -535,6 +698,9 @@ async def _remove_entry(owner: str, entry: dict, *, archive: bool) -> None:
                                                    "uid": entry["ref"]}), owner=owner or None)
         if res.get("error"):
             raise RuntimeError(f"calendar: {res['error']}")
+        return
+    if "line" in entry:  # take the line off the list; the list itself stays
+        await _change_line(owner, entry["ref"], entry["line"], remove=True)
         return
     if _note(owner, entry["ref"]) is None:
         return
@@ -565,7 +731,8 @@ async def _sync_status(owner: str, call: CallTool, item_id: int, entry: dict,
     if module != last_module:  # changed in the module (page, chat): follow it here
         if entry["target"] == "todo" and hub != "dismissed" and (hub in CLOSED) != (
                 module in CLOSED):
-            changes += int(await _set_note_done(owner, entry["ref"], module in CLOSED))
+            changes += int(await _set_note_done(owner, entry["ref"], module in CLOSED,
+                                                entry.get("line")))
         elif entry["target"] == "calendar" and module == "dismissed" and hub == "open":
             await _remove_entry(owner, entry, archive=False)
             changes += 1
@@ -596,7 +763,9 @@ def _filed_line(item: dict, target: str) -> str:
         line = f"📅 {text}" + (f" · {when}" if when else "") + " → Calendar"
     else:
         icon = "⏰" if item.get("kind") == "reminder" else "☑️"
-        line = f"{icon} {text}" + (f" · due {when}" if when else "") + " → To-dos"
+        name = list_title(item.get("list_name"))
+        line = f"{icon} {text}" + (f" · due {when}" if when else "") + (
+            f" → {name} list" if name else " → To-dos")
     if item.get("time_unclear"):
         line += " ⚠️ check the time"
     return line
@@ -721,8 +890,11 @@ async def _find_row(call: CallTool, item_id: int) -> dict:
 
 
 def _public(entry: dict) -> dict:
-    return {"target": entry["target"], "ref": entry["ref"],
-            "open_url": open_url(entry["target"], entry["ref"])}
+    out = {"target": entry["target"], "ref": entry["ref"],
+           "open_url": open_url(entry["target"], entry["ref"])}
+    if entry.get("list"):
+        out["list"] = entry["list"]
+    return out
 
 
 async def file_item(owner: str, item: dict, call: CallTool, *,
@@ -779,16 +951,20 @@ async def unfile_item(owner: str, item_id: int, call: CallTool) -> dict:
 
 
 async def move_item(owner: str, item_id: int, call: CallTool, *, kind: str,
-                    due_date: str | None = None, due_time: str | None = None) -> dict:
-    """Move to calendar / to-dos or change the time: update the module item (kind, date,
-    time), remove the old Odysseus entry and file the item again where its kind belongs.
-    ``due_date`` / ``due_time``: None = unchanged, ``"none"`` = clear."""
+                    due_date: str | None = None, due_time: str | None = None,
+                    list_name: str | None = None) -> dict:
+    """Move to calendar / to-dos / a to-do list or change the time: update the module
+    item (kind, date, time, list), remove the old Odysseus entry and file the item again
+    where it belongs. ``due_date`` / ``due_time`` / ``list_name``: None = unchanged,
+    ``"none"`` = clear (a to-do of its own)."""
     if kind not in KINDS:
         raise ValueError("kind must be task, event or reminder")
     if due_date not in (None, "none") and not _ymd(due_date):
         raise ValueError("due_date must be YYYY-MM-DD or none")
     if due_time not in (None, "none") and not _hhmm(due_time):
         raise ValueError("due_time must be HH:MM or none")
+    if list_name not in (None, "none") and not list_title(list_name):
+        raise ValueError("list_name must be a list name or none")
     row = await _find_row(call, item_id)
     day = row.get("due_date") if due_date is None else (None if due_date == "none" else due_date)
     if kind == "event" and not _ymd(day):
@@ -798,6 +974,8 @@ async def move_item(owner: str, item_id: int, call: CallTool, *, kind: str,
         args["due_date"] = due_date
     if due_time is not None:
         args["due_time"] = due_time
+    if list_name is not None:
+        args["list_name"] = list_name
     res = await call("update_action_item", args)
     if not str(res).startswith("Action item"):
         raise ValueError(str(res))

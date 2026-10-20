@@ -191,7 +191,7 @@ class JsonModule:
         if tool == "update_action_item":
             self.updates.append(dict(args))
             r = self.rows[args["item_id"]]
-            for k in ("status", "kind", "due_date", "due_time"):
+            for k in ("status", "kind", "due_date", "due_time", "list_name"):
                 if args.get(k):
                     r[k] = None if args[k] == "none" else args[k]
             return f"Action item #{args['item_id']} is now {r['status']}."
@@ -533,3 +533,171 @@ async def test_auth_off_task_and_page_share_one_state(hub):
     assert 14 in await bai.filed_state("")  # the page's owner with auth off
     await bai.unfile_item("", 14, module)
     assert (await bai.filed_state(None))[14]["undone"] is True
+
+
+# ------------------------------------------------------------- named to-do lists
+def lines(factory, note_id):
+    with factory() as db:
+        return json.loads(db.get(cdb.Note, note_id).items)
+
+
+def make_list(factory, title, items, owner="alice", note_type="checklist"):
+    import uuid
+
+    with factory() as db:
+        n = cdb.Note(id=str(uuid.uuid4()), owner=owner, title=title, note_type=note_type,
+                     items=json.dumps(items))
+        db.add(n)
+        db.commit()
+        return n.id
+
+
+def test_list_names_match_loosely():
+    assert bai.list_key("My Shopping list") == bai.list_key("shopping") == "shopping"
+    assert bai.list_key("the work to-do list") == bai.list_key("Work to-dos") == "work"
+    assert bai.list_title("shopping") == "Shopping"
+    assert bai.list_title("") is None and bai.list_title("my list") is None
+    assert bai.list_title("none") is None
+
+
+@pytest.mark.asyncio
+async def test_item_with_a_list_goes_onto_that_list(hub, pushes):
+    shopping = make_list(hub, "Shopping list", [{"text": "Bread", "done": True}])
+    make_list(hub, "Shopping", [{"text": "Soap", "done": False}], owner="bob")  # not alice's
+    module = JsonModule()
+    await _start(module)
+    module.add(row(30, "Milk", list_name="shopping"))
+    module.add(row(31, "Eggs", list_name="Shopping", due_date="2031-10-22"))
+    stats = await bai.sync("alice", module, now=T0)
+    assert stats["filed"] == 2 and notes(hub) == []  # no to-dos of their own
+    assert lines(hub, shopping) == [{"text": "Bread", "done": True},
+                                    {"text": "Milk", "done": False},
+                                    {"text": "Eggs (due Wed 22 Oct)", "done": False}]
+    (p,) = pushes
+    assert p["body"].splitlines() == ["☑️ Milk → Shopping list",
+                                      "☑️ Eggs · due Wed 22 Oct → Shopping list"]
+    assert (await bai.filed_state("alice"))[30] == {
+        "target": "todo", "ref": shopping, "open_url": f"/#open=notes&note={shopping}",
+        "list": "Shopping list", "kind": "task", "at": "2031-10-20T05:00:00+00:00",
+        "undone": False, "removed": False}
+
+
+@pytest.mark.asyncio
+async def test_missing_list_is_made_once(hub, pushes):
+    module = JsonModule()
+    await _start(module)
+    module.add(row(32, "Batteries", list_name="hardware store"))
+    await bai.sync("alice", module, now=T0)
+    module.add(row(33, "Screws", list_name="Hardware store list"))
+    module.add(row(34, "Batteries", list_name="hardware store"))  # same open line
+    await bai.sync("alice", module, now=T0)
+    (made,) = notes(hub)
+    assert (made.title, made.note_type, made.owner) == ("Hardware store", "todo", "alice")
+    assert lines(hub, made.id) == [{"text": "Batteries", "done": False},
+                                   {"text": "Screws", "done": False}]
+    assert bai.todo_lists("alice") == ["Hardware store"]
+
+
+@pytest.mark.asyncio
+async def test_list_line_status_follows_both_ways(hub):
+    groceries = make_list(hub, "Groceries", [{"text": "Apples", "done": False}])
+    module = JsonModule()
+    await _start(module)
+    for i, text in ((40, "Milk"), (41, "Eggs"), (42, "Rice")):
+        module.add(row(i, text, list_name="groceries"))
+    await bai.sync("alice", module, now=T0)
+
+    # ticked / removed in Odysseus -> done / dismissed in the module
+    items = lines(hub, groceries)
+    items[1]["done"] = True  # Milk
+    items = [i for i in items if i["text"] != "Eggs"]
+    _set_items(hub, groceries, items)
+    stats = await bai.sync("alice", module, now=T0)
+    assert stats["synced"] == 2
+    assert (module.rows[40]["status"], module.rows[41]["status"]) == ("done", "dismissed")
+    assert lines(hub, groceries)[0] == {"text": "Apples", "done": False}  # untouched
+
+    # done in the module -> only that line is ticked
+    module.rows[42]["status"] = "done"
+    await bai.sync("alice", module, now=T0)
+    assert [(i["text"], i["done"]) for i in lines(hub, groceries)] == [
+        ("Apples", False), ("Milk", True), ("Rice", True)]
+
+
+def _set_items(factory, note_id, items):
+    with factory() as db:
+        db.get(cdb.Note, note_id).items = json.dumps(items)
+        db.commit()
+
+
+@pytest.mark.asyncio
+async def test_archived_list_marks_its_items_done(hub):
+    chores = make_list(hub, "Chores", [{"text": "Vacuum", "done": False}])
+    module = JsonModule()
+    await _start(module)
+    module.add(row(45, "Water the plants", list_name="chores"))
+    await bai.sync("alice", module, now=T0)
+    with hub() as db:
+        db.get(cdb.Note, chores).archived = True
+        db.commit()
+    await bai.sync("alice", module, now=T0)
+    assert module.rows[45]["status"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_undo_and_move_take_only_the_line(hub):
+    shopping = make_list(hub, "Shopping", [{"text": "Bread", "done": False}])
+    module = JsonModule()
+    await _start(module)
+    module.add(row(50, "Milk", list_name="shopping"))
+    module.add(row(51, "Call the bank"))
+    await bai.sync("alice", module, now=T0)
+    assert len(notes(hub)) == 1  # Call the bank: a to-do of its own
+
+    # a to-do of its own onto a list, then onto another list, then off lists again
+    moved = await bai.move_item("alice", 51, module, kind="task", list_name="shopping")
+    assert module.updates[-1] == {"item_id": 51, "kind": "task", "list_name": "shopping"}
+    assert moved == {"target": "todo", "ref": shopping,
+                     "open_url": f"/#open=notes&note={shopping}", "list": "Shopping"}
+    assert notes(hub) == []  # its own to-do is gone
+    assert [i["text"] for i in lines(hub, shopping)] == ["Bread", "Milk", "Call the bank"]
+    moved = await bai.move_item("alice", 51, module, kind="task", list_name="Errands")
+    assert [i["text"] for i in lines(hub, shopping)] == ["Bread", "Milk"]
+    errands = bai.find_list("alice", "errands")
+    assert moved["ref"] == errands.id and moved["list"] == "Errands"
+    back = await bai.move_item("alice", 51, module, kind="task", list_name="none")
+    assert "list" not in back and module.rows[51]["list_name"] is None
+    assert lines(hub, errands.id) == []
+    with pytest.raises(ValueError):
+        await bai.move_item("alice", 51, module, kind="task", list_name="my list")
+
+    # Undo takes Milk off the list; Bread stays
+    await bai.unfile_item("alice", 50, module)
+    assert lines(hub, shopping) == [{"text": "Bread", "done": False}]
+    assert module.rows[50]["status"] == "dismissed"
+
+
+@pytest.mark.asyncio
+async def test_todo_lists_leave_out_single_todos(hub):
+    make_list(hub, "Shopping", [{"text": "Bread", "done": False},
+                                {"text": "Milk", "done": False}])
+    make_list(hub, "Packing", [{"text": "Passport", "done": False}])
+    make_list(hub, "Call Mom", [{"text": "Call Mom", "done": False}], note_type="todo")
+    make_list(hub, "shopping list", [{"text": "Soap", "done": False}])  # same list name
+    got = bai.todo_lists("alice")
+    assert len(got) == 2 and got[0] == "Packing" and bai.list_key(got[1]) == "shopping"
+
+
+@pytest.mark.asyncio
+async def test_list_edits_keep_other_lines_as_stored(hub):
+    odd = [{"text": "Bread", "done": False, "pos": 3}, "Legacy line"]
+    shopping = make_list(hub, "Shopping", odd)
+    module = JsonModule()
+    await _start(module)
+    module.add(row(60, "Milk", list_name="shopping"))
+    await bai.sync("alice", module, now=T0)
+    module.rows[60]["status"] = "done"
+    await bai.sync("alice", module, now=T0)
+    assert lines(hub, shopping) == odd + [{"text": "Milk", "done": True}]
+    await bai.unfile_item("alice", 60, module)
+    assert lines(hub, shopping) == odd
