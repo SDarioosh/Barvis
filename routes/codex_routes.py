@@ -243,8 +243,11 @@ def setup_codex_routes(
         return StreamingResponse(buf, media_type="application/zip", headers=headers)
 
     @router.get("/todos")
-    async def list_todos(request: Request, archived: bool = False, label: str | None = None):
+    async def list_todos(request: Request, archived: bool = False, label: str | None = None, format: str | None = None):
         owner = _scope_owner(request, TODO_READ_SCOPES)
+        if format == "json":  # Fork: structured notes for token clients (src/codex_todos_json.py)
+            from src.codex_todos_json import list_notes_json
+            return list_notes_json(owner, archived=archived, label=label)
         args: dict[str, Any] = {"action": "list", "archived": archived}
         if label:
             args["label"] = label
