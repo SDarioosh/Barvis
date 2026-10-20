@@ -52,6 +52,12 @@ odysseus-deploy rollback        # Odysseus back to the image before the last dep
 Run it as your user, not with `sudo`: it calls `sudo docker` itself, and the modules run
 as your user.
 
+odysseus-sound's own `server/scripts/deploy.sh deploy` does the same in the other order:
+it updates the module, then runs this script with no modules (it finds this checkout from the
+running Odysseus container, or from `BARVIS_SOUND_ODYSSEUS_DIR` in its `server/.env`). Either
+command updates both. Started from here, the module's script skips that step
+(`FORK_DEPLOY_RUNNING=1`).
+
 Settings (all optional), as `KEY=value` lines in `~/.config/odysseus-fork/deploy.env` or in the
 environment (which wins): `FORK_MODULES`, `DOCKER` (default `sudo docker`),
 `FORK_REMOTE`, `FORK_BACKUP_DIR`, `FORK_KEEP_BACKUPS`, `FORK_PASSWORD_FILE`,

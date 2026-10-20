@@ -161,7 +161,9 @@ deploy_modules() {
       continue
     fi
     log "module: $m deploy"
-    "$m" deploy < /dev/null || MODULES_FAILED+=("$m")
+    # FORK_DEPLOY_RUNNING: a module deploy that can also update Odysseus (odysseus-sound's
+    # deploy.sh) leaves that to this script.
+    FORK_DEPLOY_RUNNING=1 "$m" deploy < /dev/null || MODULES_FAILED+=("$m")
   done < <(module_cmds)
 }
 
