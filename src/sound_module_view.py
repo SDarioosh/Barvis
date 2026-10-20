@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import asdict, dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Awaitable, Callable
 
 CallTool = Callable[[str, dict], Awaitable[str]]
@@ -51,8 +51,10 @@ _CONV_ITEM = re.compile(
 _FACT = re.compile(r"^Fact \[(?P<subject>[^\]]*)\]: (?P<fact>.*) (?P<link>https?://\S+)$")
 # get_transcript
 _T_HEAD = re.compile(r"^\"(?P<title>.*)\" (?P<when>\S+(?: \S+)?) (?P<link>https?://\S+)$")
+# "[8s 17:00:08]" (older modules) or "[8s]": the clock time is then the header's start
+# (with seconds) plus the offset
 _T_LINE = re.compile(
-    r"^#(?P<id>\d+) \[(?P<offset>\d+)s (?P<time>\S+)\] (?P<speaker>.+?): (?P<text>.*)$")
+    r"^#(?P<id>\d+) \[(?P<offset>\d+)s(?: (?P<time>\S+))?\] (?P<speaker>.+?): (?P<text>.*)$")
 _T_MORE = re.compile(r"^… \d+ more lines")
 _CONV_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,200}$")
 
@@ -358,15 +360,24 @@ def parse_conversation(text: str, conversation_id: str) -> ConversationDetail:
 def parse_transcript(text: str) -> Transcript:
     """``get_transcript`` output; each line links to its moment in the module's view."""
     t = Transcript()
+    start: datetime | None = None
     for raw in (text or "").splitlines():
         line = raw.strip()
         if m := _T_LINE.match(line):
             off = int(m["offset"])
             link = (t.link.split("#", 1)[0] + f"#t={off}") if t.link else ""
-            t.lines.append(TranscriptLine(int(m["id"]), off, m["time"], m["speaker"],
+            clock = m["time"] or (
+                (start + timedelta(seconds=off)).strftime("%H:%M:%S") if start else "")
+            t.lines.append(TranscriptLine(int(m["id"]), off, clock, m["speaker"],
                                           m["text"], link))
         elif not t.title and not t.lines and (m := _T_HEAD.match(line)):
             t.title, t.link = m["title"], m["link"]
+            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+                try:
+                    start = datetime.strptime(m["when"], fmt)
+                    break
+                except ValueError:
+                    pass
         elif _T_MORE.match(line):
             t.more = True
     if t.more and t.lines:

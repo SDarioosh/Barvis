@@ -254,6 +254,25 @@ cd $SOUND/server && for m in agent chat; do ODYSSEUS_MODE=$m ODYSSEUS_URL=http:/
   --only 1 4 13 16 20; done
 ```
 
+### Transcript requests, 2026-10-20
+
+`/sound Show me the transcript of the Leipzig offsite planning meeting on 2026-10-18`,
+sent through Odysseus (`--trim`, "Regular tools"), against a fictional 60-line meeting
+added to the seed for this test (the demo conversations are 4–7 lines). Before:
+odysseus-sound `main`; after: one time per line, 100 lines a page, and "give the link and
+a short summary" in the result, tool description and `INSTRUCTIONS`
+(SDarioosh/barvis-sound, branch `claude/sharp-sagan-yfcl39`). Token counts from the
+llama-server log. This sandbox ran at ~3 tokens/s generation, ~25 tokens/s prompt.
+
+| | tool calls | final answer | `get_transcript` result | time |
+|---|---|---|---|---|
+| before | search, get_conversation, get_transcript | 2,395 tokens: the lines retyped, cut off by Odysseus | 2,386 tokens | 1,310 s |
+| after | search only (its result has the link) | 152 tokens: link + summary | 1,872 tokens | 125 s (warm cache; 320 s right after an Odysseus restart) |
+
+Questions 1, 4, 16, 22 with `/sound` after the change: 3/4. Question 4 (dentist) also
+fails on `main` in this sandbox (0/1, the model only calls `list_action_items`), so it
+isn't caused by this change.
+
 ## Findings from the first sandbox run
 
 These are real bugs, not sandbox quirks. 1–3 and 5 are bugs in Odysseus or the fork (tracked in
