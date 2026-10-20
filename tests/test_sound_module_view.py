@@ -419,22 +419,30 @@ def filing(client, monkeypatch):
         await call("update_action_item", {"item_id": item_id, "status": "dismissed"})
         return {"ok": True}
 
-    async def move_item(owner, item_id, call, *, kind, due_date=None, due_time=None):
-        calls.append(("move", owner, item_id, kind, due_date, due_time))
+    async def move_item(owner, item_id, call, *, kind, due_date=None, due_time=None,
+                        list_name=None):
+        calls.append(("move", owner, item_id, kind, due_date, due_time)
+                     + ((list_name,) if list_name else ()))
         if item_id == 99:
             raise LookupError("No action item #99.")
         if item_id == 98:
             raise RuntimeError("calendar store is down")
         state[item_id] = {"kind": kind, "target": "todo" if kind != "event" else "calendar",
                           "ref": "note-8", "at": "z"}
+        if list_name and list_name != "none":
+            state[item_id]["list"] = list_name.title()
         return {"target": state[item_id]["target"], "ref": "note-8", "open_url": None}
 
     def filed_state(owner):
         calls.append(("state", owner))
         return dict(state)
 
+    def todo_lists(owner):
+        return ["Packing", "Shopping"]
+
     for name, fn in [("file_item", file_item), ("unfile_item", unfile_item),
-                     ("move_item", move_item), ("filed_state", filed_state)]:
+                     ("move_item", move_item), ("filed_state", filed_state),
+                     ("todo_lists", todo_lists)]:
         monkeypatch.setattr(mai, name, fn, raising=False)
     client.filing_calls = calls
     return client
@@ -520,3 +528,33 @@ def test_filing_routes_are_admin_only(monkeypatch):
         for path, body in [("13/file", {"target": "todo"}), ("13/move", {"kind": "task"}),
                            ("13/undo", None)]:
             assert c.post(f"/api/modules/sound/action-items/{path}", json=body).status_code == 403
+
+
+def test_move_onto_a_list_route(filing):
+    r = filing.post("/api/modules/sound/action-items/13/move",
+                    json={"kind": "task", "list_name": "  shopping  "})
+    assert r.status_code == 200
+    assert filing.filing_calls[-2] == ("move", "", 13, "task", None, None, "shopping")
+    assert r.json()["item"]["filed"]["list"] == "Shopping"
+    r = filing.post("/api/modules/sound/action-items/13/move",
+                    json={"kind": "task", "list_name": "none"})
+    assert r.status_code == 200 and "list" not in r.json()["item"]["filed"]
+    assert filing.post("/api/modules/sound/action-items/13/move",
+                       json={"kind": "task", "list_name": "x" * 41}).status_code == 400
+    assert filing.post("/api/modules/sound/action-items/13/move",
+                       json={"kind": "task", "list_name": "x" * 61}).status_code == 422
+    assert filing.get("/api/modules/sound/todo-lists").json() == {
+        "lists": ["Packing", "Shopping"]}
+
+
+def test_check_list_name_and_json_list():
+    assert view.check_list_name(None) is None and view.check_list_name("  ") is None
+    assert view.check_list_name(" NONE ") == "none"
+    assert view.check_list_name(" Hardware   store ") == "Hardware store"
+    for bad in ("x" * 41, "milk\x07list"):
+        with pytest.raises(ValueError):
+            view.check_list_name(bad)
+    item = view.item_from_json({"id": 5, "text": "Milk", "list_name": "shopping"})
+    assert item.list_name == "shopping"
+    assert view.filed_for({5: {"target": "todo", "ref": "n1", "list": "Shopping"}}, 5) == {
+        "target": "todo", "ref": "n1", "open_url": "/#open=notes&note=n1", "list": "Shopping"}

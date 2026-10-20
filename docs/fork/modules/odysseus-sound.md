@@ -149,6 +149,18 @@ belong, so voice notes land in the hub's own calendar and to-dos:
 | `event` | "meeting with Jason on Wednesday at 12 pm" | calendar event in the default calendar: timed (60 min or the stated length, reminder 30 min before), or all-day when no time was said |
 | `task` | "get the proposal done on Wednesday" | to-do (checklist note, label `odysseus-sound`), due that day at `MODULE_DIGEST_HOUR` |
 | `reminder` | "remind me at 5 to call Mom" | to-do due at that time (Odysseus fires its own reminder) |
+| any task or reminder with a `list_name` | "add milk to my shopping list" | one line on that to-do list (see below) |
+
+- **Named to-do lists.** When the note names a list, the module returns `list_name`
+  (`shopping`, without "my"/"the"/"list") and the item text without the phrase
+  (`Milk`). Odysseus adds it as a line to the open checklist or to-do note with that
+  title, in any case and with or without "list" ("Shopping", "shopping list"); if there
+  is none, it creates a to-do list titled "Shopping" (label `odysseus-sound`). A due date
+  goes into the line's text ("Eggs (due Wed 22 Oct)"); lines have no reminder of their
+  own. An open line with the same text isn't added twice. The line's status follows
+  both ways: ticked ↔ done, line removed → dismissed, list archived → done. Undo and
+  moving take off the line only; the list stays. On `/modules/sound`, **Add to a list**
+  / **Change list** picks a list (your existing lists are suggested) or clears it.
 
 - **Voice notes are filed automatically.** One push per pass ("Filed from your voice
   note": what went where, "check the time" when the module flagged it). Filed items get
@@ -166,7 +178,7 @@ belong, so voice notes land in the hub's own calendar and to-dos:
 The built-in task **Module Action Items** (`src/module_action_items.py`, every 5 min)
 does all of this. It reads `list_action_items` with `format="json"` (fields in the module's
 `server/README.md`) and writes through `update_action_item` (`status`, `kind`,
-`due_date`, `due_time`). With an older module that returns only text it falls back to
+`due_date`, `due_time`, `list_name`). With an older module that returns only text it falls back to
 pushes without filing. The module's `due_date`/`due_time` are local to its
 `CONVO_TIMEZONE`; set the same timezone in Odysseus (the task logs a warning when they
 differ and converts).
