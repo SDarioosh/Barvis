@@ -4,12 +4,52 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Conversations — Odysseus</title>
+  <meta name="theme-color" content="#282c34">
   <link rel="icon" href="/static/icon.ico">
+  <script nonce="{{CSP_NONCE}}">
+  // Fork: apply the theme the owner picked in Odysseus (saved in localStorage
+  // as 'odysseus-theme'), like the early script in index.html and login.html.
+  // theme.js isn't imported: it boots the whole settings UI.
+  (function () {
+    try {
+      var t = JSON.parse(localStorage.getItem('odysseus-theme'));
+      var s = document.documentElement.style;
+      if (t && t.colors) {
+        var c = t.colors;
+        s.setProperty('--bg', c.bg);
+        s.setProperty('--fg', c.fg);
+        s.setProperty('--panel', c.panel);
+        s.setProperty('--border', c.border);
+        if (c.red) s.setProperty('--red', c.red);
+        var a = c.advanced || {};
+        if (a.inputBg) s.setProperty('--input-bg', a.inputBg);
+        if (a.inputBorder) s.setProperty('--input-border', a.inputBorder);
+        var m = document.querySelector('meta[name="theme-color"]');
+        if (m && c.bg) m.setAttribute('content', c.bg);
+      }
+      // Same names as FONT_MAP in static/js/theme.js; unknown fonts keep the default.
+      var fonts = {
+        mono: "'Fira Code', monospace",
+        sans: "system-ui, -apple-system, 'Segoe UI', sans-serif",
+        serif: "Georgia, 'Times New Roman', serif",
+        opendyslexic: "'OpenDyslexic', sans-serif"
+      };
+      if (t && t.font && fonts[t.font]) s.setProperty('--font-family', fonts[t.font]);
+      if (t && t.density && t.density !== 'comfortable') {
+        document.documentElement.classList.add('density-' + t.density);
+      }
+    } catch (e) { /* no saved theme: keep the defaults */ }
+  })();
+  </script>
   <link rel="stylesheet" href="/static/css/00-tokens.css?v=20260929csssplit">
   <style>
     /* Fork: odysseus-sound page. Colors, font and spacing come from the Odysseus
-       tokens in 00-tokens.css; nothing here introduces new color values. */
-    body { background: var(--bg); color: var(--fg); margin: 0; }
+       tokens in 00-tokens.css plus the saved theme applied above; nothing here
+       introduces new color values. */
+    /* 00-tokens.css gives body the app's fixed, non-scrolling layout; this page scrolls. */
+    body { background: var(--bg); color: var(--fg); margin: 0; display: block;
+           height: auto; min-height: 100vh; overflow: auto;
+           font-family: var(--font-family, 'Fira Code', monospace); }
     .bs-wrap { max-width: 860px; margin: 0 auto; padding: 16px; }
     .bs-top { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
     .bs-top h1 { font-size: 1.1rem; font-weight: 600; margin: 0; flex: 1; }
@@ -26,7 +66,8 @@
                 color: var(--fg); text-decoration: none; font-size: 0.86rem; }
     .bs-quote:hover { border-left-color: var(--red); }
     .bs-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
-    .bs-input { background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+    .bs-input { background: var(--input-bg, var(--bg)); color: var(--fg);
+                border: 1px solid var(--input-border, var(--border));
                 border-radius: 6px; padding: 6px 8px; font: inherit; font-size: 0.85rem;
                 min-width: 0; }
     .bs-btn { background: transparent; color: var(--fg); border: 1px solid var(--border);
