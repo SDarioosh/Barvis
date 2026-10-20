@@ -54,8 +54,8 @@ Source: `server/convo_server/mcp_server.py` (`build_mcp`).
   Modules before 2026-10-20 printed `[<seconds>s <HH:MM:SS>]`, minute-precision start
   times and 200 lines; `src/sound_module_view.py` reads both. The result and the
   `INSTRUCTIONS` tell the model to answer "show me the transcript" with the link and a
-  short summary instead of retyping the lines: at ~40 tokens/s, retyping a 200-line page
-  took most of a 20 s `/sound` answer.
+  short summary instead of retyping the lines. Retyping was where a `/sound` transcript
+  request spent its time (sandbox: [Transcript requests](../sandbox.md#transcript-requests-2026-10-20)).
 - Voice notes (the owner recording a memo for themselves) are stored as their own kind.
   Results mark them `"<title>" (voice note)`, and `search_conversations` with
   `kind="note"` returns only voice notes (`"conversation"`: only the others; empty: both).
