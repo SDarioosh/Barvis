@@ -333,7 +333,7 @@ def test_parse_action_items_json():
 
     a, b = view.parse_action_items_result(json.dumps(ITEMS_JSON))
     assert (a.id, a.kind, a.text, a.due_date, a.due_time, a.voice_note, a.location, a.when) == (
-        12, "event", "Meet Jason", "2026-10-21", "12:00", True, "Cafe Nord", "2026-10-20 09:00")
+        12, "event", "Meet Jason", "2026-10-21", "12:00", True, "Cafe Nord", "2026-10-20 11:00")  # Berlin
     assert (b.kind, b.time_unclear, b.voice_note, b.owner) == ("task", True, False, None)
     assert view.parse_action_items_result("[]") == []
     # junk rows and fields degrade instead of failing

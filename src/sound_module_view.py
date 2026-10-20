@@ -203,12 +203,21 @@ def _text(value: Any) -> str | None:
     return None if value is None or value == "" else str(value)
 
 
-def _when(iso: Any) -> str:
-    """ISO-8601 -> "YYYY-MM-DD HH:MM" (as the text lines show it); "" when unparsable."""
+def _when(iso: Any, zone: Any = None) -> str:
+    """ISO-8601 -> "YYYY-MM-DD HH:MM" in the module's timezone ``zone`` (as the text
+    lines show it); "" when unparsable."""
     try:
-        return datetime.fromisoformat(str(iso)).strftime("%Y-%m-%d %H:%M")
+        when = datetime.fromisoformat(str(iso))
     except (TypeError, ValueError):
         return ""
+    if when.tzinfo is not None and zone:
+        try:
+            from zoneinfo import ZoneInfo
+
+            when = when.astimezone(ZoneInfo(str(zone)))
+        except (KeyError, ValueError):
+            pass
+    return when.strftime("%Y-%m-%d %H:%M")
 
 
 def item_from_json(row: dict) -> ActionItem | None:
@@ -228,7 +237,7 @@ def item_from_json(row: dict) -> ActionItem | None:
     return ActionItem(
         item_id, status, str(row.get("text") or ""), _text(row.get("owner")),
         _text(row.get("due")), str(row.get("conversation_title") or ""),
-        _when(row.get("conversation_at")), str(row.get("link") or ""), kind=kind,
+        _when(row.get("conversation_at"), row.get("timezone")), str(row.get("link") or ""), kind=kind,
         due_date=due_date if due_date and _DATE.match(due_date) else None,
         due_time=due_time if due_time and _TIME.match(due_time) else None,
         time_unclear=bool(row.get("time_unclear")),

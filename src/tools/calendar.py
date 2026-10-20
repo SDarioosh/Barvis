@@ -305,7 +305,17 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None, *, impor
             # still upcoming, create an immediate Note reminder instead of
             # silently dropping it.
             remind_at = now
-        start_fmt = dtstart.strftime("%a %b %d") if all_day else dtstart.strftime("%a %b %d %H:%M")
+        shown = dtstart
+        if is_utc and not all_day:
+            # Fork: show the wall time, not UTC: the stated zone, else the user's
+            # (FORK.md "Calendar reminder shows the wall time"; offered upstream).
+            from src.user_time import user_timezone
+            try:
+                zone = ZoneInfo(str(args.get('timezone') or '').strip())
+            except (ZoneInfoNotFoundError, ValueError):
+                zone = user_timezone()
+            shown = dtstart.replace(tzinfo=timezone.utc).astimezone(zone)
+        start_fmt = shown.strftime("%a %b %d") if all_day else shown.strftime("%a %b %d %H:%M")
         loc = f" @ {location}" if location else ""
         text = f"{summary}{loc} — {start_fmt}"
         due_date = remind_at.isoformat() + ("Z" if is_utc else "")
