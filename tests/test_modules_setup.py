@@ -194,3 +194,15 @@ def test_bad_module_skill_is_rejected():
 
 def test_procedure_steps_splits_paragraphs_and_lists():
     assert modules_setup.procedure_steps("a\nb\n\n1. c\n2) d\n\n") == ["a b", "c", "d"]
+
+
+def test_skill_toolsets_are_casefolded(tmp_path, monkeypatch):
+    # Server keys match case-insensitively (ODYSSEUS_TRUSTED_READONLY_MCP, expand_toolsets),
+    # but with_mcp_toolsets only offers "mcp:<name as registered>" and its casefold, so a
+    # skill requiring "mcp:Convo" for a server named "convo" was hidden from skill matching.
+    monkeypatch.setenv(modules_setup.TRUSTED_ENV, "Convo")
+    api = _run(tmp_path, ["--module-skill", "sound=Convo"])
+    sound, context = (b for _, _, b in api.skill_writes())
+    assert sound["requires_toolsets"] == ["mcp:convo"]
+    assert context["requires_toolsets"] == ["mcp:convo"]
+

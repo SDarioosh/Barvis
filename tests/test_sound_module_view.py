@@ -137,3 +137,28 @@ def test_api_is_admin_only(monkeypatch):
 def test_former_page_address_redirects(client):
     r = client.get("/barvis/sound", follow_redirects=False)
     assert r.status_code == 301 and r.headers["location"] == "/modules/sound"
+
+
+def test_parse_voice_note_rows():
+    # odysseus-sound marks voice notes after the title: "Title" (voice note)
+    convs = view.parse_conversations(
+        '- 2026-10-16 08:00–08:01 "Grocery list" (voice note) id n1; people: Me\n'
+        "  Buy milk and eggs.\n  http://h:8000/view/n1?sig=a")
+    assert [(c.id, c.title, c.people, c.link) for c in convs] == [
+        ("n1", "Grocery list", ["Me"], "http://h:8000/view/n1?sig=a")]
+    items = view.parse_action_items(
+        '- #20 [open] Buy milk due 2026-10-17 (tomorrow) — from "Grocery list" (voice note) '
+        "2026-10-16 08:00 http://h:8000/view/n1?sig=a#t=3")
+    assert [(i.id, i.text, i.due, i.conversation_title) for i in items] == [
+        (20, "Buy milk", "2026-10-17 (tomorrow)", "Grocery list")]
+
+
+def test_parse_action_item_text_with_due_word():
+    a, b = view.parse_action_items(
+        '- #21 [open] Confirm the due date with Ana (owner Me) due 2026-10-23 (Friday) — from '
+        '"Invoices" 2026-10-16 08:00 http://h:8000/view/x?sig=a#t=3\n'
+        '- #22 [open] Check the due date with Ana due next week — from '
+        '"Invoices" 2026-10-16 08:00 http://h:8000/view/x?sig=a#t=9')
+    assert (a.text, a.owner, a.due) == ("Confirm the due date with Ana", "Me",
+                                        "2026-10-23 (Friday)")
+    assert (b.text, b.owner, b.due) == ("Check the due date with Ana", None, "next week")
