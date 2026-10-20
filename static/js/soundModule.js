@@ -743,6 +743,38 @@ function route() {
 
 window.addEventListener('hashchange', route);
 
+// ---------------------------------------------------------------------- tabs
+const TABS = ['conversations', 'items', 'who'];
+
+function showTab(name, focus = false) {
+  if (!TABS.includes(name)) name = 'conversations';
+  for (const t of TABS) {
+    const tab = $(`#bs-tab-${t}`);
+    const on = t === name;
+    tab.setAttribute('aria-selected', on ? 'true' : 'false');
+    tab.tabIndex = on ? 0 : -1;
+    $(`#bs-panel-${t}`).hidden = !on;
+    if (on && focus) tab.focus();
+  }
+  try {
+    sessionStorage.setItem('bs-tab', name);
+  } catch (e) {}
+}
+
+document.querySelectorAll('.bs-tab').forEach((tab) => {
+  tab.addEventListener('click', () => showTab(tab.dataset.tab));
+  tab.addEventListener('keydown', (e) => {
+    const i = TABS.indexOf(tab.dataset.tab);
+    if (e.key === 'ArrowRight') showTab(TABS[(i + 1) % TABS.length], true);
+    else if (e.key === 'ArrowLeft') showTab(TABS[(i + TABS.length - 1) % TABS.length], true);
+  });
+});
+let savedTab = 'conversations';
+try {
+  savedTab = sessionStorage.getItem('bs-tab') || savedTab;
+} catch (e) {}
+showTab(savedTab);
+
 $('#bs-filter').addEventListener('submit', (e) => {
   e.preventDefault();
   loadList();

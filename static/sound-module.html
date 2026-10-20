@@ -60,6 +60,13 @@
     .bs-top h1 { font-size: 1.1rem; font-weight: 600; margin: 0; flex: 1; }
     .bs-top a { color: var(--fg); opacity: 0.7; text-decoration: none; }
     .bs-top a:hover { opacity: 1; }
+    .bs-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 14px;
+               overflow-x: auto; }
+    .bs-tab { background: none; border: none; border-bottom: 2px solid transparent; color: var(--fg);
+              font: inherit; font-size: 0.88rem; padding: 8px 12px; margin-bottom: -1px; cursor: pointer;
+              opacity: 0.65; white-space: nowrap; min-height: 36px; }
+    .bs-tab:hover { opacity: 1; }
+    .bs-tab[aria-selected="true"] { opacity: 1; border-bottom-color: var(--red); font-weight: 600; }
     .bs-section { margin: 18px 0 8px; font-size: 0.85rem; text-transform: uppercase;
                   letter-spacing: 0.06em; opacity: 0.6; }
     .bs-card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
@@ -159,13 +166,16 @@
     </div>
 
     <div id="bs-home">
-    <div class="bs-section" id="bs-who-title">Who is this?</div>
-    <div id="bs-who"><div class="bs-status">Loading…</div></div>
+    <div class="bs-tabs" role="tablist" aria-label="Conversations sections">
+      <button type="button" class="bs-tab" role="tab" id="bs-tab-conversations" data-tab="conversations"
+        aria-controls="bs-panel-conversations" aria-selected="true">Conversations</button>
+      <button type="button" class="bs-tab" role="tab" id="bs-tab-items" data-tab="items"
+        aria-controls="bs-panel-items" aria-selected="false" tabindex="-1">Action items</button>
+      <button type="button" class="bs-tab" role="tab" id="bs-tab-who" data-tab="who"
+        aria-controls="bs-panel-who" aria-selected="false" tabindex="-1">Who is this?</button>
+    </div>
 
-    <div class="bs-section">Action items</div>
-    <div id="bs-items"><div class="bs-status">Loading…</div></div>
-
-    <div class="bs-section">Recorded conversations</div>
+    <div role="tabpanel" id="bs-panel-conversations" aria-labelledby="bs-tab-conversations">
     <form class="bs-filters" id="bs-filter">
       <input class="bs-input" name="query" placeholder="Words" aria-label="Words">
       <input class="bs-input" name="person" placeholder="Person" aria-label="Person">
@@ -179,6 +189,15 @@
       <button type="submit" class="bs-btn">Search</button>
     </form>
     <div id="bs-list"><div class="bs-status">Loading…</div></div>
+    </div>
+
+    <div role="tabpanel" id="bs-panel-items" aria-labelledby="bs-tab-items" hidden>
+    <div id="bs-items"><div class="bs-status">Loading…</div></div>
+    </div>
+
+    <div role="tabpanel" id="bs-panel-who" aria-labelledby="bs-tab-who" hidden>
+    <div id="bs-who"><div class="bs-status">Loading…</div></div>
+    </div>
     </div>
 
     <div id="bs-reader" hidden></div>
