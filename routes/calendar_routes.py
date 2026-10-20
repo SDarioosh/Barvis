@@ -1870,8 +1870,11 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
                 ],
                 headers=headers,
                 temperature=0.0,
-                max_tokens=512,
-                timeout=20,
+                max_tokens=1024,
+                timeout=30,
+                # A thinking model otherwise burns the token budget on
+                # reasoning and returns no JSON ("Could not extract JSON").
+                thinking_mode="off",
             )
         except Exception as e:
             return {"ok": False, "error": f"LLM call failed: {e}"}
