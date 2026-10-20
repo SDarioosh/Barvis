@@ -3,7 +3,7 @@
 fork-specific status. Upstream's own plans are in [../../ROADMAP.md](../../ROADMAP.md);
 don't edit that file.
 
-_Last updated: 2026-10-19_
+_Last updated: 2026-10-20_
 
 ## Status
 
@@ -21,6 +21,7 @@ _Last updated: 2026-10-19_
 | 10 | odysseus-sound page `/modules/sound`: live action items (done/dismiss), conversations list and "who is this?" cards for unnamed speakers (roadmap 3, 5) | merged (SDarioosh/Barvis#19); odysseus-sound's `list_unnamed_speakers` merged (SDarioosh/barvis-sound#24) | [../../FORK.md](../../FORK.md) |
 | 11 | Stdio MCP servers added over the API keep working after that request (sandbox finding 2): each stdio connection has its own owner task | PR SDarioosh/Barvis#20 | [../../FORK.md](../../FORK.md), `src/mcp_stdio_owner.py` |
 | 12 | One-command deploy: `fork_deploy.sh deploy` runs each module's deploy command first (odysseus-sound: update, install, background services that survive reboot), works from any directory | PR SDarioosh/Barvis#21; odysseus-sound side SDarioosh/barvis-sound#30 | [deploy.md](deploy.md#update-production), [modules.md](modules.md#deploying-a-module) |
+| 13 | Conversations page v2: transcript reader, click-to-fix speakers (`reassign_line`, `name_speaker`, `rename_speaker_everywhere`), Ask in chat (`/?ask=` prefills a new chat with `/sound …`) | PR (this branch) | [../../FORK.md](../../FORK.md) |
 
 ## Next
 
@@ -48,8 +49,9 @@ _Last updated: 2026-10-19_
 4. **ntfy notifications** (status item 9). New action items and yesterday's digest go
    to the phone through the ntfy reminder channel.
 5. **Conversations view** (status item 10). `/modules/sound` lists conversations, live
-   action items (done/dismiss) and "who is this?" cards for unnamed speakers. Next:
-   follow the user's theme (the page uses the default dark tokens only).
+   action items (done/dismiss) and "who is this?" cards for unnamed speakers; item 13
+   adds the transcript reader, speaker fixes and Ask in chat. Next: the daily digest on
+   the page, and follow the user's theme (the page uses the default dark tokens only).
 6. **Phone access.** Use Odysseus from the Android phone over Tailscale (Odysseus has a
    PWA). Lock services to Tailscale per the owner's security decision.
 7. **Shared search.** One `context` search tool that queries every module with the
