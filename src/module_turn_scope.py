@@ -54,6 +54,16 @@ CUE_FAMILIES = PERSONAL_FAMILIES | {"search_browser"}
 # Dropped from a cue turn with no family; small models pick them over the module.
 DRIFT_TOOLS = frozenset({"bash", "python", "read_file"})
 
+_CONVERSATION_RE = re.compile(r"\bconversations?\b", re.I)
+# Words that point at the hub's own chats rather than recordings.
+_CHAT_RE = re.compile(
+    r"\b(?:chats?|sessions?|threads?|chat\s+history)\b"
+    r"|\b(?:this|our|current)\s+(?:\w+\s+)?conversations?\b"
+    r"|\bconversations?\s+(?:with|between)\s+(?:you|us|odysseus|the\s+(?:assistant|ai|bot|model))\b"
+    r"|\bwe\s+(?:had|have|talked|discussed|chatted)\b",
+    re.I,
+)
+
 _CUE_RE = re.compile(
     r"\b("
     r"conversations?|transcripts?|recordings?|recorded|meetings?|stand-?ups?|1[:-]on[:-]1|"
@@ -151,6 +161,12 @@ def module_cue(message: Any, people: frozenset[str] | None = None) -> bool:
     return bool(names_re and names_re.search(message))
 
 
+def recorded_conversation(message: Any) -> bool:
+    """True when "conversation" means a recording, not a chat with the assistant."""
+    return (isinstance(message, str) and bool(_CONVERSATION_RE.search(message))
+            and not _CHAT_RE.search(message))
+
+
 def _is_slash(message: Any) -> bool:
     from src.skill_invocation import parse_invoke_message
 
@@ -213,12 +229,18 @@ def with_module_tools(contract, *, message: Any, schemas, manager=None):
     manager = manager if manager is not None else _manager()
     families = set(contract.capabilities)
     cue = module_cue(message, known_people(manager))
+    chat_tools: frozenset[str] = frozenset()
+    if "sessions" in families and recorded_conversation(message):
+        from src.turn_contract import FAMILY_TOOLS
+
+        families.discard("sessions")
+        chat_tools = FAMILY_TOOLS.get("sessions", frozenset()) - set(contract.required)
     if not families <= (CUE_FAMILIES if cue else PERSONAL_FAMILIES):
         return contract
     module_tools = {n for n in trusted_readonly_mcp_tools(manager) if n in contract.executable}
     if not module_tools:
         return contract
-    offered = set(contract.offered) | module_tools | ({"ask_user"} & contract.executable)
+    offered = (set(contract.offered) - chat_tools) | module_tools | ({"ask_user"} & contract.executable)
     if cue and not (families - {"unknown"}):
         offered -= DRIFT_TOOLS - set(contract.required)
     inventory = {s["function"]["name"]: s for s in schemas or ()

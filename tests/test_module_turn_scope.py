@@ -259,3 +259,44 @@ def test_no_trusted_server_leaves_the_contract(monkeypatch):
     contract = _contract("What did Alice say?", set())
     assert with_module_tools(contract, message="What did Alice say?", schemas=SCHEMAS,
                              manager=FakeManager()) is contract
+
+
+# --- "conversation" means a recording, "chat" means chat history -----------
+
+CHAT_TOOLS = ["list_sessions", "manage_session", "create_session", "send_to_session",
+              "chat_with_model", "pipeline"]
+SESSION_SCHEMAS = SCHEMAS + [_schema(n) for n in CHAT_TOOLS]
+
+
+def _scoped_sessions(message):
+    contract = resolve_turn_contract(capabilities=requested_capabilities(message),
+                                     schemas=SESSION_SCHEMAS,
+                                     policy=build_effective_tool_policy(), message=message)
+    return with_module_tools(contract, message=message, schemas=SESSION_SCHEMAS,
+                             manager=FakeManager())
+
+
+@pytest.mark.parametrize("message", [
+    "what is my last conversation?",
+    "What was my most recent conversation about?",
+    "show my recent conversations",
+    "find the conversation about the budget",
+])
+def test_conversation_questions_get_module_reads_not_chat_history(message):
+    assert "sessions" in requested_capabilities(message)
+    contract = _scoped_sessions(message)
+    _invariants(contract)
+    assert MODULE_READS <= contract.offered
+    assert not set(CHAT_TOOLS) & contract.offered
+
+
+@pytest.mark.parametrize("message", [
+    "list my recent chats",
+    "what is my last chat session?",
+    "what did we discuss in our last conversation?",
+    "rename this conversation to Budget",
+])
+def test_chat_history_questions_keep_session_tools(message):
+    contract = _scoped_sessions(message)
+    assert "list_sessions" in contract.offered or "manage_session" in contract.offered
+    assert not MODULE_READS & contract.offered
