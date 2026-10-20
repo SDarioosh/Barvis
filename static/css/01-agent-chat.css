@@ -196,13 +196,10 @@ body.bg-pattern-ascii-fireflies {
       line-height: 1.25;
     }
     .chat-top-bar:has(.incognito-indicator:not([style*="display:none"]):not([style*="display: none"])) .chat-meta-overlay {
+      /* Reserve the same space on both sides so the title stays centered. */
       left: 54px;
-      right: 44px;
-      max-width: calc(100% - 98px);
-    }
-    body:has(.sidebar.right-side) .chat-top-bar:has(.incognito-indicator:not([style*="display:none"]):not([style*="display: none"])) .chat-meta-overlay {
-      left: 44px;
       right: 54px;
+      max-width: calc(100% - 108px);
     }
     .chat-meta-overlay:hover {
       color: color-mix(in srgb, var(--fg) 75%, transparent);

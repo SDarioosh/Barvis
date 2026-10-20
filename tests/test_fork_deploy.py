@@ -136,3 +136,24 @@ def test_former_settings_and_config_dir_still_apply(checkout):
 def test_override_without_a_fork_image_is_refused(checkout):
     r = checkout("rollback", override="ghcr.io/odysseus-dev/odysseus")
     assert r.returncode != 0 and "image: odysseus-fork" in r.stderr
+
+
+def test_modules_are_told_this_script_deploys_odysseus(checkout):
+    # odysseus-sound's deploy.sh also updates Odysseus unless FORK_DEPLOY_RUNNING is set
+    module = checkout.home / "module.sh"
+    _write_exec(module, '#!/bin/sh\necho "module $1 running=$FORK_DEPLOY_RUNNING"\n')
+    r = checkout("modules", env={"FORK_MODULES": str(module)})
+    assert "module deploy running=1" in r.stdout
+
+
+def test_empty_module_list_from_the_environment_beats_the_config(checkout):
+    # how a module's deploy script runs this one without being called back
+    module = checkout.home / "module.sh"
+    _write_exec(module, '#!/bin/sh\necho "module $1"\n')
+    config = checkout.home / ".config" / "odysseus-fork"
+    config.mkdir(parents=True)
+    (config / "deploy.env").write_text(f"FORK_MODULES={module}\n")
+    r = checkout("deploy", env={"FORK_MODULES": "", "BARVIS_MODULES": ""})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "module deploy" not in r.stdout
+    assert "no FORK_MODULES set; skipping modules" in r.stdout
