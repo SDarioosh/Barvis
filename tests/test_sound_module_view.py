@@ -121,6 +121,7 @@ class FakeManager:
 
     def __init__(self):
         self.calls = []
+        self.items_json = None  # None: answer like an older module (text lines)
 
     async def call_tool(self, name, args):
         self.calls.append((name, args))
@@ -141,6 +142,8 @@ class FakeManager:
                    if args["old_name"] == "Alise" else f"No lines by {args['old_name']!r}. "
                    "Known speakers: Alice, Me.")
             return {"stdout": msg, "exit_code": 0}
+        if tool == "list_action_items" and self.items_json is not None:
+            return {"stdout": self.items_json, "exit_code": 0}
         out = {"search_conversations": CONVS, "list_unnamed_speakers": UNNAMED,
                "list_action_items": ITEMS, "get_conversation": CONV,
                "get_transcript": TRANSCRIPT,
@@ -192,7 +195,8 @@ def test_routes_call_only_module_tools(client):
 def test_action_items_are_live_from_the_module(client):
     r = client.get("/api/modules/sound/action-items")
     assert [i["id"] for i in r.json()["action_items"]] == [12, 13]
-    assert client.manager.calls[-1] == ("mcp__srv1__list_action_items", {"status": "open"})
+    assert client.manager.calls[-1] == ("mcp__srv1__list_action_items",
+                                        {"status": "open", "format": "json"})
     r = client.post("/api/modules/sound/action-items/12", json={"status": "done"})
     assert r.json() == {"ok": True, "message": "Action item #12 is now done."}
     assert client.manager.calls[-1] == ("mcp__srv1__update_action_item",
@@ -303,3 +307,202 @@ def test_reassign_line_already_correct_is_ok():
 
     assert asyncio.run(view.reassign_line(call, 5, "Ben")) == {
         "ok": True, "message": "Line #5 is already Ben's."}
+
+
+# ------------------------------------------------- action items as JSON, filing (fictional)
+ITEMS_JSON = [
+    {"id": 12, "status": "open", "kind": "event", "text": "Meet Jason", "owner": "Me",
+     "due": "Wednesday at 12 pm", "due_date": "2026-10-21", "due_time": "12:00",
+     "duration_minutes": None, "location": "Cafe Nord", "time_unclear": False,
+     "conversation_id": "n1", "conversation_title": "Jason meeting",
+     "conversation_kind": "note", "conversation_at": "2026-10-20T09:00:00+00:00",
+     "created_at": "2026-10-20T09:05:00+00:00", "timezone": "Europe/Berlin",
+     "link": "http://h:8000/view/n1?sig=a#t=4"},
+    {"id": 13, "status": "open", "kind": "task", "text": "Send Alice the budget",
+     "owner": None, "due": "at 9", "due_date": "2026-10-22", "due_time": "09:00",
+     "duration_minutes": None, "location": None, "time_unclear": True,
+     "conversation_id": "c1", "conversation_title": "Q4 budget",
+     "conversation_kind": "conversation", "conversation_at": "2026-10-19T15:00:00+00:00",
+     "created_at": "2026-10-19T15:20:00+00:00", "timezone": "Europe/Berlin",
+     "link": "http://h:8000/view/c1?sig=b#t=40"},
+]
+
+
+def test_parse_action_items_json():
+    import json
+
+    a, b = view.parse_action_items_result(json.dumps(ITEMS_JSON))
+    assert (a.id, a.kind, a.text, a.due_date, a.due_time, a.voice_note, a.location, a.when) == (
+        12, "event", "Meet Jason", "2026-10-21", "12:00", True, "Cafe Nord", "2026-10-20 11:00")  # Berlin
+    assert (b.kind, b.time_unclear, b.voice_note, b.owner) == ("task", True, False, None)
+    assert view.parse_action_items_result("[]") == []
+    # junk rows and fields degrade instead of failing
+    odd = view.parse_action_items_result(json.dumps(
+        [{"id": "x"}, "nope", {"id": 5, "kind": "party", "due_date": "soon", "due_time": "9"}]))
+    assert [(i.id, i.kind, i.due_date, i.due_time) for i in odd] == [(5, "task", None, None)]
+
+
+def test_parse_action_items_text_fallback_new_shape():
+    # odysseus-sound >= 0.2 text lines: kind word, time in the due part, [time unclear]
+    a, b, c = view.parse_action_items_result(
+        '- #12 [open] event: Meet Jason (owner Me) due 2026-10-21 12:00 (Wednesday at 12 pm) '
+        '— from "Jason meeting" (voice note) 2026-10-20 09:00 http://h:8000/view/n1?sig=a#t=4\n'
+        '- #13 [open] Send Alice the budget due 2026-10-22 09:00 (at 9) [time unclear] — from '
+        '"Q4 budget" 2026-10-19 15:00 http://h:8000/view/c1?sig=b#t=40\n'
+        '- #14 [open] reminder: Call Mom due today at 5 — from "Errands" (voice note) '
+        '2026-10-20 08:00 http://h:8000/view/n2?sig=c#t=1')
+    assert (a.kind, a.text, a.owner, a.due_date, a.due_time, a.voice_note) == (
+        "event", "Meet Jason", "Me", "2026-10-21", "12:00", True)
+    assert (b.kind, b.text, b.due_time, b.time_unclear, b.voice_note) == (
+        "task", "Send Alice the budget", "09:00", True, False)
+    assert (c.kind, c.due, c.due_date) == ("reminder", "today at 5", None)
+
+
+def test_merge_filed_state():
+    import json
+
+    items = view.parse_action_items_result(json.dumps(ITEMS_JSON))
+    view.merge_filed(items, {12: {"kind": "event", "target": "calendar", "ref": "uid-1",
+                                  "at": "2026-10-20T09:06:00+00:00"},
+                             "13": {"target": "todo", "ref": "note-9", "undone": True}})
+    assert items[0].filed == {"target": "calendar", "ref": "uid-1", "open_url": "/#event-uid-1"}
+    assert items[1].filed is None  # undone: shown as not filed
+    view.merge_filed(items, {"13": {"kind": "task", "target": "todo", "ref": "note-9"}})
+    assert items[1].filed["open_url"] == "/#open=notes&note=note-9"
+    assert items[0].filed is None
+    assert view.open_url("calendar", "bad uid<x>") is None
+
+
+def test_check_move():
+    assert view.check_move("event", "2026-10-21", "12:00") == ("event", "2026-10-21", "12:00")
+    assert view.check_move("task", "", None) == ("task", None, None)
+    assert view.check_move("task", "none", "none") == ("task", "none", "none")
+    for bad in [("meeting", None, None), ("task", "2026-02-30", None), ("task", "21.10.", None),
+                ("task", None, "25:00"), ("task", None, "9:00")]:
+        with pytest.raises(ValueError):
+            view.check_move(*bad)
+
+
+@pytest.fixture
+def filing(client, monkeypatch):
+    """Fake src/module_action_items.py page helpers (the real ones file into Odysseus)."""
+    import json
+
+    from src import module_action_items as mai
+
+    client.manager.items_json = json.dumps(ITEMS_JSON)
+    state = {12: {"kind": "event", "target": "calendar", "ref": "uid-1", "at": "x"}}
+    calls = []
+
+    async def file_item(owner, item, call, *, target=None):
+        calls.append(("file", owner, item["id"], target))
+        state[item["id"]] = {"kind": item["kind"], "target": target, "ref": "note-7", "at": "y"}
+        return {"target": target, "ref": "note-7", "open_url": "/#open=notes&note=note-7"}
+
+    async def unfile_item(owner, item_id, call):
+        calls.append(("undo", owner, item_id))
+        state[item_id]["undone"] = True
+        await call("update_action_item", {"item_id": item_id, "status": "dismissed"})
+        return {"ok": True}
+
+    async def move_item(owner, item_id, call, *, kind, due_date=None, due_time=None):
+        calls.append(("move", owner, item_id, kind, due_date, due_time))
+        if item_id == 99:
+            raise LookupError("No action item #99.")
+        if item_id == 98:
+            raise RuntimeError("calendar store is down")
+        state[item_id] = {"kind": kind, "target": "todo" if kind != "event" else "calendar",
+                          "ref": "note-8", "at": "z"}
+        return {"target": state[item_id]["target"], "ref": "note-8", "open_url": None}
+
+    def filed_state(owner):
+        calls.append(("state", owner))
+        return dict(state)
+
+    for name, fn in [("file_item", file_item), ("unfile_item", unfile_item),
+                     ("move_item", move_item), ("filed_state", filed_state)]:
+        monkeypatch.setattr(mai, name, fn, raising=False)
+    client.filing_calls = calls
+    return client
+
+
+def test_action_items_route_merges_filed_state(filing):
+    items = filing.get("/api/modules/sound/action-items").json()["action_items"]
+    assert [(i["id"], i["kind"], i["voice_note"]) for i in items] == [
+        (12, "event", True), (13, "task", False)]
+    assert items[0]["filed"] == {"target": "calendar", "ref": "uid-1",
+                                 "open_url": "/#event-uid-1"}
+    assert items[1]["filed"] is None
+
+
+def test_action_items_route_without_filing_helpers(client, monkeypatch):
+    from src import module_action_items as mai
+
+    monkeypatch.delattr(mai, "filed_state", raising=False)
+    items = client.get("/api/modules/sound/action-items").json()["action_items"]
+    assert [i["filed"] for i in items] == [None, None]  # text fallback, nothing filed
+    assert client.post("/api/modules/sound/action-items/13/undo").status_code == 503
+
+
+def test_file_suggestion_route(filing):
+    r = filing.post("/api/modules/sound/action-items/13/file", json={"target": "todo"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] and body["filed"]["ref"] == "note-7"
+    assert body["item"]["id"] == 13 and body["item"]["filed"]["target"] == "todo"
+    assert ("file", "", 13, "todo") in filing.filing_calls
+    # filed already, unknown, bad target, bad id
+    assert filing.post("/api/modules/sound/action-items/12/file",
+                       json={"target": "calendar"}).status_code == 409
+    assert filing.post("/api/modules/sound/action-items/77/file",
+                       json={"target": "calendar"}).status_code == 404
+    assert filing.post("/api/modules/sound/action-items/13/file",
+                       json={"target": "inbox"}).status_code == 422
+    assert filing.post("/api/modules/sound/action-items/0/file",
+                       json={"target": "todo"}).status_code == 400
+
+
+def test_move_route(filing):
+    r = filing.post("/api/modules/sound/action-items/12/move",
+                    json={"kind": "task", "due_date": "2026-10-22", "due_time": "08:30"})
+    assert r.status_code == 200
+    assert r.json()["item"]["filed"]["open_url"] == "/#open=notes&note=note-8"
+    assert filing.filing_calls[-2] == ("move", "", 12, "task", "2026-10-22", "08:30")
+    n = len(filing.filing_calls)
+    for body in [{"kind": "meeting"}, {"kind": "task", "due_date": "2026-13-01"},
+                 {"kind": "task", "due_time": "7pm"}]:
+        assert filing.post("/api/modules/sound/action-items/12/move", json=body).status_code == 400
+    assert filing.post("/api/modules/sound/action-items/12/move",
+                       json={"kind": "task", "due_date": "x" * 11}).status_code == 422
+    assert len(filing.filing_calls) == n  # nothing reached the helpers
+    assert filing.post("/api/modules/sound/action-items/99/move",
+                       json={"kind": "event"}).status_code == 404
+    r = filing.post("/api/modules/sound/action-items/98/move", json={"kind": "event"})
+    assert r.status_code == 502 and "calendar store" not in r.text
+
+
+def test_undo_route(filing):
+    r = filing.post("/api/modules/sound/action-items/12/undo")
+    assert r.status_code == 200 and r.json()["ok"]
+    assert ("undo", "", 12) in filing.filing_calls
+    assert filing.manager.calls[-2] == ("mcp__srv1__update_action_item",
+                                        {"item_id": 12, "status": "dismissed"})
+    assert r.json()["item"]["filed"] is None
+
+
+def test_filing_routes_need_the_module(filing):
+    filing.manager._connections = {}
+    assert filing.post("/api/modules/sound/action-items/13/file",
+                       json={"target": "todo"}).status_code == 503
+
+
+def test_filing_routes_are_admin_only(monkeypatch):
+    from routes.sound_module_routes import setup_sound_module_routes
+
+    app = FastAPI()
+    app.include_router(setup_sound_module_routes())
+    monkeypatch.setattr("core.middleware.auth_disabled", lambda: False)
+    with TestClient(app) as c:
+        for path, body in [("13/file", {"target": "todo"}), ("13/move", {"kind": "task"}),
+                           ("13/undo", None)]:
+            assert c.post(f"/api/modules/sound/action-items/{path}", json=body).status_code == 403

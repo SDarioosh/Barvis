@@ -6,12 +6,16 @@ Everything comes from the module's MCP tools (``search_conversations``,
 opens the module's database. The tools return compact text for models, so this file
 parses their documented line shapes (see docs/fork/modules/odysseus-sound.md). Lines
 that don't match are skipped, so a wording change degrades to fewer rows, not an error.
+Action items are read as JSON (``list_action_items format="json"``); the text lines are
+the fallback for a module that predates it.
 """
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import asdict, dataclass, field
+from datetime import date, datetime
 from typing import Any, Awaitable, Callable
 
 CallTool = Callable[[str, dict], Awaitable[str]]
@@ -25,7 +29,15 @@ _UNNAMED = re.compile(
     r"(?:; sounds like (?P<guess>.+) \((?P<score>[0-9.]+)\))?$")
 _ITEM = re.compile(
     r"^- #(?P<id>\d+) \[(?P<status>open|done|dismissed)\] (?P<rest>.*) — from "
-    r"\"(?P<title>.*)\"(?: \(voice note\))? (?P<when>\d{4}-\d{2}-\d{2} \d{2}:\d{2}) (?P<link>\S+)$")
+    r"\"(?P<title>.*)\"(?P<note> \(voice note\))? (?P<when>\d{4}-\d{2}-\d{2} \d{2}:\d{2}) (?P<link>\S+)$")
+_KIND_WORD = re.compile(r"^(?P<kind>event|reminder): ")
+_UNCLEAR = " [time unclear]"
+# "2026-10-21 12:00 (Wednesday at 12 pm)", "2026-10-23 (Friday)", "2026-10-23"
+_DUE_PARTS = re.compile(
+    r"^(?P<date>\d{4}-\d{2}-\d{2})(?: (?P<time>\d{2}:\d{2}))?(?: \((?P<said>.*)\))?$")
+KINDS = ("task", "event", "reminder")
+_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_TIME = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 # the last " due ": the item text itself may say "due" ("Confirm the due date")
 _DUE = re.compile(r" due (?P<due>(?:(?! due ).)+)$")
 _OWNER = re.compile(r" \(owner (?P<owner>[^)]*)\)$")
@@ -82,10 +94,21 @@ class ActionItem:
     status: str
     text: str
     owner: str | None
-    due: str | None  # "2026-10-23 (Friday)" or as said
+    due: str | None  # "2026-10-23 (Friday)" or as said (text); as said (JSON)
     conversation_title: str
-    when: str
+    when: str  # "YYYY-MM-DD HH:MM" of the conversation
     link: str
+    kind: str = "task"  # task | event | reminder
+    due_date: str | None = None  # YYYY-MM-DD, local to ``timezone``
+    due_time: str | None = None  # HH:MM 24 h
+    time_unclear: bool = False
+    voice_note: bool = False
+    conversation_id: str | None = None
+    duration_minutes: int | None = None
+    location: str | None = None
+    timezone: str | None = None
+    created_at: str | None = None
+    filed: dict | None = None  # {"target", "ref", "open_url"}; see merge_filed
 
 
 @dataclass
@@ -154,15 +177,117 @@ def _split_item(rest: str) -> tuple[str, str | None, str | None]:
 
 
 def parse_action_items(text: str) -> list[ActionItem]:
+    """``list_action_items`` text lines (the fallback for modules without JSON)."""
     out = []
     for raw in (text or "").splitlines():
         m = _ITEM.match(raw.strip())
         if not m:
             continue
-        rest, owner, due = _split_item(m["rest"])
-        out.append(ActionItem(int(m["id"]), m["status"], rest, owner, due,
-                              m["title"], m["when"], m["link"]))
+        rest, kind = m["rest"], "task"
+        if k := _KIND_WORD.match(rest):
+            kind, rest = k["kind"], rest[k.end():]
+        unclear = rest.endswith(_UNCLEAR)
+        if unclear:
+            rest = rest[:-len(_UNCLEAR)]
+        rest, owner, due = _split_item(rest)
+        item = ActionItem(int(m["id"]), m["status"], rest, owner, due, m["title"], m["when"],
+                          m["link"], kind=kind, time_unclear=unclear,
+                          voice_note=bool(m["note"]))
+        if due and (d := _DUE_PARTS.match(due)):
+            item.due_date, item.due_time = d["date"], d["time"]
+        out.append(item)
     return out
+
+
+def _text(value: Any) -> str | None:
+    return None if value is None or value == "" else str(value)
+
+
+def _when(iso: Any, zone: Any = None) -> str:
+    """ISO-8601 -> "YYYY-MM-DD HH:MM" in the module's timezone ``zone`` (as the text
+    lines show it); "" when unparsable."""
+    try:
+        when = datetime.fromisoformat(str(iso))
+    except (TypeError, ValueError):
+        return ""
+    if when.tzinfo is not None and zone:
+        try:
+            from zoneinfo import ZoneInfo
+
+            when = when.astimezone(ZoneInfo(str(zone)))
+        except (KeyError, ValueError):
+            pass
+    return when.strftime("%Y-%m-%d %H:%M")
+
+
+def item_from_json(row: dict) -> ActionItem | None:
+    """One ``list_action_items format="json"`` row; None when it has no usable id."""
+    try:
+        item_id = int(row["id"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    kind = row.get("kind") if row.get("kind") in KINDS else "task"
+    status = row.get("status") if row.get("status") in {"open", "done", "dismissed"} else "open"
+    due_date = _text(row.get("due_date"))
+    due_time = _text(row.get("due_time"))
+    try:
+        duration = int(row["duration_minutes"]) if row.get("duration_minutes") else None
+    except (TypeError, ValueError):
+        duration = None
+    return ActionItem(
+        item_id, status, str(row.get("text") or ""), _text(row.get("owner")),
+        _text(row.get("due")), str(row.get("conversation_title") or ""),
+        _when(row.get("conversation_at"), row.get("timezone")), str(row.get("link") or ""), kind=kind,
+        due_date=due_date if due_date and _DATE.match(due_date) else None,
+        due_time=due_time if due_time and _TIME.match(due_time) else None,
+        time_unclear=bool(row.get("time_unclear")),
+        voice_note=row.get("conversation_kind") == "note",
+        conversation_id=_text(row.get("conversation_id")), duration_minutes=duration,
+        location=_text(row.get("location")), timezone=_text(row.get("timezone")),
+        created_at=_text(row.get("created_at")))
+
+
+def parse_action_items_result(text: str) -> list[ActionItem]:
+    """JSON array from a current module, else the text lines of an older one."""
+    try:
+        rows = json.loads(text or "")
+    except ValueError:
+        return parse_action_items(text)
+    if not isinstance(rows, list):
+        return parse_action_items(text)
+    return [i for r in rows if isinstance(r, dict) and (i := item_from_json(r))]
+
+
+def open_url(target: str, ref: Any) -> str | None:
+    """Where Odysseus shows a filed item, in its own chat-link conventions."""
+    ref = str(ref or "")
+    if not ref or not re.match(r"^[A-Za-z0-9_.:@-]{1,200}$", ref):
+        return None
+    if target == "calendar":
+        return f"/#event-{ref}"
+    if target == "todo":
+        return f"/#open=notes&note={ref}"
+    return None
+
+
+def filed_for(filed: dict | None, item_id: int) -> dict | None:
+    """``{"target", "ref", "open_url"}`` from module_action_items.filed_state, or None.
+
+    Keys may be int or str (JSON state); an entry marked undone/removed isn't "filed"."""
+    filed = filed or {}
+    entry = filed.get(item_id, filed.get(str(item_id)))
+    if (not isinstance(entry, dict) or entry.get("target") not in {"calendar", "todo"}
+            or entry.get("undone") or entry.get("removed")):
+        return None
+    target = entry["target"]
+    return {"target": target, "ref": entry.get("ref"),
+            "open_url": entry.get("open_url") or open_url(target, entry.get("ref"))}
+
+
+def merge_filed(items: list[ActionItem], filed: dict | None) -> list[ActionItem]:
+    for item in items:
+        item.filed = filed_for(filed, item.id)
+    return items
 
 
 def parse_conversations(text: str) -> list[Conversation]:
@@ -346,10 +471,62 @@ async def name_speaker(call: CallTool, conversation_id: str, speaker_label: str,
                                        "remember_voice": True})
 
 
-async def action_items(call: CallTool, status: str = "open") -> list[dict]:
+async def action_items(call: CallTool, status: str = "open",
+                       filed: dict | None = None) -> list[dict]:
+    """The module's items (JSON, or text from an older module) with where each was filed."""
     if status not in {"open", "done", "dismissed", "all"}:
         raise ValueError("status must be open, done, dismissed or all")
-    return as_dicts(parse_action_items(await call("list_action_items", {"status": status})))
+    text = await call("list_action_items", {"status": status, "format": "json"})
+    return as_dicts(merge_filed(parse_action_items_result(text), filed))
+
+
+async def find_item(call: CallTool, item_id: int, status: str = "all") -> dict:
+    """One item as the module lists it (raw JSON row when available); LookupError if none."""
+    text = await call("list_action_items", {"status": status, "format": "json"})
+    try:
+        rows = json.loads(text or "")
+    except ValueError:
+        rows = None
+    if isinstance(rows, list):
+        for row in rows:
+            if isinstance(row, dict) and str(row.get("id")) == str(item_id):
+                return row
+    else:
+        for item in parse_action_items(text):
+            if item.id == item_id:
+                return asdict(item)
+    raise LookupError(f"No action item #{item_id}.")
+
+
+def check_item_id(item_id: int) -> int:
+    if int(item_id) < 1:
+        raise ValueError("item id must be positive")
+    return int(item_id)
+
+
+def check_target(target: str) -> str:
+    if target not in {"calendar", "todo"}:
+        raise ValueError("target must be calendar or todo")
+    return target
+
+
+def check_move(kind: str, due_date: str | None, due_time: str | None
+               ) -> tuple[str, str | None, str | None]:
+    """kind task/event/reminder; date YYYY-MM-DD, time HH:MM; "" = unchanged, "none" = clear."""
+    if kind not in KINDS:
+        raise ValueError("kind must be task, event or reminder")
+    due_date = (due_date or "").strip() or None
+    due_time = (due_time or "").strip() or None
+    if due_date and due_date != "none":
+        try:
+            if not _DATE.match(due_date):
+                raise ValueError
+            date.fromisoformat(due_date)
+        except ValueError:
+            raise ValueError("due_date must be YYYY-MM-DD") from None
+    if due_time and due_time != "none" and not _TIME.match(due_time):
+        raise ValueError("due_time must be HH:MM (24 h)")
+    return kind, due_date, due_time
 
 
 async def set_action_item(call: CallTool, item_id: int, status: str) -> str:

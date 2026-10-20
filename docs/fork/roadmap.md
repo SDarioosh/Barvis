@@ -22,6 +22,7 @@ _Last updated: 2026-10-20_
 | 11 | Stdio MCP servers added over the API keep working after that request (sandbox finding 2): each stdio connection has its own owner task | PR SDarioosh/Barvis#20 | [../../FORK.md](../../FORK.md), `src/mcp_stdio_owner.py` |
 | 12 | One-command deploy: `fork_deploy.sh deploy` runs each module's deploy command first (odysseus-sound: update, install, background services that survive reboot), works from any directory | PR SDarioosh/Barvis#21; odysseus-sound side SDarioosh/barvis-sound#30 | [deploy.md](deploy.md#update-production), [modules.md](modules.md#deploying-a-module) |
 | 13 | Conversations page v2: transcript reader, click-to-fix speakers (`reassign_line`, `name_speaker`, `rename_speaker_everywhere`), Ask in chat (`/?ask=` prefills a new chat with `/sound …`) | PR (this branch) | [../../FORK.md](../../FORK.md) |
+| 14 | Voice notes into calendar and to-dos: module items get a kind (event / task / reminder) and a time; voice-note items are filed automatically into the Odysseus calendar and to-dos (one push, undo/move on `/modules/sound`), conversation items are suggestions; status syncs both ways (owner's decision 2026-10-20, replaces "no copies") | PR (this branch); module side PR in SDarioosh/barvis-sound | [modules/odysseus-sound.md](modules/odysseus-sound.md#action-items-in-odysseus) |
 
 ## Next
 
@@ -40,9 +41,11 @@ _Last updated: 2026-10-20_
    before saying I don't know" in `INSTRUCTIONS`, SDarioosh/barvis-sound#40). A fork-side
    "Sources:" footer was tried and dropped (it failed a "nothing found" answer). Next:
    the owner's full 20-question run on the server.
-3. **Action items, live** (status item 9). Decided 2026-10-19: no copies in Odysseus
-   to-dos or calendar; Odysseus shows the module's items live (on the odysseus-sound page,
-   with done/dismiss through `update_action_item`) and pushes reminders.
+3. **Action items, filed** (status items 9, 14). Decided 2026-10-19: no copies, a live
+   view only. Changed 2026-10-20: voice-note events and to-dos are filed into the
+   Odysseus calendar and to-dos (the module stays the source of truth, status syncs both
+   ways); conversation items are suggestions on the odysseus-sound page. Next: repeating
+   events, merging with the same event from an email.
 4. **ntfy notifications** (status item 9). New action items and yesterday's digest go
    to the phone through the ntfy reminder channel.
 5. **Conversations view** (status item 10). `/modules/sound` lists conversations, live
