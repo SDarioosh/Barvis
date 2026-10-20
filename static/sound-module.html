@@ -46,11 +46,15 @@
     /* Fork: odysseus-sound page. Colors, font and spacing come from the Odysseus
        tokens in 00-tokens.css plus the saved theme applied above; nothing here
        introduces new color values. */
-    /* 00-tokens.css gives body the app's fixed, non-scrolling layout; this page scrolls. */
+    /* 00-tokens.css gives html and body the app's fixed, non-scrolling layout
+       (height 100%, overflow hidden, overscroll-behavior none). This page scrolls the
+       window instead: html and body grow with the content and are not scroll boxes,
+       so no element with overscroll-behavior: none can swallow a scroll (it did on
+       a Mac trackpad in Chromium browsers). */
+    html, body { height: auto; overflow: visible; overscroll-behavior: auto; }
     body { background: var(--bg); color: var(--fg); margin: 0; display: block;
-           height: auto; min-height: 100vh; overflow: auto;
+           min-height: 100vh;
            font-family: var(--font-family, 'Fira Code', monospace); }
-    html { height: auto; overflow-y: auto; }
     .bs-wrap { max-width: 860px; margin: 0 auto; padding: 16px; }
     .bs-top { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
     .bs-top h1 { font-size: 1.1rem; font-weight: 600; margin: 0; flex: 1; }
