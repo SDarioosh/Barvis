@@ -55,14 +55,16 @@ Odysseus is large (~478k lines of Python) and fast-moving. Start from these file
 
 Fork code so far: `src/mcp_trust.py`, `src/mcp_stdio_owner.py`, `src/skill_mcp_toolsets.py`,
 `src/skill_invocation.py`, `src/offered_reads.py`, `src/module_action_items.py`,
-`src/sound_module_view.py`, `src/web_turn_scope.py`, `routes/sound_module_routes.py`, `static/sound-module.html`,
+`src/sound_module_view.py`, `src/web_turn_scope.py`, `src/module_turn_scope.py`,
+`routes/sound_module_routes.py`, `static/sound-module.html`,
 `static/js/soundModule.js`, `static/js/forkChatAsk.js`,
 `scripts/modules_setup.py`,
 `scripts/module_slash_eval.py`, `scripts/fork_deploy.sh`, `docker/fork.override.yml`,
 their tests (`tests/test_mcp_trust.py`,
 `tests/test_mcp_http_annotations.py`, `tests/test_mcp_stdio_owner.py`, `tests/test_modules_setup.py`,
 `tests/test_skill_mcp_toolsets.py`, `tests/test_offered_reads.py`,
-`tests/test_module_action_items.py`, `tests/test_sound_module_view.py`, `tests/test_web_turn_scope.py`), and the hooks listed in [FORK.md](FORK.md).
+`tests/test_module_action_items.py`, `tests/test_sound_module_view.py`, `tests/test_web_turn_scope.py`,
+`tests/test_module_turn_scope.py`), and the hooks listed in [FORK.md](FORK.md).
 
 ## Fork rules (merge-friendly)
 
