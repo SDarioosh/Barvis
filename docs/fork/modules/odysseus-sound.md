@@ -177,6 +177,12 @@ Audio isn't kept after transcription, so cards quote lines instead of playing th
   rerun `seed_demo.py` on an older demo store (it adds only what is missing). Scores
   below are out of 20 (questions 1–20, unchanged); compare new runs on `--only 1 … 20`
   plus 21 separately.
+- Voice notes, sandbox 2026-10-20 (Qwen3-4B, `--trim`), question 21: before the `kind`
+  filter 0/1 plain and 0/1 `/sound` (the model said it has no access to voice notes);
+  after it `/sound` 1/1 (answered with the latest note, not the newer conversation) and
+  plain 0/1 (the model wrote `search_conversations {"kind": "note"}` as text instead of
+  a tool call). `/sound` on 1, 4, 16 with it: 2/3; 16 also fails with the old
+  instructions (2/2), so it is model noise, not this change.
 - Results: `server/eval/results/odysseus.jsonl` (gitignored).
 - Sandbox (Qwen3-4B on CPU, questions 1, 4, 16; not comparable with the table below):
   raw 1/3, Odysseus over HTTP 1/3. With every Odysseus tool on and "Auto" (questions 1,
