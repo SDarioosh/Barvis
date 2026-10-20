@@ -113,7 +113,8 @@ def invoked_skill_needs_tools(message, owner) -> bool:
     """True when ``message`` slash-invokes one of ``owner``'s skills that declares tools.
 
     Without a slash command it answers whether the message is a plain question
-    about a trusted module (``src/module_turn_scope.py``).
+    about a trusted module (``src/module_turn_scope.py``) or a lookup in one of
+    the owner's personal stores (``src/personal_store_escalation.py``).
 
     The chat route uses this to run such a turn in agent mode: in chat mode the turn
     contract (and so :func:`pin_skill_contract`) never runs, and the lexical tool-intent
@@ -123,7 +124,8 @@ def invoked_skill_needs_tools(message, owner) -> bool:
     invoked = parse_invoke_message(message)
     if invoked is None:
         from src.module_turn_scope import module_turn_requested
-        return module_turn_requested(message)
+        from src.personal_store_escalation import personal_store_turn
+        return module_turn_requested(message) or personal_store_turn(message)
     try:
         skill = _invokable_skill(invoked.name, owner)
     except Exception:
