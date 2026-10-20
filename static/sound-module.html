@@ -113,7 +113,30 @@
     .bs-edit .bs-input { flex: 1 1 160px; min-height: 36px; }
     .bs-notice { background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--red);
                  border-radius: 6px; padding: 8px 10px; margin: 8px 0; font-size: 0.86rem; }
+    /* action items: kind icon, when, where it was filed, actions */
+    .bs-item-title { display: flex; gap: 8px; align-items: baseline; overflow-wrap: anywhere; }
+    .bs-kind { flex: none; }
+    .bs-facts { margin-top: 2px; font-size: 0.85rem; }
+    .bs-due { font-variant-numeric: tabular-nums; }
+    .bs-chip { display: inline-flex; align-items: center; border: 1px solid var(--border);
+               border-radius: 999px; padding: 1px 8px; font-size: 0.76rem; color: var(--fg);
+               text-decoration: none; white-space: nowrap; }
+    a.bs-chip:hover { border-color: var(--fg); }
+    .bs-chip.warn { border-color: var(--red); color: var(--red); }
+    .bs-item .bs-meta { overflow-wrap: anywhere; margin-top: 4px; }
+    .bs-msg:empty { display: none; }
+    .bs-msg.error { color: var(--red); opacity: 1; }
+    .bs-field { display: inline-flex; flex-direction: column; gap: 2px; }
+    .bs-time-edit { margin-top: 8px; align-items: flex-end; }
+    .bs-time-edit .bs-input { flex: none; min-height: 36px; }
+    .bs-wide { flex-basis: 100%; }
+    .bs-gone { opacity: 0.75; }
+    .bs-item-group + .bs-item-group { margin-top: 6px; }
     @media (max-width: 640px) {
+      .bs-actions .bs-btn { flex: 1 1 calc(50% - 8px); }
+      .bs-time-edit .bs-field { flex: 1 1 calc(50% - 8px); }
+      .bs-time-edit .bs-input { width: 100%; }
+      .bs-time-edit .bs-btn { flex: 1 1 calc(50% - 8px); }
       .bs-filters { grid-template-columns: 1fr 1fr; }
       .bs-line { grid-template-columns: auto 1fr; gap: 2px 10px; padding: 8px 12px; }
       .bs-line .bs-text { grid-column: 1 / -1; }

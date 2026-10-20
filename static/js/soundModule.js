@@ -115,42 +115,208 @@ async function loadWho() {
 }
 
 // ----------------------------------------------------------------- action items
-// Live from odysseus-sound (no copies in Odysseus): Done / Dismiss call its
-// update_action_item and the list is read again.
-function itemCard(it) {
-  const msg = el('span', { className: 'bs-meta' });
-  const set = async (status) => {
-    buttons.forEach((b) => { b.disabled = true; });
-    try {
-      const r = await api(`/api/modules/sound/action-items/${it.id}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status }),
-      });
-      if (r.ok) {
-        card.remove();
-        return;
-      }
-      msg.textContent = r.message;
-    } catch (e) {
-      msg.textContent = `Could not save: ${e.message}`;
-    }
-    buttons.forEach((b) => { b.disabled = false; });
+// Live from odysseus-sound, the source of truth. Voice-note items are filed into the
+// Odysseus calendar / to-dos by src/module_action_items.py; conversation items are
+// suggestions until the owner taps Add. Every change answers with the item as it is
+// now, and the card is drawn again from that answer.
+const KIND_ICON = { event: '📅', task: '☑️', reminder: '⏰' };
+const KIND_NAME = { event: 'Event', task: 'To-do', reminder: 'Reminder' };
+const WHERE = { calendar: 'In calendar', todo: 'In to-dos' };
+
+function hubLink(url) {
+  // filed entries open in Odysseus itself: only same-origin paths
+  return /^\/(?!\/)/.test(url || '') ? url : null;
+}
+
+function dueLabel(it) {
+  if (it.due_date) {
+    const [y, m, d] = it.due_date.split('-').map(Number);
+    const day = new Date(y, m - 1, d);
+    const text = isNaN(day.getTime()) ? it.due_date
+      : day.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+    return it.due_time ? `${text} · ${it.due_time}` : text;
+  }
+  return it.due ? `due ${it.due}` : null;
+}
+
+function postJSON(path, body) {
+  return api(path, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  });
+}
+
+// Inline date + time editor for "Change time"; resolves the move body or null on cancel.
+function timeEditor(it, onSave, onCancel) {
+  const date = el('input', { className: 'bs-input', type: 'date', 'aria-label': 'Date',
+                             value: it.due_date || '' });
+  const time = el('input', { className: 'bs-input', type: 'time', 'aria-label': 'Time',
+                             value: it.due_time || '' });
+  const save = el('button', { type: 'button', className: 'bs-btn primary', onclick: () => {
+    const body = { kind: it.kind || 'task' };
+    if (date.value) body.due_date = date.value;
+    else if (it.due_date) body.due_date = 'none';
+    if (time.value) body.due_time = time.value.slice(0, 5);
+    else if (it.due_time) body.due_time = 'none';
+    onSave(body);
+  } }, 'Save');
+  const cancel = el('button', { type: 'button', className: 'bs-btn', onclick: onCancel }, 'Cancel');
+  return el('div', { className: 'bs-edit bs-row bs-time-edit' },
+    el('label', { className: 'bs-field' }, el('span', { className: 'bs-meta' }, 'Date'), date),
+    el('label', { className: 'bs-field' }, el('span', { className: 'bs-meta' }, 'Time'), time),
+    save, cancel,
+    it.time_unclear ? el('div', { className: 'bs-meta bs-wide' },
+      'The time was unclear in the recording; saving a time clears the warning.') : null);
+}
+
+function itemCard(it, note = '') {
+  const msg = el('div', { className: 'bs-meta bs-msg', role: 'status' }, note);
+  const buttons = [];
+  let busy = false;
+  const setBusy = (on) => {
+    busy = on;
+    card.querySelectorAll('button, input').forEach((b) => { b.disabled = on; });
+    card.setAttribute('aria-busy', on ? 'true' : 'false');
   };
-  const buttons = [
-    el('button', { type: 'button', className: 'bs-btn primary', onclick: () => set('done') }, 'Done'),
-    el('button', { type: 'button', className: 'bs-btn', onclick: () => set('dismissed') }, 'Dismiss'),
-  ];
+  // One request at a time per card; the server's answer redraws it.
+  const run = async (label, request) => {
+    if (busy) return;
+    setBusy(true);
+    msg.classList.remove('error');
+    msg.textContent = `${label}…`;
+    try {
+      const r = await request();
+      if (r.ok === false) throw new Error(r.message || 'not saved');
+      if (r.item && r.item.status === 'open') {
+        const next = itemCard(r.item, r.message || '');
+        if (!!r.item.filed === !!it.filed) card.replaceWith(next);
+        else {
+          card.remove();
+          placeCard(next, r.item);
+        }
+      } else if (r.item === undefined && r.ok) {
+        card.remove(); // Done / Dismiss
+      } else {
+        card.replaceWith(el('div', { className: 'bs-card bs-gone' },
+          el('div', { className: 'bs-meta' }, `${it.text} — ${r.message || 'saved'}`)));
+      }
+      refreshItemGroups();
+    } catch (e) {
+      msg.classList.add('error');
+      msg.textContent = `Could not save: ${e.message}`;
+      setBusy(false);
+    }
+  };
+  const base = `/api/modules/sound/action-items/${encodeURIComponent(it.id)}`;
+  const setStatus = (statusName) => run('Saving', async () => {
+    const r = await postJSON(base, { status: statusName });
+    return r.ok ? { ok: true } : r;
+  });
+  const btn = (label, onclick, primary = false) => {
+    const b = el('button', { type: 'button', className: primary ? 'bs-btn primary' : 'bs-btn',
+                             onclick }, label);
+    buttons.push(b);
+    return b;
+  };
+  const filed = it.filed;
+  const kind = it.kind || 'task';
+  if (filed) {
+    if (filed.target === 'calendar') {
+      btn('Move to to-dos', () => run('Moving', () => postJSON(`${base}/move`, { kind: 'task' })));
+    } else {
+      btn('Move to calendar', () => run('Moving', () => postJSON(`${base}/move`, { kind: 'event' })));
+    }
+    btn('Change time', () => {
+      if (busy || card.querySelector('.bs-time-edit')) return;
+      const editor = timeEditor(it,
+        (body) => run('Saving', () => postJSON(`${base}/move`, body)),
+        () => editor.remove());
+      actions.after(editor);
+      editor.querySelector('input').focus();
+    });
+    btn('Undo', () => run('Undoing', () => postJSON(`${base}/undo`)));
+  } else {
+    btn('Add to calendar', () => run('Adding', () => postJSON(`${base}/file`, { target: 'calendar' })),
+      kind === 'event');
+    btn('Add to to-dos', () => run('Adding', () => postJSON(`${base}/file`, { target: 'todo' })),
+      kind !== 'event');
+  }
+  btn('Done', () => setStatus('done'));
+  btn('Dismiss', () => setStatus('dismissed'));
+
   const link = safeLink(it.link);
-  const card = el('div', { className: 'bs-card' },
-    el('h2', {}, it.text),
+  const where = filed ? (hubLink(filed.open_url)
+    ? el('a', { className: 'bs-chip bs-where', href: hubLink(filed.open_url),
+                title: filed.target === 'calendar' ? 'Open the Odysseus calendar' : 'Open the to-do' },
+      WHERE[filed.target] || 'Filed')
+    : el('span', { className: 'bs-chip bs-where' }, WHERE[filed.target] || 'Filed')) : null;
+  const due = dueLabel(it);
+  const source = it.voice_note ? 'voice note' : 'conversation';
+  const actions = el('div', { className: 'bs-row bs-actions' }, ...buttons);
+  const card = el('div', { className: 'bs-card bs-item', 'data-item': String(it.id),
+                           'data-voice-note': it.voice_note ? '1' : '0' },
+    el('h2', { className: 'bs-item-title' },
+      el('span', { className: 'bs-kind', title: KIND_NAME[kind] || 'To-do',
+                   'aria-label': KIND_NAME[kind] || 'To-do' }, KIND_ICON[kind] || KIND_ICON.task),
+      el('span', {}, it.text)),
+    el('div', { className: 'bs-row bs-facts' },
+      due ? el('span', { className: 'bs-due' }, due) : null,
+      it.time_unclear ? el('span', { className: 'bs-chip warn', title: 'Check the time' },
+        'time unclear') : null,
+      where),
     el('div', { className: 'bs-meta' },
-      [it.due ? `due ${it.due}` : null, it.owner ? `owner ${it.owner}` : null,
-       `from “${it.conversation_title}”, ${it.when}`].filter(Boolean).join(' · ')),
-    el('div', { className: 'bs-row' }, ...buttons,
-      link ? el('a', { className: 'bs-link', href: link, target: '_blank', rel: 'noopener' },
-        el('span', { html: OPEN_ICON }), 'Where it was said') : null,
-      msg));
+      [`${source} “${it.conversation_title}”${it.when ? `, ${it.when}` : ''}`,
+       it.location ? `at ${it.location}` : null,
+       it.owner ? `owner ${it.owner}` : null].filter(Boolean).join(' · '),
+      link ? el('a', { className: 'bs-small', href: link, target: '_blank', rel: 'noopener',
+                       title: 'Where it was said' }, el('span', { html: OPEN_ICON }), ' where it was said') : null),
+    actions,
+    msg);
   return card;
+}
+
+const ITEM_GROUPS = [
+  { key: 'filed', test: (it) => !!it.filed, title: (items) =>
+    (items.every((i) => i.voice_note) ? 'Filed from voice notes' : 'Filed in Odysseus') },
+  { key: 'suggested', test: (it) => !it.filed, title: (items) =>
+    (items.every((i) => !i.voice_note) ? 'Suggested from conversations' : 'Not filed yet') },
+];
+
+function groupBox(key, items) {
+  const g = ITEM_GROUPS.find((x) => x.key === key);
+  return el('div', { className: 'bs-item-group', 'data-group': key },
+    el('div', { className: 'bs-sub' }, g.title(items)), ...items.map((it) => itemCard(it)));
+}
+
+// A card whose item was just filed (or unfiled) goes to the top of its group.
+function placeCard(card, it) {
+  const box = $('#bs-items');
+  const key = ITEM_GROUPS.find((g) => g.test(it)).key;
+  let group = box.querySelector(`.bs-item-group[data-group="${key}"]`);
+  if (!group) {
+    group = groupBox(key, []);
+    group.firstChild.textContent = ITEM_GROUPS.find((g) => g.key === key).title([it]);
+    if (key === 'filed') box.prepend(group);
+    else box.append(group);
+  }
+  group.firstChild.after(card);
+}
+
+// Keep each group's heading in step after a card changed group or went away.
+function refreshItemGroups() {
+  const box = $('#bs-items');
+  box.querySelectorAll('.bs-item-group').forEach((g) => {
+    const cards = [...g.querySelectorAll('.bs-item')];
+    if (!cards.length && !g.querySelector('.bs-gone')) {
+      g.remove();
+      return;
+    }
+    const spec = ITEM_GROUPS.find((x) => x.key === g.dataset.group);
+    if (spec && cards.length) {
+      g.firstChild.textContent = spec.title(cards.map((c) => ({ voice_note: c.dataset.voiceNote === '1' })));
+    }
+  });
+  if (!box.querySelector('.bs-item-group')) status(box, 'No open action items.');
 }
 
 async function loadItems() {
@@ -161,7 +327,10 @@ async function loadItems() {
       status(box, 'No open action items.');
       return;
     }
-    box.replaceChildren(...items.map(itemCard));
+    const groups = ITEM_GROUPS.map((g) => ({ key: g.key, list: items.filter(g.test) }))
+      .filter(({ list }) => list.length)
+      .map(({ key, list }) => groupBox(key, list));
+    box.replaceChildren(...groups);
   } catch (e) {
     status(box, e.message, true);
   }

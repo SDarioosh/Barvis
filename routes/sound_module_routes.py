@@ -11,11 +11,18 @@ redirects there); its script calls:
   ``rename_speaker_everywhere`` (a merge when new_name exists; the page confirms first)
 * ``GET  /api/modules/sound/unnamed``        (limit)
 * ``POST /api/modules/sound/name-speaker``   {conversation_id, speaker_label, name}
-* ``GET  /api/modules/sound/action-items``   (status)
+* ``GET  /api/modules/sound/action-items``   (status), with where each item was filed
 * ``POST /api/modules/sound/action-items/{id}`` {status}
+* ``POST /api/modules/sound/action-items/{id}/file`` {target: calendar|todo}: Add to
+  calendar / to-dos (a conversation's suggestion)
+* ``POST /api/modules/sound/action-items/{id}/move`` {kind, due_date?, due_time?}: Move to
+  calendar / to-dos, Change time
+* ``POST /api/modules/sound/action-items/{id}/undo``: remove the Odysseus entry, dismiss
 
-Action items are shown live from the module (no copies in Odysseus); Done/Dismiss call
-the module's ``update_action_item``.
+Action items are read live from the module, the source of truth; Done/Dismiss call its
+``update_action_item``. Filing into the Odysseus calendar and to-dos (and the record of
+what went where) is ``src/module_action_items.py``; the last three routes call its
+``file_item`` / ``move_item`` / ``unfile_item`` and answer with the item as it is now.
 
 All of them go through the module's MCP tools (``src/sound_module_view.py``); the module's
 database is never touched. Admin only: the data is the owner's recordings, and the MCP
@@ -25,6 +32,7 @@ so it doesn't go through the chat approval card.
 
 from __future__ import annotations
 
+import inspect
 import logging
 import os
 from typing import Any
@@ -35,6 +43,7 @@ from pydantic import BaseModel, Field
 
 from core.middleware import require_admin
 from src import sound_module_view as view
+from src.auth_helpers import effective_user
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +53,16 @@ LEGACY_SERVER_ENV = "BARVIS_SOUND_SERVER"  # former name, still read
 
 class ItemStatus(BaseModel):
     status: str = Field(pattern="^(open|done|dismissed)$")
+
+
+class FileItem(BaseModel):
+    target: str = Field(pattern="^(calendar|todo)$")
+
+
+class MoveItem(BaseModel):
+    kind: str  # task | event | reminder, checked by the view (400)
+    due_date: str | None = Field(default=None, max_length=10)  # YYYY-MM-DD or "none"
+    due_time: str | None = Field(default=None, max_length=5)  # HH:MM or "none"
 
 
 class NameSpeaker(BaseModel):
@@ -78,6 +97,59 @@ def _caller() -> view.CallTool:
         return res.get("stdout") or ""
 
     return call
+
+
+def _owner(request: Request) -> str:
+    return effective_user(request) or ""
+
+
+def _filing():
+    """src/module_action_items.py's page helpers; 503 when this Odysseus lacks them."""
+    from src import module_action_items as mai
+
+    if not all(hasattr(mai, n) for n in ("file_item", "unfile_item", "move_item", "filed_state")):
+        raise HTTPException(503, "Filing action items isn't available in this Odysseus.")
+    return mai
+
+
+async def _maybe_await(value: Any) -> Any:
+    return await value if inspect.isawaitable(value) else value
+
+
+async def _filed_state(owner: str) -> dict:
+    """What went where; empty (nothing shown as filed) if the helper is missing or fails."""
+    try:
+        from src import module_action_items as mai
+
+        fn = getattr(mai, "filed_state", None)
+        if fn is None:
+            return {}
+        return (await _maybe_await(fn(owner))) or {}
+    except Exception as e:  # noqa: BLE001 -- the list still shows without it
+        logger.warning("odysseus-sound filed state unavailable: %s", e)
+        return {}
+
+
+async def _item_now(call: view.CallTool, owner: str, item_id: int) -> dict | None:
+    """The item after a change, merged with where it is filed (None when no longer listed)."""
+    for item in await view.action_items(call, "all", await _filed_state(owner)):
+        if item["id"] == item_id:
+            return item
+    return None
+
+
+async def _filing_call(what: str, coro) -> Any:
+    try:
+        return await coro
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except LookupError as e:
+        raise HTTPException(404, str(e)) from e
+    except Exception as e:  # logged; the page shows a short error
+        logger.warning("odysseus-sound %s failed: %s", what, e)
+        raise HTTPException(502, f"Could not {what} the action item.") from e
 
 
 def setup_sound_module_routes() -> APIRouter:
@@ -157,11 +229,66 @@ def setup_sound_module_routes() -> APIRouter:
         return {"ok": not message.startswith("No lines"), "message": message}
 
     @router.get("/api/modules/sound/action-items", dependencies=[Depends(require_admin)])
-    async def action_items(status: str = "open") -> dict[str, Any]:
+    async def action_items(request: Request, status: str = "open") -> dict[str, Any]:
         try:
-            return {"action_items": await view.action_items(_caller(), status)}
+            if status not in {"open", "done", "dismissed", "all"}:
+                raise ValueError("status must be open, done, dismissed or all")
+            call = _caller()
+            filed = await _filed_state(_owner(request))
+            return {"action_items": await view.action_items(call, status, filed)}
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
+
+    @router.post("/api/modules/sound/action-items/{item_id}/file",
+                 dependencies=[Depends(require_admin)])
+    async def file_action_item(item_id: int, body: FileItem, request: Request
+                               ) -> dict[str, Any]:
+        """Add to calendar / to-dos: the owner's tap on a suggestion."""
+        try:
+            view.check_item_id(item_id)
+            view.check_target(body.target)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        mai, call, owner = _filing(), _caller(), _owner(request)
+        try:
+            row = await view.find_item(call, item_id, "open")
+        except LookupError as e:
+            raise HTTPException(404, f"No open action item #{item_id}.") from e
+        if view.filed_for(await _filed_state(owner), item_id):
+            raise HTTPException(409, f"Action item #{item_id} is filed already; move it instead.")
+        filed = await _filing_call("file", mai.file_item(owner, row, call, target=body.target))
+        where = "calendar" if body.target == "calendar" else "to-dos"
+        return {"ok": True, "message": f"Added to {where}.", "filed": filed,
+                "item": await _item_now(call, owner, item_id)}
+
+    @router.post("/api/modules/sound/action-items/{item_id}/move",
+                 dependencies=[Depends(require_admin)])
+    async def move_action_item(item_id: int, body: MoveItem, request: Request
+                               ) -> dict[str, Any]:
+        """Move to calendar / to-dos, or Change time: the module item, then its entry."""
+        try:
+            view.check_item_id(item_id)
+            kind, due_date, due_time = view.check_move(body.kind, body.due_date, body.due_time)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        mai, call, owner = _filing(), _caller(), _owner(request)
+        filed = await _filing_call("move", mai.move_item(
+            owner, item_id, call, kind=kind, due_date=due_date, due_time=due_time))
+        return {"ok": True, "message": "Saved.", "filed": filed,
+                "item": await _item_now(call, owner, item_id)}
+
+    @router.post("/api/modules/sound/action-items/{item_id}/undo",
+                 dependencies=[Depends(require_admin)])
+    async def undo_action_item(item_id: int, request: Request) -> dict[str, Any]:
+        """Remove the Odysseus event / to-do and dismiss the item (it isn't filed again)."""
+        try:
+            view.check_item_id(item_id)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        mai, call, owner = _filing(), _caller(), _owner(request)
+        result = await _filing_call("undo", mai.unfile_item(owner, item_id, call))
+        return {"ok": True, "message": "Undone: removed from Odysseus and dismissed.",
+                "result": result, "item": await _item_now(call, owner, item_id)}
 
     @router.post("/api/modules/sound/action-items/{item_id}",
                  dependencies=[Depends(require_admin)])
