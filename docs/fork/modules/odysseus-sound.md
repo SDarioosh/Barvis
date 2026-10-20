@@ -133,21 +133,47 @@ Then, per [../modules.md](../modules.md#registering-a-module-in-odysseus):
 
 ## Action items in Odysseus
 
-Action items stay in odysseus-sound; Odysseus shows them live and keeps no copy (owner's
-decision). The built-in task **Module Action Items** (`src/module_action_items.py`,
-every 15 min, ships paused: resume it in Tasks) reads open items through
-`list_action_items` and pushes new ones, items due today and yesterday's digest
-(`get_daily_digest`) to the phone through the ntfy reminder channel. Its first run only
-remembers the existing items.
+odysseus-sound stays the source of truth for action items. Since 2026-10-20 (owner's
+decision, replacing "no copies" of 2026-10-19) Odysseus also **files** them where they
+belong, so voice notes land in the hub's own calendar and to-dos:
 
-It parses the `list_action_items` result lines, so their shape is part of the contract
-for it: `- #<id> [<status>] <text>[ (owner <name>)][ due <YYYY-MM-DD>[ (<as said>)]| due <as said>] — from "<title>"[ (voice note)] <YYYY-MM-DD HH:MM> <link>`.
-Change it only together with the parser (`parse_action_items`) and its test.
+| Item kind (module) | Example | Filed as |
+|---|---|---|
+| `event` | "meeting with Jason on Wednesday at 12 pm" | calendar event in the default calendar: timed (60 min or the stated length, reminder 30 min before), or all-day when no time was said |
+| `task` | "get the proposal done on Wednesday" | to-do (checklist note, label `odysseus-sound`), due that day at `MODULE_DIGEST_HOUR` |
+| `reminder` | "remind me at 5 to call Mom" | to-do due at that time (Odysseus fires its own reminder) |
 
-Settings: `MODULE_ACTION_ITEMS_SERVER` (default `convo`), `MODULE_NOTIFY_CHANNEL`
-(`ntfy`, `browser`, `off`), `MODULE_DIGEST_HOUR` (`8`, `off`). ntfy needs an enabled
-ntfy integration (Settings → Integrations); the topic is the reminder topic
+- **Voice notes are filed automatically.** One push per pass ("Filed from your voice
+  note": what went where, "check the time" when the module flagged it). Filed items get
+  no other "new item" or "due today" push; Odysseus' own event and to-do reminders take
+  over.
+- **Conversations only suggest.** Their items wait on `/modules/sound` with **Add to
+  calendar** / **Add to to-dos**; nothing is filed and nothing is pushed until tapped.
+- **Fix or undo** on `/modules/sound`: Move to calendar / Move to to-dos, Change time,
+  Undo (removes the Odysseus entry and dismisses the item). An item is filed once: if
+  you delete the event or note in Odysseus it is not filed again.
+- **Status both ways**: ticking the to-do (or archiving it) marks the module item done,
+  and the other way round; deleting the event dismisses the item; a past event is done.
+- The first run only remembers existing items (no backlog is filed).
+
+The built-in task **Module Action Items** (`src/module_action_items.py`, every 5 min)
+does all of this. It reads `list_action_items` with `format="json"` (fields in the module's
+`server/README.md`) and writes through `update_action_item` (`status`, `kind`,
+`due_date`, `due_time`). With an older module that returns only text it falls back to
+pushes without filing. The module's `due_date`/`due_time` are local to its
+`CONVO_TIMEZONE`; set the same timezone in Odysseus (the task logs a warning when they
+differ and converts).
+
+Settings: `MODULE_FILE_ITEMS` (`auto` default, `off` = pushes only, as before),
+`MODULE_ACTION_ITEMS_SERVER` (default `convo`), `MODULE_NOTIFY_CHANNEL` (`ntfy`,
+`browser`, `off`), `MODULE_DIGEST_HOUR` (`8`, `off`). ntfy needs an enabled ntfy
+integration (Settings → Integrations); the topic is the reminder topic
 (`reminder_ntfy_topic`).
+
+The text lines of `list_action_items` (what models read) are still parsed as a fallback:
+`- #<id> [<status>] [<kind>: ]<text>[ (owner <name>)][ due <YYYY-MM-DD>[ <HH:MM>][ (<as said>)]| due <as said>][ [time unclear]] — from "<title>"[ (voice note)] <YYYY-MM-DD HH:MM> <link>`
+(`<kind>` is `event` or `reminder`; tasks have none). Change it only together with the
+parsers and their tests.
 
 ## Conversations page
 
