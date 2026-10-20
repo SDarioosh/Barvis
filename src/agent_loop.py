@@ -37930,9 +37930,6 @@ async def stream_agent_loop(
         full_response = _linkify_note_titles_from_tool_events(full_response, tool_events)
         full_response = _linkify_email_titles_from_tool_events(full_response, tool_events)
         full_response = _linkify_calendar_titles_from_tool_events(full_response, tool_events)
-        # Fork: list module transcript links the answer didn't cite (src/module_citations.py)
-        from src.module_citations import with_module_sources
-        full_response = with_module_sources(full_response, tool_events)
         if round_texts and full_response.strip():
             for _idx in range(len(round_texts) - 1, -1, -1):
                 if _visible_response_text(str(round_texts[_idx] or "")):
