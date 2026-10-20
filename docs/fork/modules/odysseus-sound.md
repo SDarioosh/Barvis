@@ -154,13 +154,19 @@ ntfy integration (Settings → Integrations); the topic is the reminder topic
 `/modules/sound` (sidebar: **Conversations**, admin only) shows open action items live
 (Done / Dismiss call `update_action_item`; Odysseus keeps no copy), the module's
 conversations (filter by words, person, dates and type: all, conversations, voice notes;
-voice notes are labelled), and a "who is this?" card for every unnamed speaker. It calls
-`list_action_items`, `update_action_item`, `search_conversations`,
+voice notes are labelled), and a "who is this?" card for every unnamed speaker. **Open** reads one
+conversation in place (`get_conversation`, `get_transcript` 200 lines a page); tapping a
+speaker fixes one line (`reassign_line`), a whole unnamed `Speaker N` (`name_speaker`) or
+a name everywhere (`rename_speaker_everywhere`, confirmed first). **Ask in chat** opens
+`/?ask=/sound About the conversation "<title>" (id <id>, <start>): ` for the owner to
+finish and send. It calls
+`list_action_items`, `update_action_item`, `search_conversations`, `get_conversation`,
+`get_transcript`, `reassign_line`, `rename_speaker_everywhere`,
 `list_unnamed_speakers` and `name_speaker` through the MCP
 manager and parses their result lines (`src/sound_module_view.py`, test
 `tests/test_sound_module_view.py`); change those line shapes together with the parser.
-`SOUND_MODULE_SERVER` names the server (default `convo`). Transcripts open the module's
-signed `/view` links in a new tab (Odysseus' CSP doesn't allow framing another origin).
+`SOUND_MODULE_SERVER` names the server (default `convo`). The external "Transcript" link
+and per-line times open the module's signed `/view` links in a new tab (Odysseus' CSP doesn't allow framing another origin).
 Audio isn't kept after transcription, so cards quote lines instead of playing them.
 
 ## Eval and current score

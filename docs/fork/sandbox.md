@@ -227,6 +227,33 @@ ODYSSEUS_URL=http://127.0.0.1:7010 ODYSSEUS_PASSWORD_FILE=$SBX/admin.txt \
   --log $SBX/logs/odysseus.log --extra -- --only 1 4 16 22
 ```
 
+### Plain module questions, 2026-10-20
+
+Setup C (every tool on, "Auto", no slash command), questions 1, 4, 13, 16 and 20 (the
+"Mars" question must answer without a citation). Run 1 had the fork routing
+(`src/module_turn_scope.py`) plus a fork "Sources:" footer; run 2 dropped the footer and
+added one sentence to odysseus-sound's `INSTRUCTIONS` (search before saying "I don't
+know"; Custom preset updated). Chat mode = `ODYSSEUS_MODE=chat`, what the web UI sends with
+the agent toggle off.
+
+| Run | agent mode | chat mode | notes |
+|---|---|---|---|
+| Before (C above, Q1 4 16 21) | 0/4 | — | no convo tool offered |
+| 1: routing + footer | 2/5 | 4/5 | Q16 offered the tools but answered "shall I search?"; the footer fired once, on the Mars "nothing found" answer, and failed it |
+| 2: routing + module text | **5/5** | **4/5** | chat Q16 searched conversations and missed the allergy |
+
+Every passing answer cited the right transcript link; 0 approvals. The footer was removed
+(it never added a passing citation), so the fork part is only new files.
+
+```bash
+cd $SOUND/server && . $SBX/convo.env
+cd $FORK && venv/bin/python scripts/modules_setup.py --url http://127.0.0.1:7010 \
+  --password-file $SBX/admin.txt --untrim
+cd $SOUND/server && for m in agent chat; do ODYSSEUS_MODE=$m ODYSSEUS_URL=http://127.0.0.1:7010 \
+  ODYSSEUS_PASSWORD_FILE=$SBX/admin.txt .venv/bin/python eval/bakeoff.py --frontend odysseus \
+  --only 1 4 13 16 20; done
+```
+
 ## Findings from the first sandbox run
 
 These are real bugs, not sandbox quirks. 1–3 and 5 are bugs in Odysseus or the fork (tracked in

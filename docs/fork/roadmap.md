@@ -3,7 +3,7 @@
 fork-specific status. Upstream's own plans are in [../../ROADMAP.md](../../ROADMAP.md);
 don't edit that file.
 
-_Last updated: 2026-10-19_
+_Last updated: 2026-10-20_
 
 ## Status
 
@@ -21,35 +21,34 @@ _Last updated: 2026-10-19_
 | 10 | odysseus-sound page `/modules/sound`: live action items (done/dismiss), conversations list and "who is this?" cards for unnamed speakers (roadmap 3, 5) | merged (SDarioosh/Barvis#19); odysseus-sound's `list_unnamed_speakers` merged (SDarioosh/barvis-sound#24) | [../../FORK.md](../../FORK.md) |
 | 11 | Stdio MCP servers added over the API keep working after that request (sandbox finding 2): each stdio connection has its own owner task | PR SDarioosh/Barvis#20 | [../../FORK.md](../../FORK.md), `src/mcp_stdio_owner.py` |
 | 12 | One-command deploy: `fork_deploy.sh deploy` runs each module's deploy command first (odysseus-sound: update, install, background services that survive reboot), works from any directory | PR SDarioosh/Barvis#21; odysseus-sound side SDarioosh/barvis-sound#30 | [deploy.md](deploy.md#update-production), [modules.md](modules.md#deploying-a-module) |
+| 13 | Conversations page v2: transcript reader, click-to-fix speakers (`reassign_line`, `name_speaker`, `rename_speaker_everywhere`), Ask in chat (`/?ask=` prefills a new chat with `/sound …`) | PR (this branch) | [../../FORK.md](../../FORK.md) |
 
 ## Next
 
-0. **Module tools without a slash command.** `/sound` and `/context` work (item 7),
-   but a plain recording question in "Auto" with every tool on still goes to built-ins
-   ([sandbox.md](sandbox.md#slash-skills-2026-10-18), setup C). Options: let the route
-   classifier recognize module topics from the module's tool descriptions, or offer the
-   module skills' tools whenever the skill index matches. Measure against C and D.
-   Also "Regular tools" with every tool on still overflows 32k; slash skills don't help
-   there (every enabled tool is sent).
+0. **Module tools without a slash command** (PR SDarioosh/Barvis#24). A plain question
+   with a module cue (conversation words, a person the module knows) runs in agent mode
+   and is offered the trusted modules' read tools, through the existing slash-skill
+   hooks (no upstream lines). Sandbox setup C: 0/4 → 5/5 agent, 4/5 chat
+   ([sandbox.md](sandbox.md#plain-module-questions-2026-10-20)). Owner's full run pending.
+   "Regular tools" with every tool on still overflows 32k.
 1. **Fixed (status item 11): the remaining MCP bug the sandbox found**
    ([sandbox.md](sandbox.md#findings-from-the-first-sandbox-run), finding 2): stdio servers
    added over the API failed on every call. Upstream issues for this and the HTTP
    annotation bug (item 5) are drafted in their PRs, for the owner to file.
-2. **Citations to ≥ 15/20.** Most remaining failures have the right fact and no
-   transcript link. Replies that were just "Done." (the model returned empty text after
-   its tool calls, and the chat route saves "Done." for an empty answer) now get one
-   tool-free answer round (FORK.md, "Empty replies after module tools"). Still open:
-   why links get dropped; fix in Odysseus, or in the module's result text if that's the
-   cause. Rerun
-   `server/eval/bakeoff.py --frontend odysseus` after each change.
+2. **Citations to ≥ 15/20.** In the 2026-10-20 sandbox runs every passing answer cited
+   its link; links are kept by the module (cite rule at the end of list results, "search
+   before saying I don't know" in `INSTRUCTIONS`, SDarioosh/barvis-sound#40). A fork-side
+   "Sources:" footer was tried and dropped (it failed a "nothing found" answer). Next:
+   the owner's full 20-question run on the server.
 3. **Action items, live** (status item 9). Decided 2026-10-19: no copies in Odysseus
    to-dos or calendar; Odysseus shows the module's items live (on the odysseus-sound page,
    with done/dismiss through `update_action_item`) and pushes reminders.
 4. **ntfy notifications** (status item 9). New action items and yesterday's digest go
    to the phone through the ntfy reminder channel.
 5. **Conversations view** (status item 10). `/modules/sound` lists conversations, live
-   action items (done/dismiss) and "who is this?" cards for unnamed speakers. Next:
-   follow the user's theme (the page uses the default dark tokens only).
+   action items (done/dismiss) and "who is this?" cards for unnamed speakers; item 13
+   adds the transcript reader, speaker fixes and Ask in chat. Next: the daily digest on
+   the page, and follow the user's theme (the page uses the default dark tokens only).
 6. **Phone access.** Use Odysseus from the Android phone over Tailscale (Odysseus has a
    PWA). Lock services to Tailscale per the owner's security decision.
 7. **Shared search.** One `context` search tool that queries every module with the

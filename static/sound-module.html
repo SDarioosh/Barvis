@@ -10,6 +10,9 @@
     /* Fork: odysseus-sound page. Colors, font and spacing come from the Odysseus
        tokens in 00-tokens.css; nothing here introduces new color values. */
     body { background: var(--bg); color: var(--fg); margin: 0; }
+    /* 00-tokens.css locks html/body to one screen for the chat app; this page scrolls. */
+    html { height: auto; overflow-y: auto; }
+    body { height: auto; min-height: 100%; overflow: visible; }
     .bs-wrap { max-width: 860px; margin: 0 auto; padding: 16px; }
     .bs-top { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
     .bs-top h1 { font-size: 1.1rem; font-weight: 600; margin: 0; flex: 1; }
@@ -39,7 +42,43 @@
     .bs-empty, .bs-status { font-size: 0.85rem; opacity: 0.7; padding: 6px 0; }
     .bs-status.error { color: var(--red); opacity: 1; }
     .bs-link { color: var(--fg); display: inline-flex; align-items: center; gap: 4px; }
-    @media (max-width: 640px) { .bs-filters { grid-template-columns: 1fr 1fr; } }
+    .bs-btn, .bs-link { min-height: 36px; box-sizing: border-box; }
+    .bs-link { padding: 0 2px; }
+    a.bs-btn { display: inline-flex; align-items: center; text-decoration: none; }
+    /* reader: one conversation, its detail and transcript (#c=<id>) */
+    .bs-reader-top { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+    .bs-reader-top h2 { font-size: 1rem; margin: 0; font-weight: 600; flex: 1 1 200px; min-width: 0;
+                        overflow-wrap: anywhere; }
+    .bs-list { margin: 6px 0 0; padding-left: 20px; font-size: 0.88rem; line-height: 1.45; }
+    .bs-list li { margin: 3px 0; }
+    .bs-small { font-size: 0.78rem; opacity: 0.7; color: var(--fg); margin-left: 4px; white-space: nowrap; }
+    .bs-small:hover { opacity: 1; }
+    .bs-sub { margin: 12px 0 2px; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em;
+              opacity: 0.6; }
+    .bs-lines { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+                padding: 4px 0; }
+    .bs-line { display: grid; grid-template-columns: 4.6em 9em 1fr; gap: 8px; padding: 6px 12px;
+               font-size: 0.88rem; line-height: 1.45; align-items: baseline; }
+    .bs-line + .bs-line { border-top: 1px solid color-mix(in srgb, var(--border) 40%, transparent); }
+    .bs-time { font-size: 0.78rem; opacity: 0.6; color: var(--fg); text-decoration: none;
+               font-variant-numeric: tabular-nums; }
+    .bs-time:hover { opacity: 1; text-decoration: underline; }
+    .bs-spk { background: none; border: none; padding: 0; font: inherit; font-weight: 600;
+              color: var(--fg); cursor: pointer; text-align: left; overflow-wrap: anywhere;
+              text-decoration: underline dotted; text-underline-offset: 3px; min-height: 28px; }
+    .bs-spk:hover, .bs-spk[aria-expanded="true"] { color: var(--red); }
+    .bs-text { overflow-wrap: anywhere; }
+    .bs-lines > .bs-status { padding: 6px 12px; }
+    .bs-edit { grid-column: 1 / -1; background: var(--bg); border: 1px solid var(--border);
+               border-radius: 6px; padding: 8px 10px; margin-top: 4px; }
+    .bs-edit .bs-input { flex: 1 1 160px; min-height: 36px; }
+    .bs-notice { background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--red);
+                 border-radius: 6px; padding: 8px 10px; margin: 8px 0; font-size: 0.86rem; }
+    @media (max-width: 640px) {
+      .bs-filters { grid-template-columns: 1fr 1fr; }
+      .bs-line { grid-template-columns: auto 1fr; gap: 2px 10px; padding: 8px 12px; }
+      .bs-line .bs-text { grid-column: 1 / -1; }
+    }
   </style>
 </head>
 <body>
@@ -53,6 +92,7 @@
       <button type="button" class="bs-btn" id="bs-refresh">Refresh</button>
     </div>
 
+    <div id="bs-home">
     <div class="bs-section" id="bs-who-title">Who is this?</div>
     <div id="bs-who"><div class="bs-status">Loading…</div></div>
 
@@ -73,6 +113,9 @@
       <button type="submit" class="bs-btn">Search</button>
     </form>
     <div id="bs-list"><div class="bs-status">Loading…</div></div>
+    </div>
+
+    <div id="bs-reader" hidden></div>
   </div>
   <script type="module" src="/static/js/soundModule.js"></script>
 </body>
