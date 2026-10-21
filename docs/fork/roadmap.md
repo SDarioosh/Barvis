@@ -63,6 +63,10 @@ _Last updated: 2026-10-20_
    SDarioosh/Barvis#9 upstream
    ([upstream-sync.md](upstream-sync.md#sending-fixes-upstream)); weekly syncs.
 
+## Personal context system
+
+The phased plan for taking in the owner's data, confirming beliefs and using them (Today insight first) is in [personal-context.md](personal-context.md).
+
 ## Future modules (placeholders)
 
 No repos exist yet. Each would follow [modules.md](modules.md).
