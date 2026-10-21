@@ -290,23 +290,24 @@ async def test_task_and_reminder_become_todos(hub, pushes):
     module.add(row(14, "Get the proposal done", "task", due_date="2031-10-22"))
     module.add(row(15, "Call Mom", "reminder", due_date="2031-10-20", due_time="17:00",
                    time_unclear=True))
-    module.add(row(16, "Think about holidays"))  # no date at all
+    module.add(row(16, "Think about holidays", explicit=True))  # no date: "Voice notes"
     stats = await bai.sync("alice", module, now=T0)
     assert stats["filed"] == 3 and stats["pushed"] == 1 and events(hub) == []
     by_title = {n.title: n for n in notes(hub)}
     proposal, mom, holidays = (by_title[t] for t in
-                               ("Get the proposal done", "Call Mom", "Think about holidays"))
+                               ("Get the proposal done", "Call Mom", "Voice notes"))
     assert proposal.note_type == "todo" and proposal.due_date == "2031-10-22T08:00:00+02:00"
     assert json.loads(proposal.items) == [{"text": "Get the proposal done", "done": False}]
     assert LINK.format(c="c14") in proposal.content
     assert mom.due_date == "2031-10-20T17:00:00+02:00"
-    assert holidays.due_date is None
+    assert holidays.due_date is None and holidays.note_type == "todo"
+    assert json.loads(holidays.items) == [{"text": "Think about holidays", "done": False}]
     (p,) = pushes  # one combined push
     assert p["title"] == "Filed 3 items from your voice notes"
     assert p["body"].splitlines() == [
         "☑️ Get the proposal done · due Wed 22 Oct → To-dos",
         "⏰ Call Mom · due Mon 20 Oct 17:00 → To-dos ⚠️ check the time",
-        "☑️ Think about holidays → To-dos"]
+        "☑️ Think about holidays → Voice notes list"]
 
 
 @pytest.mark.asyncio
@@ -368,7 +369,7 @@ async def test_status_follows_both_ways_once(hub, pushes):
     module = JsonModule()
     await _start(module)
     module.add(row(14, "Get the proposal done", due_date="2031-10-22"))
-    module.add(row(15, "Buy milk"))
+    module.add(row(15, "Buy milk", due_date="2031-10-23"))
     module.add(row(12, "Meet Jason", "event", due_date="2031-10-22", due_time="12:00"))
     module.add(row(13, "Lunch with Ana", "event", due_date="2031-10-21", due_time="12:30"))
     await bai.sync("alice", module, now=T0)
@@ -650,9 +651,9 @@ async def test_undo_and_move_take_only_the_line(hub):
     module = JsonModule()
     await _start(module)
     module.add(row(50, "Milk", list_name="shopping"))
-    module.add(row(51, "Call the bank"))
+    module.add(row(51, "Call the bank", due_date="2031-10-22"))
     await bai.sync("alice", module, now=T0)
-    assert len(notes(hub)) == 1  # Call the bank: a to-do of its own
+    assert len(notes(hub)) == 1  # Call the bank: a to-do of its own (it has a date)
 
     # a to-do of its own onto a list, then onto another list, then off lists again
     moved = await bai.move_item("alice", 51, module, kind="task", list_name="shopping")
@@ -660,7 +661,8 @@ async def test_undo_and_move_take_only_the_line(hub):
     assert moved == {"target": "todo", "ref": shopping,
                      "open_url": f"/#open=notes&note={shopping}", "list": "Shopping"}
     assert notes(hub) == []  # its own to-do is gone
-    assert [i["text"] for i in lines(hub, shopping)] == ["Bread", "Milk", "Call the bank"]
+    assert [i["text"] for i in lines(hub, shopping)] == ["Bread", "Milk",
+                                                       "Call the bank (due Wed 22 Oct)"]
     moved = await bai.move_item("alice", 51, module, kind="task", list_name="Errands")
     assert [i["text"] for i in lines(hub, shopping)] == ["Bread", "Milk"]
     errands = bai.find_list("alice", "errands")
@@ -865,3 +867,185 @@ async def test_file_item_as_note_and_move_a_note_to_todos(hub, pushes):
     back = await bai.move_item("alice", 79, module, kind="task")
     (todo,) = notes(hub)
     assert back["target"] == "todo" and todo.note_type == "todo"
+
+
+# ------------------------------------------- explicit filing and the "Voice notes" list
+REFLECTIVE = [  # one reflective voice note (fictional): no task among them but the last
+    (90, "Stop prioritizing side projects over the main build this month",
+     "Stop prioritizing side projects"),
+    (91, "Focus on testing the existing bugs before adding anything new",
+     "Focus on testing existing bugs"),
+    (92, "Figure out how the recorder could use less battery", "Use less battery"),
+]
+
+
+def test_explicit_is_the_default_file_mode(monkeypatch):
+    for var in ("MODULE_FILE_ITEMS", "BARVIS_FILE_ITEMS"):
+        monkeypatch.delenv(var, raising=False)
+    assert bai.file_mode() == "explicit"
+    for value, mode in (("auto", "auto"), ("ALL", "auto"), ("off", "off"),
+                        ("explicit", "explicit"), ("bogus", "explicit")):
+        monkeypatch.setenv("MODULE_FILE_ITEMS", value)
+        assert bai.file_mode() == mode
+
+
+@pytest.mark.asyncio
+async def test_only_explicit_voice_note_items_are_filed(hub, pushes):
+    module = JsonModule()
+    await _start(module)
+    for i, text, title in REFLECTIVE:
+        module.add(row(i, text, title=title, explicit=False))
+    module.add(row(93, "Remind me to call the bike shop", "reminder", due_date="2031-10-21",
+                   due_time="10:00", title="Call the bike shop", explicit=True))
+    stats = await bai.sync("alice", module, now=T0)
+    assert stats["filed"] == 1 and stats["pushed"] == 2
+    (todo,) = notes(hub)
+    assert todo.title == "Call the bike shop"
+    filed, suggested = pushes
+    assert filed["body"] == "⏰ Call the bike shop · due Tue 21 Oct 10:00 → To-dos"
+    assert suggested["title"] == "3 suggestions from your voice notes"
+    assert suggested["body"].splitlines() == [
+        "💡 Stop prioritizing side projects", "💡 Focus on testing existing bugs",
+        "💡 Use less battery", "Add or dismiss them on the odysseus-sound page."]
+    assert {r["status"] for i, r in module.rows.items() if i != 93} == {"open"}
+    assert set(await bai.filed_state("alice")) == {93}
+    # suggested once: later passes neither file nor push them
+    assert await bai.sync("alice", module, now=T0) == {
+        "new": 0, "filed": 0, "synced": 0, "pushed": 0}
+    # one suggestion, the owner taps Add to to-dos: a line on "Voice notes"
+    module.add(row(94, "See how much GPS tagging reduces battery", explicit=False))
+    await bai.sync("alice", module, now=T0)
+    assert pushes[-1]["title"] == "Suggested from your voice note"
+    out = await bai.file_item("alice", module.rows[94], module, target="todo")
+    assert out["list"] == "Voice notes"
+    voice = bai.find_list("alice", "voice notes")
+    assert lines(hub, voice.id) == [
+        {"text": "See how much GPS tagging reduces battery", "done": False}]
+
+
+def test_older_module_rows_derive_explicit_and_title():
+    def old(text, **kw):
+        return {"id": 1, "kind": kw.pop("kind", "task"), "text": text, **kw}
+
+    assert not bai.is_explicit(old("Figure out what to do about the battery"))
+    assert not bai.is_explicit(old("Stop multitasking during calls"))
+    for item in (old("Remind me to water the plants"), old("Put the invoice on my todo"),
+                 old("New task: sand the shelf"), old("Add batteries to my hardware list"),
+                 old("Send the slides", due_date="2031-10-22"),
+                 old("Call Ana", due_time="17:00"), old("Milk", list_name="shopping"),
+                 old("Dentist", kind="event"), old("Call Mom", kind="reminder"),
+                 old("Battery is 3 mm", kind="note")):
+        assert bai.is_explicit(item), item
+    # the module's field wins over the derivation (notes are always filed)
+    assert not bai.is_explicit(old("Remind me to relax more", explicit=False))
+    assert bai.is_explicit(old("Battery is 3 mm", kind="note", explicit=False))
+
+    long = ("Figure out how the recorder could use a lot less battery when it is "
+            "recording all day long")
+    title = bai.item_title(old(long))
+    assert title == "Figure out how the recorder could use a lot less battery…"
+    assert len(title) <= 60 and long.startswith(title[:-1])
+    assert bai.item_title(old(long, title="Use less battery")) == "Use less battery"
+    assert bai.item_title(old("Buy milk")) == "Buy milk"
+    assert len(bai.item_title(old("x" * 80))) == 60
+
+
+@pytest.mark.asyncio
+async def test_undated_tasks_share_the_voice_notes_list(hub, pushes):
+    module = JsonModule()
+    await _start(module)
+    module.add(row(95, "Make a to-do to clean up the old recorder branches before Friday's "
+                       "review so nobody trips on them", title="Clean up recorder branches"))
+    await bai.sync("alice", module, now=T0)
+    module.add(row(96, "Task: oil the bike chain"))
+    await bai.sync("alice", module, now=T0)
+    (voice,) = notes(hub)
+    assert (voice.title, voice.note_type, voice.label, voice.due_date) == (
+        "Voice notes", "todo", bai.LABEL, None)
+    assert lines(hub, voice.id) == [{"text": "Clean up recorder branches", "done": False},
+                                    {"text": "Task: oil the bike chain", "done": False}]
+    assert [p["body"] for p in pushes] == ["☑️ Clean up recorder branches → Voice notes list",
+                                           "☑️ Task: oil the bike chain → Voice notes list"]
+    assert (await bai.filed_state("alice"))[95]["list"] == "Voice notes"
+    assert bai.todo_lists("alice") == ["Voice notes"]
+    # status per line, both ways
+    items = lines(hub, voice.id)
+    items[0]["done"] = True
+    _set_items(hub, voice.id, items)
+    assert (await bai.sync("alice", module, now=T0))["synced"] == 1
+    assert (module.rows[95]["status"], module.rows[96]["status"]) == ("done", "open")
+    module.rows[96]["status"] = "done"
+    await bai.sync("alice", module, now=T0)
+    assert all(i["done"] for i in lines(hub, voice.id))  # the auto-archive rule's case
+    # Undo takes the line only
+    await bai.unfile_item("alice", 95, module)
+    assert [i["text"] for i in lines(hub, voice.id)] == ["Task: oil the bike chain"]
+
+
+@pytest.mark.asyncio
+async def test_dated_task_has_a_short_title_and_the_full_text(hub, pushes):
+    module = JsonModule()
+    await _start(module)
+    text = ("Get the battery measurements for the new recorder case done and sent to "
+            "the workshop")
+    module.add(row(97, text, due_date="2031-10-22", title="Send battery measurements"))
+    await bai.sync("alice", module, now=T0)
+    (todo,) = notes(hub)
+    assert todo.title == "Send battery measurements"
+    assert json.loads(todo.items) == [{"text": text, "done": False}]
+    assert todo.due_date == "2031-10-22T08:00:00+02:00"
+    assert LINK.format(c="c97") in todo.content
+    assert pushes[0]["body"] == "☑️ Send battery measurements · due Wed 22 Oct → To-dos"
+    assert bai.todo_lists("alice") == []  # a to-do of its own, no list
+
+
+@pytest.mark.asyncio
+async def test_auto_mode_files_every_voice_note_item(hub, pushes, monkeypatch):
+    monkeypatch.setenv("MODULE_FILE_ITEMS", "auto")
+    module = JsonModule()
+    await _start(module)
+    for i, text, title in REFLECTIVE:
+        module.add(row(i, text, title=title, explicit=False))
+    stats = await bai.sync("alice", module, now=T0)
+    assert stats["filed"] == 3 and stats["pushed"] == 1
+    (voice,) = notes(hub)  # one list, not three to-dos
+    assert [i["text"] for i in lines(hub, voice.id)] == [t for _, _, t in REFLECTIVE]
+    assert pushes[0]["title"] == "Filed 3 items from your voice notes"
+
+
+@pytest.mark.asyncio
+async def test_unfile_auto_todos_removes_single_voice_note_todos(hub, monkeypatch):
+    module = JsonModule()
+    await _start(module)
+    module.add(row(80, "Get the proposal done", due_date="2031-10-22"))
+    module.add(row(81, "Call Mom", "reminder", due_date="2031-10-21", due_time="17:00"))
+    module.add(row(82, "Milk", list_name="shopping"))  # a list line: left alone
+    module.add(row(83, "Book the room", note=False, due_date="2031-10-22"))  # conversation
+    module.add(row(84, "Old sentence filed as a to-do", explicit=True, due_date="2031-10-23"))
+    await bai.sync("alice", module, now=T0)
+    await bai.file_item("alice", module.rows[83], module, target="todo")
+    module.rows[84]["status"] = "done"
+    await bai.sync("alice", module, now=T0)  # ticks its to-do
+    before = {n.title for n in notes(hub)}
+    assert before == {"Get the proposal done", "Call Mom", "Shopping", "Book the room",
+                      "Old sentence filed as a to-do"}
+
+    dry = await bai.unfile_auto_todos("alice", module)
+    assert dry["apply"] is False and dry["removed"] == 0
+    assert [(t["id"], t["status"]) for t in dry["todos"]] == [
+        (80, "open"), (81, "open"), (84, "done")]
+    assert {n.title for n in notes(hub)} == before  # a dry run changes nothing
+
+    only = await bai.unfile_auto_todos("alice", module, apply=True, only={81})
+    assert only["removed"] == 1 and module.rows[81]["status"] == "dismissed"
+    done = await bai.unfile_auto_todos("alice", module, apply=True)
+    assert done["removed"] == 2 and [t["id"] for t in done["todos"]] == [80, 84]
+    assert {n.title for n in notes(hub)} == {"Shopping", "Book the room"}
+    assert (module.rows[80]["status"], module.rows[84]["status"]) == ("dismissed", "done")
+    assert {(u["item_id"], u["status"]) for u in module.updates
+            if u["item_id"] in (80, 81, 84)} == {(80, "dismissed"), (81, "dismissed")}
+    # recorded as undone: never filed again, nothing left to clean up
+    state = await bai.filed_state("alice")
+    assert all(state[i]["undone"] for i in (80, 81, 84))
+    assert (await bai.sync("alice", module, now=T0))["filed"] == 0
+    assert (await bai.unfile_auto_todos("alice", module))["todos"] == []

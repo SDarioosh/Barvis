@@ -115,9 +115,10 @@ async function loadWho() {
 }
 
 // ----------------------------------------------------------------- action items
-// Live from odysseus-sound, the source of truth. Voice-note items are filed into the
-// Odysseus calendar / to-dos / notes by src/module_action_items.py; conversation items are
-// suggestions until the owner taps Add. Every change answers with the item as it is
+// Live from odysseus-sound, the source of truth. Explicit voice-note items are filed into
+// the Odysseus calendar / to-dos / notes by src/module_action_items.py; other voice-note
+// items and conversation items are suggestions until the owner taps Add (MODULE_FILE_ITEMS
+// decides which voice-note items count as explicit). Every change answers with the item as it is
 // now, and the card is drawn again from that answer.
 // Monochrome icons in the sidebar's style (calendar, checked box, bell, page).
 const _ICON = (body) => '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" ' +

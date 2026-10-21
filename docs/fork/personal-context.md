@@ -73,6 +73,12 @@ the same way.
 | 1.5 Expiry and decay | hub | Every belief carries last-seen and an optional valid-until. Retrieval demotes stale beliefs; the review page shows "not heard since". The module's supersede chain supplies the dates. Built: [beliefs.md](beliefs.md#expiry-and-decay-15) (confirmed beliefs not seen for `BELIEF_STALE_DAYS` and beliefs past `valid_until` go stale and leave memory; owner-confirmed ones never decay by age). |
 | 1.6 Measure | hub | A memory eval on fictional seeded data: expected confirmed set, expected retirements after a correction, expected answers to "what do you know about X". Runs in the sandbox like the bakeoff. Built: [beliefs.md](beliefs.md#measure-16) (`scripts/belief_eval.py`: a deterministic seeded history, expected status and memory per case, a score; `--chat` asks a running Odysseus). |
 
+**Voice-note intentions (2026-10-21).** Intentions and principles said in a voice note
+("stop prioritizing side projects") are facts in the module now, so they reach the
+ledger as evidence instead of becoming to-dos, and the hub files only explicit
+voice-note action items (`MODULE_FILE_ITEMS=explicit`,
+[odysseus-sound.md](modules/odysseus-sound.md#action-items-in-odysseus)).
+
 **Depends on:** Phase 0 merged. **Risk:** more sources means more wrong beliefs; keep the
 sources switched off until the review page exists (1.3 before 1.2 in roll-out).
 

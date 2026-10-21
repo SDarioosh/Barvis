@@ -577,3 +577,47 @@ def test_file_as_note_route(filing):
     r = filing.post("/api/modules/sound/action-items/13/file", json={"target": "note"})
     assert r.status_code == 200 and r.json()["message"] == "Added to notes."
     assert ("file", "", 13, "note") in filing.filing_calls
+
+
+def test_unfile_todos_route(client, monkeypatch):
+    from src import module_action_items as mai
+
+    calls = []
+
+    async def unfile_auto_todos(owner, call, *, apply=False, only=None):
+        calls.append((owner, apply, only))
+        return {"apply": apply, "removed": 1 if apply else 0,
+                "todos": [{"id": 12, "title": "Call Mom", "text": "Call Mom",
+                           "status": "open", "ref": "note-1"}]}
+
+    monkeypatch.setattr(mai, "unfile_auto_todos", unfile_auto_todos)
+    r = client.post("/api/modules/sound/unfile-todos", json={})
+    assert r.status_code == 200 and r.json()["todos"][0]["id"] == 12
+    assert r.json()["removed"] == 0 and calls[-1] == ("", False, None)
+    r = client.post("/api/modules/sound/unfile-todos", json={"apply": True, "ids": [12]})
+    assert r.json()["removed"] == 1 and calls[-1] == ("", True, {12})
+    client.manager._connections = {}
+    assert client.post("/api/modules/sound/unfile-todos", json={}).status_code == 503
+
+
+def test_unfile_script_reports_through_the_route():
+    import httpx
+
+    from scripts import unfile_voice_note_todos as script
+
+    seen = []
+
+    def handler(request):
+        seen.append((request.url.path, request.content))
+        return httpx.Response(200, json={"ok": True, "apply": True, "removed": 1, "todos": [
+            {"id": 12, "title": "Call Mom", "text": "Call Mom", "status": "open",
+             "ref": "n"}]})
+
+    args = script.parse_args(["--apply", "--only", "12"])
+    with httpx.Client(base_url="http://hub", transport=httpx.MockTransport(handler)) as c:
+        assert script.run(c, args) == 0
+    assert seen == [("/api/modules/sound/unfile-todos", b'{"apply":true,"ids":[12]}')]
+    assert script.report({"apply": False, "todos": [
+        {"id": 12, "title": "Call Mom", "status": "open"}]}).splitlines() == [
+        "1 to-dos would be removed (run again with --apply):", "- #12 [open] Call Mom"]
+    assert script.parse_args([]).apply is False
