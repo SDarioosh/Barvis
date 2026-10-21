@@ -36,6 +36,12 @@ source (odysseus-sound, notes, chat …) ── Evidence ──▶ ledger (belie
 on first use. No upstream model or database changes. Odysseus never opens a module's
 database; the ledger holds only what sources submitted.
 
+Matching runs on indexes so intake stays flat as the ledger grows: `(owner, norm)` and a
+partial index `beliefs_owner_corrected` on `(owner, owner_norm)` over corrected beliefs
+only (a full index there, almost all NULLs, was replaced on open), and
+`(owner, subject_id)` for the per-subject counts. `submit` and `reconcile_source` run
+`PRAGMA optimize` after each batch, and so does a migration.
+
 | Table | Columns |
 |---|---|
 | `beliefs` | `id`, `owner` (`''` without auth), `subject` (the name the source used), `about` (`owner`, `person`, `other`), `text`, `norm` (matching key), `category` (`fact`, `preference`, `contact`), `status` (`tentative`, `confirmed`, `stale`, `rejected`), `confirmed_by` (`source`, `owner`, `rule` or null), `first_seen`, `last_seen`, `valid_until` (ISO dates), `memory_id` (the mirrored memory), `created_at`, `updated_at` (UTC ISO), `owner_text` (the owner's correction; when set, memory shows it), `owner_norm`, `note` (e.g. the reason given when forgetting); Phase 2: `subject_id` (the [subject](#subjects-and-contacts-21)), `attribute`, `value`, `valid_from`, `structured_at` ([structure](#structure-22)) |
@@ -563,6 +569,10 @@ Lines that don't fit `max_chars` are skipped; "" when nothing matches.
 - Same discipline as upstream's memory writers: a strict read (`load_all_for_update`,
   never saving over a store it couldn't read) and the save right after, under the
   ledger's lock.
+- `sync_memory(owner, belief_ids=[...])` reconciles only those beliefs' entries (added,
+  updated or removed) and leaves every other entry exactly as it is. The owner actions
+  and subject edits use it (one click no longer re-reads and compares every mirrored
+  belief); the jobs run the full sync.
 
 ## The odysseus-sound facts job
 
