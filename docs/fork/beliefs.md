@@ -186,18 +186,39 @@ owner: another owner's belief id answers 404.
 
 | Route | Does |
 |---|---|
-| `GET /api/beliefs?status=&subject=` | `{"beliefs": [...], "stats": {...}}`. `status`: `tentative`, `confirmed`, `stale`, `rejected` or `all`; without it, all but rejected. `subject`: case-insensitive exact match. 400 for an unknown status. |
+| `GET /api/beliefs?status=&subject=&attribute=` | `{"beliefs": [...], "stats": {...}}`. `status`: `tentative`, `confirmed`, `stale`, `rejected` or `all`; without it, all but rejected. `subject`: case-insensitive exact match. `attribute`: one of the [attribute vocabulary](#structure-22) (structured beliefs only). 400 for an unknown status or attribute. |
 | `GET /api/beliefs/{id}` | the belief with its evidence and 20 newest events |
 | `POST /api/beliefs/{id}/confirm` | `confirm`: confirmed by the owner (also a stale belief: restored and kept for good) |
 | `POST /api/beliefs/{id}/correct` `{"text"}` | `correct`; 400 on empty text |
 | `POST /api/beliefs/{id}/restore` | `restore`: back to tentative, then the rule |
 | `POST /api/beliefs/{id}/forget` `{"reason"?}` | `reject`, then `propagate_forget`; answers `{"belief", "propagated": {"retired", "failed", "unsupported"}}` |
+| `GET /api/beliefs/subjects?kind=` | `{"subjects": [...], "stats"}` (`list_subjects`: counts per status, aliases, source person ids); `kind`: `person`, `project`, `thing` or `owner`; 400 for another kind |
+| `GET /api/beliefs/subjects/{id}` | `{"subject", "beliefs", "summary", "stats"}`: the subject, its beliefs of every status but rejected (with `attribute`, `value`, `valid_from`) and `subject_summary` |
+| `POST /api/beliefs/subjects/{id}/kind` `{"kind"}` | `set_subject_kind`: `person`, `project` or `thing` |
+| `POST /api/beliefs/subjects/{id}/rename` `{"display"}` | `rename_subject` |
+| `POST /api/beliefs/subjects/{id}/link` `{"contact_id"}` | `link_contact`; the id must be one of the owner's contacts (else 400) |
+| `POST /api/beliefs/subjects/{id}/unlink` | `unlink_contact` |
+| `POST /api/beliefs/subjects/merge` `{"keep_id", "drop_id"}` | `merge_subjects`; answers the kept subject |
+| `GET /api/beliefs/contacts` | the owner's Odysseus contacts for the link picker, `{"contacts": [{"id", "name", "subject_id"}]}` by name (`subject_id`: the subject the contact is linked to, or null). Read with the contacts routes' own listing (`routes/contacts`: the local book or CardDAV, owner-scoped the same way) |
+| `GET /api/beliefs/contact/{contact_id}?status=` | `{"contact_id", "beliefs"}` (`beliefs_for_contact`; `status` as for `/api/beliefs`). For a later contact-card integration; no upstream UI uses it yet |
 | `POST /api/beliefs/run` | the facts job for this owner now (`module_facts.sync`, at most 60 s); `{"summary": <counts line>, "stats"}`. 503 when the module isn't connected, 409 when `MODULE_FACTS_SYNC=off`, 502 on a failed call, 504 on timeout |
 
-The page has a count per status, tabs Tentative / Confirmed / Stale / Rejected (the tab
-is kept for the browser session), a subject filter, and the beliefs grouped by subject.
-Each card shows the text (the owner's correction marked "edited"), category, a status
-chip with how it was confirmed (by its source, by the rule, by you), first and last seen
+Subject routes answer 400 with the ledger's message for invalid input (a name another
+subject has, a contact already linked to another subject, the owner subject's kind,
+dropping the owner subject, merging a subject into itself) and 404 for an unknown or
+another owner's subject. Belief ids are `int` path parameters (`{belief_id:int}`), so a
+literal path another router adds under `/api/beliefs/` (such as `/search`) still reaches
+that router.
+
+The page has a count per status, a search box, a **By status / By subject** toggle (kept
+for the browser session), and in By status tabs Tentative / Confirmed / Stale / Rejected
+(the tab is kept for the browser session), a subject filter, an attribute filter (the
+vocabulary of [Structure](#structure-22)) and the beliefs grouped by subject (the
+subject's name opens it).
+Each card shows the text (the owner's correction marked "edited"), its subject's kind
+icon, a status chip with how it was confirmed (by its source, by the rule, by you), the
+attribute and value when structured ("Lives in: Lisbon (since …)"), category, first and
+last seen
 ("not heard since" for stale ones), and one line per evidence: source name, times ×
 days, the dates and a link that opens in a new tab (odysseus-sound's are signed
 transcript links). Gone evidence is marked "no longer reported".
@@ -211,6 +232,32 @@ transcript links). Gone evidence is marked "no longer reported".
 
 Edit is an inline text field (Save / Cancel; Enter / Escape) that calls `correct`.
 **Sync now** calls `/api/beliefs/run` and reloads.
+
+**By subject** (plan stage 2.1) lists the subjects (the owner first, then by name), with a
+name filter and a kind filter. Each card shows the name, a kind chip (You, Person,
+Project, Thing), the aliases, the counts per status, the linked contact's name and the
+names the sources use, and these buttons:
+
+| Button | Does |
+|---|---|
+| Open | the subject: its summary paragraph (`subject_summary`; "no summary" while nothing is confirmed) and its beliefs (all but rejected) grouped by attribute in vocabulary order, each group under a label chip ("Lives in", "Works at" …), unstructured ones under "Other"; every belief card has its usual buttons |
+| Kind (dropdown) | Person, Project or Thing (`kind`); not on the owner subject |
+| Rename | inline field; the old name stays an alias; a name another subject has is refused (merge instead) |
+| Link contact / Change contact | a picker over `/api/beliefs/contacts` with a search box; a contact already linked to another subject is shown with that subject's name and can't be picked (merge the two instead) |
+| Unlink | removes the contact link |
+| Merge into… | pick the subject this one is the same as, confirm; its beliefs, names and person ids move there and it is removed (not on the owner subject; it can be the target) |
+
+**What linking does.** The subject gets the contact's `uid` (`contact_id`); memory
+mirrors right away, so every confirmed belief about the subject carries `contact_id` in
+its memory entry (text unchanged), and `beliefs_for_contact` (`GET
+/api/beliefs/contact/{id}`) answers for that contact. Contact cards in Odysseus don't show
+beliefs yet (no upstream UI change).
+
+**Search.** The box at the top calls `GET /api/beliefs/search?q=…&status=all` (the
+ranked search of stage 2.3, `routes/belief_search_routes.py`) and shows the hits as
+belief cards with their `why`. While that route isn't installed (404) the page falls back
+to a plain text match over the beliefs (every word in the text, the subject or the
+structured value) and says so.
 
 **What Forget does.** After a confirmation prompt, the belief is rejected here first
 (out of memory at once, and it stays rejected whatever arrives later). Then each
@@ -348,7 +395,7 @@ the facts job; posts nothing to chat; queued with the other model-backed tasks):
 
 A subject of kind `project` groups everything known about a project. It becomes one:
 
-- by the owner: `set_subject_kind(owner, id, "project")` (the review page, later);
+- by the owner: `set_subject_kind(owner, id, "project")` (the review page's Kind dropdown);
 - at creation, when it isn't a person (`about` isn't `person`, no source person id) and its
   name matches `\b(project|launch|release|migration|plan)\b` (case-insensitive):
   "Project Heron", "Spring launch";
