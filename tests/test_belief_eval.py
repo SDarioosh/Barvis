@@ -173,7 +173,7 @@ def test_cleanup_removes_exactly_what_the_eval_seeded(tmp_path, monkeypatch, cap
     assert not any(t == belief_eval.OWN_MEMORY for _, t in texts)
     assert {t for o, t in texts if o == owner and "(source:" in t} == {
         "Ana Silva keeps bees (source: /view/c15)", "Ana Silva has a red kayak (source: /view/c17)",
-        f"{belief_eval.CELLO} (source: /notes#real-note-1)"}  # two sources now: kept, confirmed
+        f"{belief_eval.CELLO} (source: {belief_eval.module_link(9003)})"}  # kept, confirmed by two sources; the transcript link outranks the note
     assert not manifest.exists()
     # Cleanup twice: nothing recorded any more.
     assert belief_eval.main(["--cleanup", "--data-dir", str(tmp_path)]) == 2

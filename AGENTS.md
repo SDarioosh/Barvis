@@ -57,11 +57,9 @@ Fork code so far: `src/mcp_trust.py`, `src/mcp_stdio_owner.py`, `src/mcp_session
 `src/skill_invocation.py`, `src/offered_reads.py`, `src/module_action_items.py`,
 `src/sound_module_view.py`, `src/web_turn_scope.py`, `src/module_turn_scope.py`,
 `src/checklist_auto_archive.py`, `src/module_facts.py`, `src/evidence_intake.py`, `src/today_insight.py`,
+`src/notes_evidence.py`,
 `routes/sound_module_routes.py`, `routes/today_insight_routes.py`, `routes/beliefs_routes.py`, `static/sound-module.html`,
 `static/today.html`, `static/js/today.js`, `static/beliefs.html`, `static/js/beliefs.js`,
-`src/notes_evidence.py`,
-`routes/sound_module_routes.py`, `routes/today_insight_routes.py`, `static/sound-module.html`,
-`static/today.html`, `static/js/today.js`,
 `static/js/soundModule.js`, `static/js/forkChatAsk.js`, `static/js/forkEntityHash.js`,
 `scripts/modules_setup.py`, `scripts/belief_eval.py`,
 `scripts/module_slash_eval.py`, `scripts/fork_deploy.sh`, `docker/fork.override.yml`,
@@ -71,8 +69,8 @@ their tests (`tests/test_mcp_trust.py`,
 `tests/test_module_action_items.py`, `tests/test_sound_module_view.py`, `tests/test_web_turn_scope.py`,
 `tests/test_module_turn_scope.py`, `tests/test_calendar_reminder_wall_time.py`,
 `tests/test_checklist_auto_archive.py`, `tests/test_module_facts.py`, `tests/test_evidence_intake.py`,
-`tests/test_today_insight.py`, `tests/test_beliefs_routes.py`), and the hooks listed in [FORK.md](FORK.md).
-`tests/test_today_insight.py`, `tests/test_notes_evidence.py`), and the hooks listed in [FORK.md](FORK.md).
+`tests/test_today_insight.py`, `tests/test_beliefs_routes.py`, `tests/test_notes_evidence.py`,
+`tests/test_belief_eval.py`), and the hooks listed in [FORK.md](FORK.md).
 
 ## Fork rules (merge-friendly)
 
