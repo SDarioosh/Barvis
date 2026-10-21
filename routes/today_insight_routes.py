@@ -1,9 +1,14 @@
 """Fork: the Today insight page and its data (``src/today_insight.py``).
 
 * ``GET  /today``: ``static/today.html`` (sidebar: Today).
-* ``GET  /api/insight/today``: today's insight with its ``votes`` (404 when none yet).
+* ``GET  /api/insight/today``: today's insight with its ``votes`` (404 when none yet),
+  plus ``refreshing`` and ``refresh_error`` for the page's Refresh.
 * ``POST /api/insight/today/vote`` {vote: up|down}: 👍/👎 on today's insight.
-* ``POST /api/insight/refresh``: write it now, even when the inputs didn't change.
+* ``POST /api/insight/refresh``: write it now, even when the inputs didn't change. Starts
+  the work in the background and answers 202 ``{"status": "started"|"running",
+  "generated": <the current insight's generated or null>}`` at once (a model call takes
+  longer than the request timeout); the page polls ``GET /api/insight/today`` until
+  ``generated`` changes or ``refreshing`` is false.
 * ``GET  /api/codex/insight/today``: for API-token clients (odysseus-sound's phone and PC
   relays, the T5 PDA) with scope ``insight:read``; same JSON without ``input_hash`` and
   ``votes``, 404 ``{"error": "no insight yet"}`` when there is none.
@@ -14,6 +19,8 @@ ticked through the notes API's own ``toggle`` route, not a new one.
 
 from __future__ import annotations
 
+import asyncio
+import contextvars
 import logging
 import os
 from typing import Any
@@ -39,8 +46,42 @@ def _owner(request: Request) -> str:
     return effective_user(request) or ""
 
 
-def _no_insight() -> JSONResponse:
-    return JSONResponse(status_code=404, content={"error": "no insight yet"})
+def _no_insight(**extra: Any) -> JSONResponse:
+    return JSONResponse(status_code=404, content={"error": "no insight yet", **extra})
+
+
+# Refresh runs per owner; asyncio keeps only weak references to tasks, so hold them.
+_REFRESHES: dict[str, asyncio.Task] = {}
+_REFRESH_ERRORS: dict[str, str] = {}
+
+
+def _refreshing(owner: str) -> bool:
+    task = _REFRESHES.get(owner)
+    return task is not None and not task.done()
+
+
+def _refresh_state(owner: str) -> dict[str, Any]:
+    return {"refreshing": _refreshing(owner), "refresh_error": _REFRESH_ERRORS.get(owner)}
+
+
+async def _refresh(owner: str) -> None:
+    try:
+        if await ti.generate_now(owner, wait_quiet=False) is None:
+            _REFRESH_ERRORS[owner] = ("The model's answer wasn't usable; the previous "
+                                      "insight stays.")
+    except Exception as e:  # noqa: BLE001 -- shown on the page
+        logger.warning("today insight refresh failed: %s", e)
+        _REFRESH_ERRORS[owner] = f"Couldn't write the insight: {e}"
+
+
+def start_refresh(owner: str) -> str:
+    """Start a refresh unless one is running; ``started`` or ``running``."""
+    if _refreshing(owner):
+        return "running"
+    _REFRESH_ERRORS.pop(owner, None)
+    # A fresh context: the request's own state (authority, activity) stays behind.
+    _REFRESHES[owner] = asyncio.create_task(_refresh(owner), context=contextvars.Context())
+    return "started"
 
 
 def setup_today_insight_routes() -> APIRouter:
@@ -63,10 +104,11 @@ def setup_today_insight_routes() -> APIRouter:
 
     @router.get("/api/insight/today", dependencies=[Depends(require_admin)])
     async def insight(request: Request):
-        found = ti.load_today(_owner(request))
+        owner = _owner(request)
+        found = ti.load_today(owner)
         if not found:
-            return _no_insight()
-        return {**ti.public(found), "votes": found.get("votes") or []}
+            return _no_insight(**_refresh_state(owner))
+        return {**ti.public(found), "votes": found.get("votes") or [], **_refresh_state(owner)}
 
     @router.post("/api/insight/today/vote", dependencies=[Depends(require_admin)])
     async def vote(request: Request, body: Vote) -> dict[str, Any]:
@@ -77,13 +119,10 @@ def setup_today_insight_routes() -> APIRouter:
 
     @router.post("/api/insight/refresh", dependencies=[Depends(require_admin)])
     async def refresh(request: Request):
-        try:
-            found = await ti.generate_now(_owner(request))
-        except Exception as e:  # noqa: BLE001 -- the page shows the message
-            logger.warning("today insight refresh failed: %s", e)
-            raise HTTPException(502, f"Couldn't write the insight: {e}") from e
-        if not found:
-            raise HTTPException(502, "The model's answer wasn't usable; try again.")
-        return {**ti.public(found), "votes": found.get("votes") or []}
+        owner = _owner(request)
+        current = ti.load_today(owner)
+        status = start_refresh(owner)
+        return JSONResponse(status_code=202, content={
+            "status": status, "generated": (current or {}).get("generated")})
 
     return router
