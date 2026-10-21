@@ -45,6 +45,7 @@ async function api(path, options = {}) {
   if (!res.ok) {
     const err = new Error(data.detail || data.error || `HTTP ${res.status}`);
     err.status = res.status;
+    err.data = data;
     throw err;
   }
   return data;
@@ -228,14 +229,53 @@ async function load() {
   }
 }
 
+const POLL_MS = 4000;
+const POLL_LIMIT_MS = 15 * 60 * 1000;
+
+function note(text, error = false) {
+  const n = $('#ti-note');
+  n.textContent = text || '';
+  n.className = error ? 'bs-status error' : 'bs-status';
+  n.hidden = !text;
+}
+
+// Today's insight, or the 404 body ({error, refreshing, refresh_error}) when there is none.
+async function fetchToday() {
+  try {
+    return await api('/api/insight/today');
+  } catch (e) {
+    if (e.status === 404) return { missing: true, ...(e.data || {}) };
+    throw e;
+  }
+}
+
+// Refresh runs in the background (a model call outlasts a request); poll until the
+// insight's `generated` changes or the server says it stopped.
 async function refresh() {
   const btn = $('#ti-refresh');
   btn.disabled = true;
   btn.textContent = 'Writing…';
+  note('Writing a new insight. The local model can take a few minutes.');
   try {
-    render(await postJSON('/api/insight/refresh'));
+    const started = await postJSON('/api/insight/refresh');
+    const before = started.generated || null;
+    const end = Date.now() + POLL_LIMIT_MS;
+    while (Date.now() < end) {
+      await new Promise(resolve => setTimeout(resolve, POLL_MS));
+      const now = await fetchToday();
+      if (!now.missing && now.generated && now.generated !== before) {
+        note('');
+        render(now);
+        return;
+      }
+      if (!now.refreshing) {
+        note(now.refresh_error || 'Nothing new was written.', !!now.refresh_error);
+        return;
+      }
+    }
+    note('Still writing; reload the page later.');
   } catch (e) {
-    status(`Couldn't write the insight: ${e.message}`, true);
+    note(`Couldn't write the insight: ${e.message}`, true);
   } finally {
     btn.disabled = false;
     btn.textContent = 'Refresh';

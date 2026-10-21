@@ -44,15 +44,20 @@ else the owner's personal assistant's timezone, else the server's.
   single event, `<series uid>::<YYYY-MM-DD>` (all-day) or `<series uid>::<YYYY-MM-DDTHH:MM>`
   for an occurrence of a recurring series, so refs match the T5 feed's `calendar` list.
   The "ended" and "+7 days" checks apply to each occurrence, not the series' first date.
-- Input hash: SHA-256 over the candidate list, the memory texts, the digest text and the
-  open action-item lines. The model runs only when there is no insight for today yet or
+- Input hash: SHA-256 over the candidate list, the memory texts (sorted, so a chat that
+  only bumps use counts and reorders them changes nothing), the digest text and the open
+  action-item lines. The model runs only when there is no insight for today yet or
   the hash differs from the stored one; otherwise the run is a no-op. With no candidates
   at all, a fixed "nothing is due" insight is stored without the model.
 
 ### The model's part
 
 The local model (the hub's background-task chain, `llm_call_async_with_fallback`,
-thinking off) only picks refs and writes the reasons. It is asked for JSON only:
+thinking off) only picks candidates and writes the reasons. In the prompt each candidate
+has a short label instead of its ref: `T1`, `T2`, … for to-dos and `E1`, … for events, in
+candidate order (a small model copied the long ids badly: it dropped the `todo:`/`event:`
+prefix, the item index or the occurrence date). It is asked for JSON only, with labels as
+`ref`:
 
 ```json
 {"headline": "1-2 sentences",
@@ -63,10 +68,17 @@ thinking off) only picks refs and writes the reasons. It is asked for JSON only:
 
 The prompt: overdue and due-today first, but items not due today still count; use the
 memory facts to personalise the reasons; keep reasons concrete. The answer is validated in
-code: refs not in the candidate list are dropped, a ref is used once across sections, at
-most 5 per section, `why` is cut to 80 characters, the headline to 300. Unparseable JSON
-is retried once; if that fails too, the previous insight (if any) stays and the run is
-logged as failed in Activity.
+code: each `ref` is mapped back to a candidate ref (a label; an exact ref; as a last
+resort a ref that matches exactly one candidate once the prefix is gone, by its start, as
+a bare note id or series uid, or by its end; dates and short fragments never match), and
+anything else is dropped. A ref is used once across sections, at most 5 per section, `why`
+is cut to 80 characters, the headline to 300. An answer that is not usable JSON, or that
+names no candidate at all although there are candidates, is retried once with a
+corrective message; if that fails too, the previous insight (if any) stays, nothing
+all-empty is stored, and the run is logged as failed in Activity.
+
+The scheduled run waits for chat to go quiet before calling the model (as the other
+model-backed built-ins do); the page's Refresh doesn't.
 
 ## Stored JSON
 
@@ -96,9 +108,9 @@ it. `votes` are 👍/👎 from the page, kept when the insight is rewritten late
 | Route | Auth | Answer |
 |---|---|---|
 | `GET /api/codex/insight/today` | API token with scope **`insight:read`** (or a browser session) | today's JSON without `input_hash` and `votes`; 404 `{"error": "no insight yet"}`; 403 without the scope |
-| `GET /api/insight/today` | admin session (as `/modules/sound`) | the same plus `votes`; 404 when none |
+| `GET /api/insight/today` | admin session (as `/modules/sound`) | the same plus `votes`, `refreshing` (a Refresh is running) and `refresh_error` (why the last one wrote nothing); 404 `{"error", "refreshing", "refresh_error"}` when none |
 | `POST /api/insight/today/vote` | admin session | body `{"vote": "up" \| "down"}`; answers `{"ok": true, "votes": [...]}` |
-| `POST /api/insight/refresh` | admin session | writes it now, even when the inputs didn't change (the page's Refresh); 502 when the model's answer wasn't usable |
+| `POST /api/insight/refresh` | admin session | starts writing it now in the background, even when the inputs didn't change, and answers 202 `{"status": "started" \| "running", "generated": <current insight's generated or null>}` at once (a model call outlasts the 45 s request timeout) |
 | `GET /today` | session | the page |
 
 `insight:read` is in `ALLOWED_SCOPES` and in Admin → Tokens. odysseus-sound's phone and PC
@@ -118,7 +130,9 @@ look with each item's title and reason, in the odysseus-sound page's style.
   `/#event-<uid>` for a single event (highlighted), `/#event-<YYYY-MM-DD>` for an
   occurrence of a recurring series (the calendar would resolve its compound uid to the
   series' first day).
-- 👍/👎 store a vote and show the latest one. **Refresh** rewrites the insight now.
+- 👍/👎 store a vote and show the latest one. **Refresh** starts a new insight and shows
+  "Writing…" while it polls `GET /api/insight/today` every 4 s until `generated` changes
+  (then shows it) or `refreshing` turns false (then shows `refresh_error`).
 
 ## In chat
 
@@ -138,10 +152,19 @@ off, as in incognito).
 | `MODULE_ACTION_ITEMS_SERVER` | `convo` | the odysseus-sound MCP server |
 | interval | every 15 min | the task's schedule in Tasks |
 
+## Known limits
+
+- Upstream cancels a running model-backed task on any non-passive request ("Stopped by
+  user" in Activity), and `/api/codex/*` is not on its passive list. A relay fetching
+  `GET /api/codex/insight/today` while the scheduled run is generating cancels that
+  generation; the next 15-minute run does it again. Upstream is left unchanged for this.
+  A Refresh started from the page is not a scheduled task and isn't cancelled that way.
+
 ## Measure
 
 Tests on fictional data (`tests/test_today_insight.py`): buckets, shopping lists by note
 type and due date, candidate order and cap, ref validation, the hash no-op, a fake model
-(good JSON, garbage once, garbage twice), storage, votes, `context_block`, the token
+(good JSON, garbage once, garbage twice, labels, bare ids, empty sections twice), the
+memory-order-independent hash, the Refresh route's 202 and the no-wait flag, storage, votes, `context_block`, the token
 route's scope, and the real database loaders. The insight on the owner's data and its
 time on the server's model are part of the Server verification (stage 0.7).
