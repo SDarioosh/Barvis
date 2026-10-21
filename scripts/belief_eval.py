@@ -20,23 +20,33 @@ reconciles the source with those ids, applies decay and mirrors memory once.
 answer has the expected facts and their links. It needs ``--data-dir`` set to that
 instance's data directory (sandbox only) and ``--owner`` set to the login user.
 
+Every run writes a manifest (``belief_eval.<owner>.json`` in the data dir) of the beliefs
+and the one own memory it created; ``--cleanup`` deletes exactly those (beliefs whose
+evidence is all the eval's own) and their memory copies, nothing else.
+
 Usage:
     venv/bin/python scripts/belief_eval.py                      # temp dir, removed after
     venv/bin/python scripts/belief_eval.py --data-dir /tmp/belief-eval --keep
     venv/bin/python scripts/belief_eval.py --data-dir <instance data dir> --owner admin \\
         --chat --bakeoff <odysseus-sound>/server/eval/bakeoff.py
+    venv/bin/python scripts/belief_eval.py --cleanup --data-dir <dir> --owner admin
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import re
+import shlex
 import shutil
+import sqlite3
 import sys
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 
 REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
@@ -46,6 +56,7 @@ OWNER = "eval-owner"
 ME, PRIYA, TOMAS, LENA, HERON = ("Sam Rivera", "Priya Nair", "Tomas Berg", "Lena Okafor",
                                  "Project Heron")
 MODULE, NOTES = "odysseus-sound", "notes"
+NOTE_PREFIX = "belief-eval-note-"  # the eval's note ids: never a real note's id
 SETTINGS_ENV = ("BELIEF_CONFIRM_SOURCES", "BELIEF_CONFIRM_TIMES", "BELIEF_CONFIRM_DAYS",
                 "BELIEF_STALE_DAYS")
 OWN_MEMORY = "Sam Rivera keeps the spare bike key in the blue drawer"
@@ -107,7 +118,7 @@ def module_link(fact_id: int) -> str:
 
 
 def note_link(note: str) -> str:
-    return f"/notes#note-{note}"
+    return f"/notes#{NOTE_PREFIX}{note}"
 
 
 @dataclass
@@ -168,7 +179,7 @@ class Run:
         """A single sighting written in a note."""
         day = now.date().isoformat()
         self.ledger.submit(self.owner, [self.ledger.Evidence(
-            source=NOTES, source_id=f"note-{note}", subject=subject, about=about, text=text,
+            source=NOTES, source_id=f"{NOTE_PREFIX}{note}", subject=subject, about=about, text=text,
             link=note_link(note), seen_first=day, seen_last=day)], now=now)
 
     # ------------------------------------------------------------------- reads
@@ -214,6 +225,12 @@ class Run:
 
 def _eval_id(source_id: str) -> bool:
     return source_id.isdigit() and 9001 <= int(source_id) <= 9099
+
+
+def _eval_evidence(source: str, source_id: str) -> bool:
+    """Evidence this eval submits: module fact ids 9001-9099, notes ``belief-eval-note-*``."""
+    return ((source == MODULE and _eval_id(source_id))
+            or (source == NOTES and source_id.startswith(NOTE_PREFIX)))
 
 
 def scenario(r: Run) -> None:
@@ -332,7 +349,7 @@ def scenario(r: Run) -> None:
     r.expect("two-sources", "10-08 + a note", ROTTERDAM, CONF_RULE)
     r.note(at(10, 8, 8), "3", PRIYA, "person", BIRTHDAY_FIX)
     r.check("corrected", "10-08 note with the corrected text joins",
-            "9007,9015,note-3",
+            f"9007,9015,{NOTE_PREFIX}3",
             ",".join(e["source_id"] for b in r.find(BIRTHDAY_FIX) for e in b["evidence"]))
     r.note(at(10, 8, 8), "4", PRIYA, "person", TRAIL)
     r.note(at(10, 8, 19), "5", PRIYA, "person", TRAIL)
@@ -416,18 +433,31 @@ def memory_checks(r: Run, now: datetime) -> None:
             path.read_bytes() == before)
 
 
-def seed_own_memory(owner: str) -> None:
-    """One memory the owner wrote: the mirror must never touch it."""
+def seed_own_memory(owner: str) -> str:
+    """One memory the owner wrote: the mirror must never touch it. Returns its id."""
     from src import constants
     from src.memory import MemoryManager
 
     manager = MemoryManager(constants.DATA_DIR)
     entries = manager.load_all_for_update()
-    if any(e.get("text") == OWN_MEMORY and (e.get("owner") or "") == owner for e in entries):
-        return
-    entries.append(manager.add_entry(OWN_MEMORY, source="user", category="fact",
-                                     owner=owner or None))
-    manager.save(entries)
+    for e in entries:
+        if e.get("text") == OWN_MEMORY and (e.get("owner") or "") == owner:
+            return str(e["id"])
+    entry = manager.add_entry(OWN_MEMORY, source="user", category="fact", owner=owner or None)
+    manager.save([*entries, entry])
+    return entry["id"]
+
+
+def manifest_path(data_dir: str | Path, owner: str) -> Path:
+    slug = "".join(c if (c.isalnum() or c in "-_.@") else "_" for c in (owner or "default"))
+    return Path(data_dir) / f"belief_eval.{slug}.json"
+
+
+def _created(ledger, owner: str, before: set[int]) -> list[int]:
+    """Beliefs that are new since ``before`` and backed only by the eval's evidence."""
+    return sorted(b["id"] for b in ledger.list_beliefs(owner, limit=100000)
+                  if b["id"] not in before and b["evidence"]
+                  and all(_eval_evidence(e["source"], e["source_id"]) for e in b["evidence"]))
 
 
 def run_eval(data_dir: str | Path, owner: str = OWNER) -> list[Check]:
@@ -446,16 +476,89 @@ def run_eval(data_dir: str | Path, owner: str = OWNER) -> list[Check]:
         norms = {ledger.normalize(t) for t in ALL_TEXTS}
         taken = [b["text"] for b in ledger.list_beliefs(owner, limit=100000)
                  if ledger.normalize(b["text"]) in norms]
+        existing = ledger.list_beliefs(owner, limit=100000)
+        taken += [f"{e['source']}:{e['source_id']}" for b in existing for e in b["evidence"]
+                  if _eval_evidence(e["source"], e["source_id"])]
         if taken:
-            raise SetupError(f"{data_dir} already has this eval's beliefs for owner "
-                             f"{owner!r} ({len(taken)}); use a fresh --data-dir or --owner")
-        seed_own_memory(owner)
+            raise SetupError(f"{data_dir} already has this eval's beliefs or evidence ids for "
+                             f"owner {owner!r} ({len(taken)}); run --cleanup, or use a fresh "
+                             "--data-dir or --owner")
+        before = {b["id"] for b in existing}
+        memory_id = seed_own_memory(owner)
         run = Run(owner)
-        scenario(run)
+        try:
+            scenario(run)
+        finally:  # what to remove with --cleanup, even after a failed run
+            manifest_path(data_dir, owner).write_text(json.dumps(
+                {"owner": owner, "belief_ids": _created(ledger, owner, before),
+                 "memory_id": memory_id}, indent=2) + "\n", encoding="utf-8")
         return run.checks
     finally:
         constants.DATA_DIR = saved_dir
         os.environ.update(saved_env)
+
+
+def cleanup(data_dir: str | Path, owner: str) -> dict[str, int]:
+    """Delete what the eval recorded in its manifest for ``owner``: those beliefs (with
+    their evidence and events) while every evidence is still the eval's own, their memory
+    copies (``sync_memory``), and the seeded own memory. Nothing else. Raises
+    :class:`SetupError` without a manifest."""
+    from src import constants
+    from src import evidence_intake as ledger
+    from src.memory import MemoryManager
+
+    path = manifest_path(data_dir, owner)
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise SetupError(f"no readable eval manifest at {path}: {e}") from e
+    if manifest.get("owner") != owner:
+        raise SetupError(f"{path} is for owner {manifest.get('owner')!r}, not {owner!r}")
+    counts = {"beliefs": 0, "kept": 0, "missing": 0, "memories": 0, "own_memory": 0}
+    saved_dir = constants.DATA_DIR
+    constants.DATA_DIR = str(data_dir)
+    try:
+        db = sqlite3.connect(str(ledger.db_path()), timeout=30, isolation_level=None)
+        try:
+            db.execute("PRAGMA foreign_keys = ON")
+            db.execute("BEGIN IMMEDIATE")
+            for belief_id in manifest.get("belief_ids") or []:
+                if db.execute("SELECT 1 FROM beliefs WHERE id = ? AND owner = ?",
+                              (int(belief_id), owner)).fetchone() is None:
+                    counts["missing"] += 1
+                    continue
+                rows = db.execute("SELECT source, source_id FROM evidence WHERE belief_id = ?",
+                                  (int(belief_id),)).fetchall()
+                if not all(_eval_evidence(src, sid) for src, sid in rows):
+                    counts["kept"] += 1  # another source supports it now: leave it
+                    continue
+                for table_name in ("events", "evidence"):
+                    db.execute(f"DELETE FROM {table_name} WHERE belief_id = ?",
+                               (int(belief_id),))
+                db.execute("DELETE FROM beliefs WHERE id = ? AND owner = ?",
+                           (int(belief_id), owner))
+                counts["beliefs"] += 1
+            db.execute("COMMIT")
+        finally:
+            db.close()
+        counts["memories"] = ledger.sync_memory(owner)["removed"]
+        manager = MemoryManager(constants.DATA_DIR)
+        entries = manager.load_all_for_update()
+        keep = [e for e in entries if not (
+            str(e.get("id")) == str(manifest.get("memory_id"))
+            and e.get("text") == OWN_MEMORY and (e.get("owner") or "") == owner)]
+        if len(keep) != len(entries):
+            manager.save(keep)
+            counts["own_memory"] = len(entries) - len(keep)
+        path.unlink()
+    finally:
+        constants.DATA_DIR = saved_dir
+    return counts
+
+
+def cleanup_command(data_dir: Path, owner: str) -> str:
+    return shlex.join([sys.executable, str(Path(__file__).resolve()), "--cleanup",
+                       "--data-dir", str(data_dir), "--owner", owner])
 
 
 def table(checks: list[Check], out=None) -> int:
@@ -482,23 +585,48 @@ def table(checks: list[Check], out=None) -> int:
 
 # ------------------------------------------------------------------------- chat
 CHAT_QUESTION = f"What do you know about {PRIYA}?"
-CHAT_EXPECT = (  # (label, belief text, words that must all appear, the link to cite)
-    ("peanut allergy", PEANUTS, ("peanut",), module_link(9004)),
-    ("birthday (corrected)", BIRTHDAY_FIX, ("21 may",), note_link("3")),
-    ("design review", REVIEW, ("design review",), module_link(9012)),
+MONTHS = ("january", "february", "march", "april", "may", "june", "july", "august",
+          "september", "october", "november", "december")
+
+
+def mentions_date(text: str, month: int, day: int) -> bool:
+    """Whether ``text`` names this day of the year in a common form, any case: "21 May",
+    "21st of May", "May 21", "May 21st", "Sept. 3", "2026-05-21"."""
+    name = MONTHS[month - 1]
+    abbr = [name[:3]] + (["sept"] if month == 9 else [])
+    mon = "(?:" + "|".join([name] + [rf"{a}\.?" for a in abbr]) + ")"
+    num = rf"0?{day}(?:st|nd|rd|th)?"
+    patterns = (rf"\b{num}\s+(?:of\s+)?{mon}(?![a-z])",
+                rf"\b{mon}\s+(?:the\s+)?{num}\b",
+                rf"\b\d{{4}}-{month:02d}-{day:02d}\b")
+    return any(re.search(p, text or "", re.IGNORECASE) for p in patterns)
+
+
+def citation(link: str) -> str:
+    """The part of a link an answer must contain to cite it: the path of a module link
+    (``/view/<id>``; the signed query string may differ in the hub's copy), else the
+    fragment of a note link."""
+    parts = urlsplit(link)
+    return parts.path if parts.path.startswith("/view/") else (parts.fragment or parts.path)
+
+
+def cites(answer: str, link: str) -> bool:
+    return re.search(re.escape(citation(link)) + r"(?![\w-])", answer or "",
+                     re.IGNORECASE) is not None
+
+
+CHAT_EXPECT = (  # (label, belief text, does the answer state it, the link to cite)
+    ("peanut allergy", PEANUTS, lambda a: "peanut" in a.lower(), module_link(9004)),
+    ("birthday (corrected)", BIRTHDAY_FIX, lambda a: mentions_date(a, 5, 21), note_link("3")),
+    ("design review", REVIEW, lambda a: "design review" in a.lower(), module_link(9012)),
 )
 
 
 def score_answer(answer: str) -> list[tuple[str, bool, bool]]:
-    """Per expected fact: (label, fact in the answer, its link in the answer). A link
-    counts when its path (``view/c<id>``, ``notes#note-<n>``) is there: models often drop the
-    host or the query string."""
-    low = (answer or "").lower()
-    out = []
-    for label, _text, words, link in CHAT_EXPECT:
-        view = link.split("?")[0].split("://", 1)[-1].split("/", 1)[-1]
-        out.append((label, all(w in low for w in words), view.lower() in low))
-    return out
+    """Per expected fact: (label, fact in the answer, its link cited in the answer)."""
+    answer = answer or ""
+    return [(label, bool(states(answer)), cites(answer, link))
+            for label, _text, states, link in CHAT_EXPECT]
 
 
 def chat(bakeoff: Path) -> int:
@@ -512,7 +640,7 @@ def chat(bakeoff: Path) -> int:
     results = score_answer(answer)
     for label, fact, link in results:
         print(f"  {label}: fact {'yes' if fact else 'no'}, link {'yes' if link else 'no'}")
-    old = "12 may" in answer.lower()
+    old = mentions_date(answer, 5, 12)
     print(f"  pre-correction birthday mentioned: {'yes' if old else 'no'}")
     print(f"chat: facts {sum(f for _, f, _ in results)}/{len(results)}, "
           f"links {sum(k for _, _, k in results)}/{len(results)}")
@@ -530,7 +658,20 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--chat", action="store_true",
                     help="also ask a running Odysseus (needs --data-dir and --bakeoff)")
     ap.add_argument("--bakeoff", type=Path, help="odysseus-sound's server/eval/bakeoff.py")
+    ap.add_argument("--cleanup", action="store_true",
+                    help="delete what an earlier run seeded for --owner in --data-dir")
     args = ap.parse_args(argv)
+    if args.cleanup:
+        if not args.data_dir:
+            ap.error("--cleanup needs --data-dir")
+        owner = OWNER if args.owner is None else args.owner
+        try:
+            counts = cleanup(args.data_dir, owner)
+        except SetupError as e:
+            print(f"belief_eval: {e}", file=sys.stderr)
+            return 2
+        print("cleanup: " + ", ".join(f"{v} {k}" for k, v in counts.items()))
+        return 0
     if args.chat and not (args.data_dir and args.bakeoff):
         ap.error("--chat needs --data-dir (the instance's data dir) and --bakeoff")
     owner = args.owner
@@ -553,6 +694,7 @@ def main(argv: list[str] | None = None) -> int:
             shutil.rmtree(data_dir, ignore_errors=True)
     if not temp or args.keep:
         print(f"ledger kept: {data_dir / 'beliefs.db'} (owner {owner!r})")
+        print(f"cleanup: {cleanup_command(data_dir, owner)}")
     return 1 if failed else 0
 
 

@@ -350,7 +350,7 @@ venv/bin/python scripts/belief_eval.py --data-dir /tmp/belief-eval --keep
 - Output: one row per check (`case`, `step`, `expected`, `actual`, `ok`/`FAIL`, with
   `status/confirmed_by/mem|out` for beliefs), then `cases: 18/18   checks: score 74/74`
   and the details of any failure. Exit code 1 on any mismatch, 2 when the data dir already
-  holds this eval's beliefs for the owner.
+  holds this eval's beliefs or evidence ids for the owner (run `--cleanup` first).
 - `--data-dir` (default: a temp dir) and `--owner` (default `eval-owner`) choose where and
   for whom to seed; an explicit `--data-dir` is kept, `--keep` keeps the temp dir. To look
   at the seeded ledger on the review page, seed the owner you log in as (`--owner ''`
@@ -360,7 +360,10 @@ venv/bin/python scripts/belief_eval.py --data-dir /tmp/belief-eval --keep
 `--chat` (optional, not scored, the only non-deterministic part) then asks a running
 Odysseus "What do you know about Priya Nair?" with odysseus-sound's bakeoff client, and
 prints whether the answer has each expected fact (peanut allergy, the corrected
-birthday, the design review) and its link:
+birthday, the design review) and its link, and whether it still gives the old birthday.
+Dates match in either order and any case ("21 May", "21st of May", "May 21st",
+"2026-05-21"); a module link counts when its path (`/view/<id>`) is cited, whatever the
+query string, and a note link when its `#…` id is:
 
 ```bash
 ODYSSEUS_URL=http://127.0.0.1:7010 ODYSSEUS_PASSWORD_FILE=$SBX/admin.txt \
@@ -372,3 +375,21 @@ It seeds that instance's `beliefs.db` and `memory.json` (sandbox or the test ins
 `127.0.0.1:7010`, never production). Other module evidence of that owner is left alone,
 but the instance's own Module Facts pass retires the eval's module facts (ids 9001+), so
 ask right after seeding or set `MODULE_FACTS_SYNC=off` on that instance.
+
+### Cleanup
+
+Each run writes a manifest, `belief_eval.<owner>.json` in the data dir: the ids of the
+beliefs it created and of the own memory it seeded ("Sam Rivera keeps the spare bike
+key …"). A kept dir prints its cleanup command at the end (`--chat` always does):
+
+```bash
+venv/bin/python scripts/belief_eval.py --cleanup --data-dir <dir> --owner admin
+# cleanup: 16 beliefs, 0 kept, 0 missing, 8 memories, 1 own_memory
+```
+
+It deletes exactly those beliefs (with their evidence and events), then runs
+`sync_memory` so their memory copies go, then deletes that one own memory, then the
+manifest. A recorded belief that another source now backs (evidence that isn't the eval's
+module ids 9001–9099 or `belief-eval-note-*` notes) is kept and counted as `kept`. Other
+beliefs, other owners and the owner's other memories are never touched. Without a
+manifest it exits 2. After a cleanup the same owner can be seeded again.
