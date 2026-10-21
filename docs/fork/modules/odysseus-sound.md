@@ -217,6 +217,12 @@ manager and parses their result lines (`src/sound_module_view.py`, test
 and per-line times open the module's signed `/view` links in a new tab (Odysseus' CSP doesn't allow framing another origin).
 Audio isn't kept after transcription, so cards quote lines instead of playing them.
 
+## Today insight
+
+The hub's daily Today insight reads `get_daily_digest` (today) and `list_action_items`
+(`status="open"`, `format="json"`) when the module is connected, and works without them
+otherwise. Details: [../today-insight.md](../today-insight.md).
+
 ## Eval and current score
 
 - Script: `server/eval/bakeoff.py` in odysseus-sound. Seed fictional data first with
