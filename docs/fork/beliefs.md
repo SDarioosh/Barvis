@@ -2,11 +2,15 @@
 
 Stages 1.1 (evidence intake), 1.3 (the [review page](#review-page-13)), 1.4 (forgetting
 propagates) and 1.5 (expiry and decay) of
-[personal-context.md](personal-context.md#phase-1-one-intake-a-review-page-and-forgetting).
-Code: `src/evidence_intake.py` (the ledger), `src/module_facts.py` (its first source) and
-`src/notes_evidence.py` (the owner's notes, [Sources](#sources)); tests
-`tests/test_evidence_intake.py`, `tests/test_module_facts.py` and
-`tests/test_notes_evidence.py`.
+[personal-context.md](personal-context.md#phase-1-one-intake-a-review-page-and-forgetting),
+and, of Phase 2, the hub side of 2.1 ([subjects and contacts](#subjects-and-contacts-21)),
+2.2 ([structure](#structure-22)) and 2.4 ([projects](#projects-24)).
+Code: `src/evidence_intake.py` (the ledger), `src/module_facts.py` (its first source),
+`src/notes_evidence.py` (the owner's notes, [Sources](#sources)) and
+`src/belief_structure.py` (the Belief Structure task); tests
+`tests/test_evidence_intake.py`, `tests/test_module_facts.py`,
+`tests/test_notes_evidence.py`, `tests/test_subjects.py` and
+`tests/test_belief_structure.py`.
 
 Phase 0 copied odysseus-sound's confirmed facts straight into Odysseus memory. Now a
 **belief ledger** sits between the sources and memory:
@@ -34,9 +38,11 @@ database; the ledger holds only what sources submitted.
 
 | Table | Columns |
 |---|---|
-| `beliefs` | `id`, `owner` (`''` without auth), `subject`, `about` (`owner`, `person`, `other`), `text`, `norm` (matching key), `category` (`fact`, `preference`, `contact`), `status` (`tentative`, `confirmed`, `stale`, `rejected`), `confirmed_by` (`source`, `owner`, `rule` or null), `first_seen`, `last_seen`, `valid_until` (ISO dates), `memory_id` (the mirrored memory), `created_at`, `updated_at` (UTC ISO), `owner_text` (the owner's correction; when set, memory shows it), `owner_norm`, `note` (e.g. the reason given when forgetting) |
+| `beliefs` | `id`, `owner` (`''` without auth), `subject` (the name the source used), `about` (`owner`, `person`, `other`), `text`, `norm` (matching key), `category` (`fact`, `preference`, `contact`), `status` (`tentative`, `confirmed`, `stale`, `rejected`), `confirmed_by` (`source`, `owner`, `rule` or null), `first_seen`, `last_seen`, `valid_until` (ISO dates), `memory_id` (the mirrored memory), `created_at`, `updated_at` (UTC ISO), `owner_text` (the owner's correction; when set, memory shows it), `owner_norm`, `note` (e.g. the reason given when forgetting); Phase 2: `subject_id` (the [subject](#subjects-and-contacts-21)), `attribute`, `value`, `valid_from`, `structured_at` ([structure](#structure-22)) |
 | `evidence` | `id`, `belief_id`, `owner`, `source`, `source_id`, `subject`, `about`, `category`, `text` (what the source said), `link`, `seen_first`, `seen_last` (ISO dates), `times`, `days`, `source_confirmed` (0/1), `payload` (JSON of extra fields; `gone: true` and `gone_at` when the source stopped reporting it, `valid_until` when given), `updated_at`. Unique on (`belief_id`, `source`, `source_id`) and on (`owner`, `source`, `source_id`): one source id maps to one belief per owner. |
 | `events` | `id`, `belief_id`, `at`, `kind` (`added`, `evidence`, `confirmed`, `stale`, `rejected`, `corrected`, `restored`, `retired_upstream` (a source stopped reporting it), `unconfirmed` (it no longer meets the rule)), `detail`. A ledger created before `unconfirmed` existed has its `events` table rebuilt with the wider CHECK on first open (rows and ids kept). Only changes are logged (not every hourly re-submit), and only the newest 50 per belief are kept. |
+| `subjects` | see [Subjects and contacts](#subjects-and-contacts-21) |
+| `subject_sources` | see [Subjects and contacts](#subjects-and-contacts-21) |
 
 ## Statuses and the confirmation rule
 
@@ -87,6 +93,7 @@ counts = ledger.submit(owner, [
         category=None,               # fact | preference | contact; None: from about + text
         payload={"note_id": 42},     # extra fields, kept as JSON
         valid_until=None,            # optional ISO date: the belief ends that day
+        person_id=None,              # optional: the source's stable id of the person
     ),
 ], now=None)
 # {"beliefs_added", "evidence_added", "evidence_updated", "confirmed", "unconfirmed",
@@ -141,16 +148,18 @@ ledger.reconcile_source(owner, "notes", present_ids={"note-42:3", ...})
 | Call | Effect |
 |---|---|
 | `confirm(owner, id)` | `confirmed` by `owner`; in memory; never decays |
-| `correct(owner, id, text)` | `owner_text = text`, `confirmed` by `owner`; memory shows the corrected text (same memory id and `uses`); evidence that says the corrected text later lands on this belief |
+| `correct(owner, id, text)` | `owner_text = text`, `confirmed` by `owner`; memory shows the corrected text (same memory id and `uses`); evidence that says the corrected text later lands on this belief; clears `structured_at`, so the Belief Structure task structures it again |
 | `reject(owner, id, reason="")` | `rejected`, out of memory, `note = reason`; returns the evidence list so the caller can propagate the forget |
 | `restore(owner, id)` | `rejected`/`stale` → `tentative`, then the rule (may confirm it again); to keep an old belief for good, confirm it |
-| `list_beliefs(owner, status=None, subject=None, limit=500)` | beliefs with their evidence (`status`: one or a list; `subject` case-insensitive), by subject then most recently seen |
+| `list_beliefs(owner, status=None, subject=None, limit=500, *, subject_id=None, attribute=None)` | beliefs with their evidence (`status`: one or a list; `subject` case-insensitive on the source's name; `subject_id` one subject; `attribute` one of the [vocabulary](#structure-22)), by subject then most recently seen |
 | `get_belief(owner, id)` | one belief with evidence and its 20 newest events |
-| `stats(owner)` | counts per status and `total` |
+| `stats(owner)` | counts per status, `total`, and `structured` (beliefs with `structured_at`) |
 
 A belief dict has `id`, `owner`, `subject`, `about`, `text`, `owner_text`, `shown_text`,
 `category`, `status`, `confirmed_by`, `first_seen`, `last_seen` ("not heard since"),
-`valid_until`, `memory_id`, `created_at`, `updated_at`, `note`, `link` and `source` (of
+`valid_until`, `memory_id`, `created_at`, `updated_at`, `note`, `subject_id`,
+`subject_display`, `subject_kind`, `contact_id` (of its subject), `attribute`, `value`,
+`valid_from`, `structured_at`, `link` and `source` (of
 the citing evidence, see [Memory mirroring](#memory-mirroring)) and `evidence` (each: `id`, `source`, `source_id`, `subject`,
 `about`, `category`, `text`, `link`, `seen_first`, `seen_last`, `times`, `days`,
 `source_confirmed`, `gone`, `payload`, `updated_at`). Another owner's id raises
@@ -218,6 +227,138 @@ the ledger holds and answers `No fact #N.` That is a normal answer, not an error
 `propagate_forget` counts it as `retired`: the fact is gone from the module anyway.
 `Fact #N was already retired.` counts the same way.
 
+## Subjects and contacts (2.1)
+
+Hub side of plan stage 2.1. Every belief belongs to one **subject**: the owner, a person, a
+project or a thing. Names are no longer matched by string alone: a module's stable person
+id maps to one subject, whatever name the module uses for that person today.
+
+| Table | Columns |
+|---|---|
+| `subjects` | `id`, `owner`, `key` (normalized name: lowercase, whitespace collapsed, quotes and trailing punctuation dropped), `display`, `kind` (`person`, `project`, `thing`, `owner`), `kind_by` (`auto` or `owner`: who set the kind), `contact_id` (an Odysseus contact's `uid`, or null), `aliases` (JSON list of other names), `note`, `created_at`, `updated_at`. Unique on (`owner`, `key`). |
+| `subject_sources` | `subject_id`, `owner`, `source` (e.g. `odysseus-sound`), `source_person_id` (the source's stable person id), `name` (the name the source gave last), `updated_at`. Unique on (`source`, `source_person_id`, `owner`): one person id maps to one subject per owner. |
+
+**Resolution** (`submit`, for each new belief and whenever the source changes an item's
+subject or `about`):
+
+1. `about="owner"` → the owner's one subject of kind `owner` (created on first use, named
+   "Owner" unless the first name it hears is a real name; `Me`, `I`, `Owner`, `the owner`
+   are not names). A real name the source uses for the owner becomes an alias.
+2. `Evidence.person_id` already mapped in `subject_sources` → that subject (a new name for
+   it becomes an alias).
+3. A subject whose key or one of whose aliases matches the name (case-insensitive) → that
+   subject.
+4. Else a new subject: `person` for `about="person"`, `project` when the name matches
+   [the project words](#projects-24), else `thing`. Evidence without a subject goes to
+   the subject "General".
+
+A person id seen for the first time is mapped to the subject found. Evidence with a person
+id that joins an existing belief (same text) maps the id to that belief's subject. The
+belief's `subject` column keeps the source's name; `subject_id` is the subject.
+
+**Migration.** A ledger from before Phase 2 (`PRAGMA user_version` < 2) gets the new
+columns on first open, and every belief is filed under a subject from its `subject` and
+`about` (steps 1, 3, 4 above). Lossless: no text, status or evidence changes.
+
+**People from odysseus-sound.** The facts job calls `list_people {"format": "json"}`
+(`{"people": [{"id", "name", "aliases", "is_owner", …}]}` or a bare list) and
+`sync_people(owner, "odysseus-sound", people)`:
+
+- `is_owner` → the owner subject (an owner subject still called "Owner" takes the real
+  name; "Owner" stays an alias); the mapping is moved there if it pointed elsewhere.
+- Else the subject the id maps to, else one whose name or alias matches the person's
+  name or aliases, else a new `person`. A matched inferred `thing` or `project` becomes a
+  `person`.
+- Names and aliases the subject doesn't have become aliases.
+- A person the module no longer lists (merged or deleted there) keeps its mapping: nothing
+  is deleted.
+
+**Functions** (all scoped to the owner; another owner's id raises `SubjectNotFound`, a
+`LookupError`; invalid input raises `ValueError`):
+
+| Call | Effect |
+|---|---|
+| `list_subjects(owner, kind=None)` | subjects (the owner first, then by name), each with `counts` (per status and `total`), `aliases` and `sources` (`[{"source", "person_id", "name"}]`) |
+| `get_subject(owner, id)` | one subject, same shape |
+| `find_subject(owner, name)` | the subject whose name or alias matches, or None |
+| `set_subject_kind(owner, id, kind)` | `person`, `project` or `thing`; `kind_by = owner`, so inference never changes it again; the owner subject keeps its kind |
+| `link_contact(owner, id, contact_id)` / `unlink_contact(owner, id)` | link a subject to an Odysseus contact (`uid` from `routes/contacts`); one contact links to one subject (a second link raises: merge the subjects) |
+| `merge_subjects(owner, keep_id, drop_id)` | beliefs and person ids move to `keep_id`; the dropped name and its aliases join the aliases; its contact link is kept when the kept subject has none, and its kind when the kept one is an inferred `thing`; the owner subject can be kept, never dropped |
+| `rename_subject(owner, id, display)` | new name; the old one becomes an alias; a name another subject has raises (merge instead) |
+| `beliefs_for_contact(owner, contact_id, status=None)` | the beliefs of the subject linked to that contact (empty when none is) |
+| `sync_people(owner, source, people, now=None, mirror=True)` | see above; counts `people`, `subjects_added`, `mapped`, `aliases_added` |
+| `subject_summary(owner, id)` | one paragraph from the subject's confirmed beliefs grouped by attribute, e.g. `Priya Nair (person). lives in: Porto (since 2025-03-01). allergy: peanuts. Also: Priya ran the design review.`; empty when nothing is confirmed. For the insight and chat (2.3). |
+
+Subject changes that affect memory (kind, contact, merge) mirror memory right away.
+
+## Structure (2.2)
+
+Confirmed beliefs get optional structure next to their text: `attribute`, `value`,
+`valid_from` (a date) and `structured_at` (when it was written). The text stays what
+memory shows; structure is for consumers that look beliefs up
+(`beliefs_by_attribute(owner, attribute, subject_id=None, *, status="confirmed")`,
+`subject_summary`).
+
+**Attribute vocabulary** (`evidence_intake.ATTRIBUTES`); anything else becomes `other`:
+
+| Attribute | For |
+|---|---|
+| `lives_in` | a home town or address |
+| `works_at` | an employer |
+| `role` | a job title or role |
+| `birthday` | a birthday |
+| `allergy` | an allergy |
+| `diet` | a diet (vegetarian, no alcohol …) |
+| `likes` / `dislikes` | preferences |
+| `relationship` | how a person relates to the owner or someone else |
+| `owns` | a thing someone owns |
+| `pet` | a pet |
+| `plans` | a stated plan |
+| `decision` | a decision taken |
+| `contact_info` | a phone number, email or handle |
+| `health` | a health fact |
+| `project_status` | where a project stands |
+| `deadline` | a due date |
+| `other` | none of the above |
+
+Only attributes a consumer uses are added (plan risk: over-modelling).
+
+**The Belief Structure task** (`src/belief_structure.py`; built-in, hourly at :15 after
+the facts job; posts nothing to chat; queued with the other model-backed tasks):
+
+- Takes up to 40 **confirmed** beliefs per run with `structured_at` empty
+  (`structure_candidates(owner, limit=40)`), oldest first. A correction (`correct`) or a
+  source edit of the belief's text clears `structured_at`, so the belief is structured
+  again; the old structure stays until then.
+- Sends up to 10 per call to the local model (background workload, thinking off, waits
+  for chat to go quiet): id, subject name, subject kind and text, as data, never as
+  instructions. The answer: `{"items": [{"id", "attribute", "value", "valid_from",
+  "valid_to"}]}`; one retry on unusable JSON, then the batch waits for the next run.
+- Validation (`apply_structure(owner, id, attribute, value, valid_from=None,
+  valid_to=None, *, expected_text=None)`): unknown attribute → `other`; value cut at 120
+  characters; dates must be whole ISO dates; ids outside the batch are dropped. A
+  `valid_to` becomes `valid_until` only when the belief has none yet (then expiry applies
+  as usual). A belief whose text changed while the model answered, or that is no longer
+  confirmed, is left for the next run.
+- Result line, counts only: `structure: 12 to do, 12 structured (2 other), 0 waiting`
+  (`, 1 failed` when a batch had no usable answer). Nothing to do: no model call, not
+  logged in Activity. `BELIEF_STRUCTURE=off` stops it.
+
+## Projects (2.4)
+
+A subject of kind `project` groups everything known about a project. It becomes one:
+
+- by the owner: `set_subject_kind(owner, id, "project")` (the review page, later);
+- at creation, when it isn't a person (`about` isn't `person`, no source person id) and its
+  name matches `\b(project|launch|release|migration|plan)\b` (case-insensitive):
+  "Project Heron", "Spring launch";
+- after structuring, when one of its beliefs gets `project_status` or `deadline` and the
+  subject is still an inferred `thing` that no source maps to a person.
+
+Inference never overrides the owner (`kind_by = owner`) and never turns a person into a
+project. `subject_summary` gives the insight and chat one paragraph per project (used by
+2.3, retrieval).
+
 ## Memory mirroring
 
 `sync_memory(owner)` keeps exactly one Odysseus memory per confirmed belief:
@@ -236,7 +377,9 @@ the ledger holds and answers `No fact #N.` That is a normal answer, not an error
   the transcript.
 - Fields: `source` (the citing evidence's source: `odysseus-sound`, `notes` …),
   `belief_id`, `owner`, `subject`, `about`, `link`, `first_seen`, `last_seen`,
-  `synced_at`. A belief with odysseus-sound evidence also keeps the Phase 0 fields
+  `synced_at`, `subject_id`, `subject_kind` (`owner`, `person`, `project`, `thing`), and
+  `contact_id` while the subject is linked to a contact (removed when unlinked). The text
+  doesn't change; a subject change updates the entry in place. A belief with odysseus-sound evidence also keeps the Phase 0 fields
   `module_fact_id`, `times_said`, `days`, `first_said`, `last_said`.
 - Updated in place (memory id and `uses` kept); copies of beliefs that are no longer
   confirmed, duplicates and copies of unknown beliefs are deleted; nothing is written
@@ -259,10 +402,16 @@ evidence from `odysseus-sound` with the fact id as `source_id`, `first_said`/`la
 as seen dates, `times_said`/`days` as totals and the row's `confirmed` as
 `source_confirmed`. A module that doesn't send `confirmed` per row yet gets a second call
 `{"confirmed": true, "format": "json", "limit": 1000}`, whose ids are the confirmed set.
+Each pass also calls `list_people {"format": "json"}` once and maps the module's people to
+subjects ([Subjects and contacts](#subjects-and-contacts-21)) before the facts are
+submitted; a fact row's `person_id` travels as `Evidence.person_id`. A module that answers
+`list_people` with text or lacks the tool is tolerated (logged once, state
+`people_text_only`); its facts match subjects by name.
 Then `reconcile_source(owner, "odysseus-sound", ids)`, `apply_decay` and one
 `sync_memory`. Result line, counts only: `facts: 12 seen, 1 new, 1 confirmed,
-0 unconfirmed, 0 gone, 0 stale; memory: 11 kept, 1 added, 0 updated, 0 removed`; a pass with no change is not
-logged in Activity.
+0 unconfirmed, 0 gone, 0 stale; memory: 11 kept, 1 added, 0 updated, 0 removed; people:
+4 seen, 0 new` (the people part only when the module answered JSON); a pass with no change
+is not logged in Activity.
 
 ## Sources
 
@@ -324,6 +473,7 @@ states.
 | `BELIEF_STALE_DAYS` | 180 | decay: days without a sighting before a belief confirmed by its source or the rule goes stale |
 | `MODULE_FACTS_SYNC` | on | `off` stops the facts job (memories already mirrored stay) |
 | `EVIDENCE_NOTES` | off | `on` lets the Notes Evidence task submit facts from the owner's plain notes |
+| `BELIEF_STRUCTURE` | on | `off` stops the Belief Structure task (structure already written stays) |
 
 Values below 1 count as 1; a value that isn't a number falls back to the default.
 

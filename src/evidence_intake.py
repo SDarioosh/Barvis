@@ -1133,7 +1133,8 @@ def reject(owner: str | None, belief_id: int, reason: str = "", *,
 def correct(owner: str | None, belief_id: int, text: str, *,
             now: datetime | None = None) -> dict:
     """The owner corrects a belief: ``owner_text`` is what memory shows from now on; the
-    belief is confirmed by the owner. Raises ValueError for empty text."""
+    belief is confirmed by the owner and its structure is redone (``structured_at``
+    cleared). Raises ValueError for empty text."""
     text = " ".join(str(text or "").split())
     if not text:
         raise ValueError("a correction needs text")

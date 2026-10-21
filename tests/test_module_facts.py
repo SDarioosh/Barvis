@@ -379,6 +379,13 @@ def test_category_mapping(about, text, want):
     assert mf.category({"about": about, "fact": text}) == want
 
 
+def test_evidence_carries_the_module_person_id():
+    row = fact(1, "Priya is allergic to peanuts", about="person", subject="Priya")
+    assert mf.evidence(row).person_id is None
+    assert mf.evidence({**row, "person_id": 12}).person_id == "12"
+    assert mf.evidence({**row, "person_id": " "}).person_id is None
+
+
 def test_summary_has_counts_only():
     stats = {"facts": 12, "beliefs_added": 2, "confirmed": 1, "unconfirmed": 3, "gone": 0,
              "stale": 1, "memory_kept": 10, "memory_added": 1, "memory_updated": 0,
