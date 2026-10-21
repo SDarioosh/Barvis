@@ -865,11 +865,11 @@ def measure_structure(corpus: Corpus, owner: str, ids: dict[int, int | None],
 
 
 # ------------------------------------------------------------------------ retrieval
-# Names the retrieval module may use for its embedding lane; the keyword-only run
-# replaces each one that exists with a stand-in that has no embeddings.
-EMBEDDING_HOOKS = ("_embed_query", "embed_query", "_embed", "embed", "_embed_texts",
-                   "embed_texts", "_embedder", "_get_embedder", "get_embedder",
-                   "_embedding_lane", "embedding_lane", "_vector_search", "vector_search")
+# Names the retrieval module may use for its embedding lane (``embedder()`` in
+# src/belief_search.py: the hub's local lane, or None); the keyword-only run replaces each
+# one that exists with a stand-in that answers None, "no lane".
+EMBEDDING_HOOKS = ("embedder", "_embedder", "get_embedder", "_get_embedder", "embed_query",
+                   "_embed_query")
 
 
 def load_search():
@@ -887,7 +887,7 @@ def load_search():
 def keyword_only(module) -> Iterator[list[str]]:
     """Force the keyword fallback: the module's own switch when it has one
     (``force_keyword(bool)`` or ``KEYWORD_ONLY``), else every embedding hook in
-    :data:`EMBEDDING_HOOKS` is replaced by one that fails (the fallback's trigger).
+    :data:`EMBEDDING_HOOKS` is replaced by one that answers None (no lane).
     Yields the names it changed (empty: nothing could be forced)."""
     saved: dict[str, object] = {}
     changed: list[str] = []
@@ -900,7 +900,7 @@ def keyword_only(module) -> Iterator[list[str]]:
         changed.append("KEYWORD_ONLY")
     else:
         def off(*_a, **_k):
-            raise RuntimeError("embedding lane off (belief_eval_scale --keyword run)")
+            return None  # no embedding lane
 
         for name in EMBEDDING_HOOKS:
             if hasattr(module, name):
@@ -914,6 +914,18 @@ def keyword_only(module) -> Iterator[list[str]]:
             module.force_keyword(False)
         for name, value in saved.items():
             setattr(module, name, value)
+
+
+def semantic_used(module, owner: str, corpus: Corpus) -> bool | None:
+    """Whether the module ranked with an embedding lane (``search_details(...)
+    ["semantic"]`` for the first query), or None when it doesn't say."""
+    details = getattr(module, "search_details", None)
+    if not callable(details) or not corpus.queries:
+        return None
+    try:
+        return bool(details(owner, corpus.queries[0].text, k=1).get("semantic"))
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def run_queries(search, owner: str, corpus: Corpus, ids: dict[int, int | None],
@@ -961,8 +973,10 @@ def measure_retrieval(corpus: Corpus, owner: str, ids: dict[int, int | None],
                           "retrieval cases run once stage 2.3 is merged"}
     confirmed = {b["id"] for b in ledger.list_beliefs(owner, status="confirmed", limit=10**7)}
     lanes = {"default": run_queries(module.search_beliefs, owner, corpus, ids, confirmed)}
+    lanes["default"]["semantic"] = semantic_used(module, owner, corpus)
     with keyword_only(module) as changed:
         lanes["keyword"] = run_queries(module.search_beliefs, owner, corpus, ids, confirmed)
+        lanes["keyword"]["semantic"] = semantic_used(module, owner, corpus)
     lanes["keyword"]["forced_by"] = changed or ["nothing: no embedding hook found"]
     checks.append(Check(f"retrieval: top-5 recall >= {min_top5}", "True",
                         str(lanes["default"]["top5"] >= min_top5)))
@@ -1078,6 +1092,9 @@ def report(results: dict, checks: list[Check], out=None) -> int:
             row(f"{lane}: top-5 by kind", ", ".join(f"{k} {x:.2f}"
                                                    for k, x in v["top5_by_kind"].items()))
         row("keyword lane forced by", ", ".join(r["lanes"]["keyword"]["forced_by"]))
+        used = {True: "yes", False: "no (no local lane loaded: same as keyword)",
+                None: "unknown"}[r["lanes"]["default"]["semantic"]]
+        row("default lane used embeddings", used)
     print("\nchecks", file=out)
     for chk in checks:
         print(f"  {'ok  ' if chk.ok else 'FAIL'} {chk.name}"

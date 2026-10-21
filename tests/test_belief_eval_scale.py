@@ -146,18 +146,19 @@ def _module(search, **extra) -> types.ModuleType:
 def test_retrieval_runs_against_a_search_module(tmp_path, monkeypatch):
     calls = []
 
-    def embed_query(text):
-        calls.append(text)
-        return [0.0]
+    def embedder():
+        calls.append(1)
+        return object()
 
     def search(owner, query, **kw):
-        try:
-            module.embed_query(query)
-        except RuntimeError:
-            pass  # the keyword fallback
+        module.embedder()  # None in the keyword lane
         return _subject_search(owner, query, **kw)
 
-    module = _module(search, embed_query=embed_query)
+    def search_details(owner, query, **kw):
+        return {"results": search(owner, query, **kw),
+                "semantic": module.embedder() is not None}
+
+    module = _module(search, embedder=embedder, search_details=search_details)
     monkeypatch.setattr(scale, "load_search", lambda: (module, ""))
     results, checks = scale.run_scale(tmp_path, "small", min_top5=0.0)
     r = results["retrieval"]
@@ -165,9 +166,10 @@ def test_retrieval_runs_against_a_search_module(tmp_path, monkeypatch):
     lanes = r["lanes"]
     assert set(lanes) == {"default", "keyword"}
     n = len(scale.build_corpus(SMALL).queries)
-    assert len(calls) == n  # the embedding hook ran only in the default lane
-    assert lanes["keyword"]["forced_by"] == ["embed_query"]
-    assert module.embed_query is embed_query  # restored
+    assert len(calls) == n + 2  # the real hook: default lane only (+ search_details)
+    assert lanes["keyword"]["forced_by"] == ["embedder"]
+    assert lanes["default"]["semantic"] is True and lanes["keyword"]["semantic"] is False
+    assert module.embedder is embedder  # restored
     for lane in lanes.values():
         assert lane["queries"] == n
         assert 0.0 <= lane["top1"] <= 1.0 and 0.0 < lane["top5"] <= 1.0
