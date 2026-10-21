@@ -607,7 +607,9 @@ class McpManager:
                         ),
                         "exit_code": 1,
                     }
-            result = await self._do_call(session, tool_name, arguments)
+            # Fork: module calls get a deadline (src/mcp_session_recovery.py)
+            from src.mcp_session_recovery import guarded_call
+            result = await guarded_call(self, server_id, session, tool_name, arguments)
         except Exception as e:
             # Auto-reconnect for builtin servers whose subprocess may have died
             if bound_backend is None and self.is_builtin(server_id):
@@ -627,6 +629,11 @@ class McpManager:
                     logger.error(f"MCP reconnect failed for {server_id}")
                     return {"error": f"MCP server crashed and reconnect failed: {server_id}", "exit_code": 1}
             else:
+                # Fork: reconnect a lost HTTP/SSE session and retry once (src/mcp_session_recovery.py)
+                from src.mcp_session_recovery import recover_call
+                recovered = await recover_call(self, server_id, tool_name, arguments, e, session, bound_backend)
+                if recovered is not None:
+                    return recovered
                 logger.error(f"MCP tool call failed: {qualified_name}: {e}")
                 return {"error": str(e), "exit_code": 1}
 

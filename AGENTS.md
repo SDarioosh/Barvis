@@ -53,7 +53,7 @@ Odysseus is large (~478k lines of Python) and fast-moving. Start from these file
 | Tests | `tests/` (see `tests/README.md`, `tests/KNOWN_FAILURES.md`) |
 | Upstream's own rules | `CONTRIBUTING.md`, `SECURITY.md`, `THREAT_MODEL.md` |
 
-Fork code so far: `src/mcp_trust.py`, `src/mcp_stdio_owner.py`, `src/skill_mcp_toolsets.py`,
+Fork code so far: `src/mcp_trust.py`, `src/mcp_stdio_owner.py`, `src/mcp_session_recovery.py`, `src/skill_mcp_toolsets.py`,
 `src/skill_invocation.py`, `src/offered_reads.py`, `src/module_action_items.py`,
 `src/sound_module_view.py`, `src/web_turn_scope.py`, `src/module_turn_scope.py`,
 `routes/sound_module_routes.py`, `static/sound-module.html`,
@@ -61,7 +61,7 @@ Fork code so far: `src/mcp_trust.py`, `src/mcp_stdio_owner.py`, `src/skill_mcp_t
 `scripts/modules_setup.py`,
 `scripts/module_slash_eval.py`, `scripts/fork_deploy.sh`, `docker/fork.override.yml`,
 their tests (`tests/test_mcp_trust.py`,
-`tests/test_mcp_http_annotations.py`, `tests/test_mcp_stdio_owner.py`, `tests/test_modules_setup.py`,
+`tests/test_mcp_http_annotations.py`, `tests/test_mcp_stdio_owner.py`, `tests/test_mcp_session_recovery.py`, `tests/test_modules_setup.py`,
 `tests/test_skill_mcp_toolsets.py`, `tests/test_offered_reads.py`,
 `tests/test_module_action_items.py`, `tests/test_sound_module_view.py`, `tests/test_web_turn_scope.py`,
 `tests/test_module_turn_scope.py`, `tests/test_calendar_reminder_wall_time.py`), and the hooks listed in [FORK.md](FORK.md).
