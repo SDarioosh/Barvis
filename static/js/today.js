@@ -71,7 +71,11 @@ function parseRef(ref) {
 }
 
 function eventHref(uid) {
-  // /#event-<uid> opens the calendar on the event's day (static/js/forkEntityHash.js)
+  // /#event-<uid> opens the calendar on the event's day (static/js/forkEntityHash.js).
+  // A recurring occurrence's uid is "<series uid>::<YYYY-MM-DD[THH:MM]>"; the calendar
+  // resolves that to the series' first day, so link to the occurrence's date instead.
+  const occurrence = /::(\d{4}-\d{2}-\d{2})/.exec(uid || '');
+  if (occurrence) return `/#event-${occurrence[1]}`;
   return /^[A-Za-z0-9._:@-]{1,200}$/.test(uid) ? `/#event-${uid}` : '/';
 }
 
