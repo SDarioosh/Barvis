@@ -1186,6 +1186,12 @@ async def _startup_event():
         _startup_tasks.append(start_bg_monitor())
     except Exception as _e:
         logger.warning("Failed to start background-job monitor: %s", _e)
+    # Fork: archive finished checklists after a few minutes (src/checklist_auto_archive.py)
+    try:
+        from src.checklist_auto_archive import start as _start_checklist_archive
+        _startup_tasks.extend(t for t in [_start_checklist_archive()] if t)
+    except Exception as _e:
+        logger.warning("Failed to start checklist auto-archive: %s", _e)
     # MCP servers can be slow or blocked by local tooling. Connect them after
     # the web server is accepting traffic instead of delaying the whole UI.
     async def _startup_mcp_connections():
