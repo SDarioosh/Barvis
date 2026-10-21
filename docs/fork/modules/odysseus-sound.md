@@ -212,32 +212,49 @@ parsers and their tests.
 ## Facts in Odysseus memory
 
 Confirmed facts also live in Odysseus memory, so chat context and the Memory page know
-them without a module call. The built-in task **Module Facts** (`src/module_facts.py`,
-hourly, posts nothing to chat) calls `list_facts` with `{"confirmed": true, "format":
-"json", "limit": 1000}` (the JSON mode's cap, so no fact is cut off and mistaken for
+them without a module call. Since Phase 1 they pass through the hub's **belief ledger**
+([../beliefs.md](../beliefs.md)): the module's facts are evidence, and the ledger decides
+what is confirmed. The built-in task **Module Facts** (`src/module_facts.py`, hourly,
+posts nothing to chat) calls `list_facts` with `{"format": "json", "limit": 1000}` (every
+current fact; 1000 is the JSON mode's cap, so no fact is cut off and mistaken for
 retired), which returns `{"facts": [{"id", "subject", "about" (owner/person/other),
-"fact", "times_said", "days", "first_said", "last_said", "link"}]}`.
+"fact", "times_said", "days", "first_said", "last_said", "link", "confirmed"}]}`.
 
-- **One memory per fact**, for the task's owner: text = the fact text as the module wrote
-  it followed by ` (source: <link>)`; fields `source: "odysseus-sound"`, `module_fact_id`, `link`
-  (the signed transcript link), `subject`, `about`, `times_said`, `days`, `first_said`,
-  `last_said` and `synced_at`. The memory text ends with the transcript link so chat
-  answers can cite it (chat context injects only a memory's text).
+- **Evidence per fact**: source `odysseus-sound`, source id = the fact id, the fact text,
+  the signed transcript link, `first_said`/`last_said` as seen dates, `times_said`/`days`
+  as totals, and the row's `confirmed` (the module's own threshold) as the source's
+  verdict. A module that doesn't send `confirmed` per row yet gets one more call,
+  `{"confirmed": true, "format": "json", "limit": 1000}`, whose ids are the confirmed
+  set.
+- **Confirmed beliefs become memories**: confirmed by the module's flag, by a second
+  source saying the same thing (`BELIEF_CONFIRM_SOURCES`), by enough sightings on enough
+  days, or by the owner. One memory per belief, for the task's owner: text = the fact
+  text (or the owner's correction) followed by ` (source: <link>)`; fields `source:
+  "odysseus-sound"`, `belief_id`, `module_fact_id`, `link`, `subject`, `about`,
+  `times_said`, `days`, `first_said`, `last_said`, `first_seen`, `last_seen` and
+  `synced_at`. The memory text ends with the transcript link so chat answers can cite it
+  (chat context injects only a memory's text). Copies written before the ledger are
+  adopted (same memory id and use count), not duplicated.
 - **Category** (from the bare fact text, not the link): about the owner → `preference`
   when it has a preference word
   (like(s), prefer(s), love(s), hate(s), enjoy(s), favorite/favourite, want(s),
   dislike), else `fact`; about a person → `contact`; anything else → `fact`.
-- **Full reconcile every run** by `module_fact_id`: a new fact is added, a changed one
-  (text or metadata) is updated in place (same memory id and use count), a fact the
-  module no longer returns is deleted. Running twice changes nothing. Memory Tidy may
-  merge or delete copies like any memory; the next run puts them back as the module has
-  them. The owner's own memories and other owners' copies are never touched.
-- The result line has counts only (`facts: 12 kept, 2 added, 1 updated, 0 retired`);
-  a run with no change is not logged in Activity. An older module that answers
-  `list_facts` with text: nothing is synced (logged once).
-- Settings: `MODULE_FACTS_SYNC` (`on` default, `off` stops the sync; copies already in
-  memory stay) and the action-item task's `MODULE_ACTION_ITEMS_SERVER` (default
-  `convo`).
+- **Full reconcile every run**: a changed fact (text or metadata) updates its belief and
+  memory in place (same memory id and use count); a fact the module no longer returns is
+  marked gone, and its belief goes stale and leaves memory unless the owner confirmed
+  it; beliefs not heard of for `BELIEF_STALE_DAYS` (180) go stale. Running twice
+  changes nothing. Memory Tidy may merge or delete copies like any memory; the next run
+  puts them back. The owner's own memories and other owners' copies are never touched.
+- **Forgetting**: when the owner forgets a belief in Odysseus, the hub calls the module's
+  `retire_fact {"fact_id", "reason"}` so the fact doesn't come back; a module without
+  that tool is tolerated (the hub keeps the belief rejected).
+- The result line has counts only (`facts: 12 seen, 1 new, 1 confirmed, 0 gone, 0 stale;
+  memory: 11 kept, 1 added, 0 updated, 0 removed`); a run with no change is not logged
+  in Activity. An older module that answers `list_facts` with text: nothing is synced
+  (logged once).
+- Settings: `MODULE_FACTS_SYNC` (`on` default, `off` stops the sync; memories already
+  mirrored stay), the action-item task's `MODULE_ACTION_ITEMS_SERVER` (default `convo`),
+  and the ledger's `BELIEF_*` settings ([../beliefs.md](../beliefs.md#settings)).
 
 ## Conversations page
 
