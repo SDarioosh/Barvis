@@ -161,6 +161,9 @@ belong, so voice notes land in the hub's own calendar and to-dos:
   both ways: ticked ↔ done, line removed → dismissed, list archived → done. Undo and
   moving take off the line only; the list stays. On `/modules/sound`, **Add to a list**
   / **Change list** picks a list (your existing lists are suggested) or clears it.
+  A list whose lines are all ticked is archived 10 minutes later unless it is pinned
+  (`src/checklist_auto_archive.py`), so the next "add … to my shopping list" starts a
+  new one; pin a list to keep it.
 
 - **Voice notes are filed automatically.** One push per pass ("Filed from your voice
   note": what went where, "check the time" when the module flagged it). Filed items get
