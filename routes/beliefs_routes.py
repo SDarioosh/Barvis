@@ -14,6 +14,23 @@
 * ``POST /api/beliefs/run``: the facts job for this owner now (one module call, at most
   ``RUN_TIMEOUT`` seconds); answers its counts line.
 
+Subjects and contacts (plan stage 2.1, ``docs/fork/beliefs.md#review-page-13``):
+
+* ``GET  /api/beliefs?attribute=<one of ATTRIBUTES>``: structured beliefs only.
+* ``GET  /api/beliefs/subjects?kind=<person|project|thing|owner>``:
+  ``{"subjects": [...], "stats": {...}}``.
+* ``GET  /api/beliefs/subjects/{id}``: ``{"subject", "beliefs", "summary"}``; beliefs of
+  every status but rejected.
+* ``POST /api/beliefs/subjects/{id}/kind`` {kind}, ``.../rename`` {display},
+  ``.../link`` {contact_id}, ``.../unlink``; ``POST /api/beliefs/subjects/merge``
+  {keep_id, drop_id}. 400 with the ledger's message, 404 for an unknown subject.
+* ``GET  /api/beliefs/contacts``: the owner's contacts for the link picker,
+  ``{"contacts": [{"id", "name", "subject_id"}]}``.
+* ``GET  /api/beliefs/contact/{contact_id}?status=``: ``beliefs_for_contact``.
+
+Belief ids are ``int`` path parameters (``{belief_id:int}``), so another router's literal
+path under ``/api/beliefs/`` (e.g. ``/search``) isn't swallowed by them.
+
 Same auth as the Today page: admin session (``require_admin``); API tokens are refused.
 Another owner's id is a 404.
 """
@@ -49,6 +66,23 @@ class Forget(BaseModel):
     reason: str = ""
 
 
+class Kind(BaseModel):
+    kind: str = ""
+
+
+class Rename(BaseModel):
+    display: str = ""
+
+
+class Link(BaseModel):
+    contact_id: str = ""
+
+
+class Merge(BaseModel):
+    keep_id: int
+    drop_id: int
+
+
 def _owner(request: Request) -> str:
     return effective_user(request) or ""
 
@@ -59,6 +93,32 @@ def _found(fn, *args, **kwargs):
         return fn(*args, **kwargs)
     except ledger.BeliefNotFound as e:
         raise HTTPException(404, "belief not found") from e
+
+
+def _subject_call(fn, *args, **kwargs):
+    """A ledger subject call: an unknown or another owner's subject is a 404, invalid
+    input a 400 with the ledger's message."""
+    try:
+        return fn(*args, **kwargs)
+    except ledger.SubjectNotFound as e:
+        raise HTTPException(404, "subject not found") from e
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+
+def _statuses(status: str | None) -> Any:
+    return None if status == "all" else (status or DEFAULT_STATUSES)
+
+
+async def owner_contacts(owner: str) -> list[dict]:
+    """The owner's Odysseus contacts as ``{"id", "name"}``, by name: the contacts routes'
+    own listing (local book or CardDAV, owner-scoped the same way)."""
+    from routes.contacts.contacts_routes import _fetch_contacts
+
+    rows = await asyncio.to_thread(_fetch_contacts, owner=owner or None)
+    out = [{"id": str(c.get("uid") or ""), "name": str(c.get("name") or "").strip()}
+           for c in rows or [] if c.get("uid")]
+    return sorted(out, key=lambda c: (c["name"].lower(), c["id"]))
 
 
 def module_caller() -> mf.CallTool | None:
@@ -132,33 +192,98 @@ def setup_beliefs_routes() -> APIRouter:
 
     @router.get("/api/beliefs", dependencies=admin)
     async def list_beliefs(request: Request, status: str | None = None,
-                           subject: str | None = None) -> dict[str, Any]:
+                           subject: str | None = None,
+                           attribute: str | None = None) -> dict[str, Any]:
         owner = _owner(request)
-        wanted: Any = None if status == "all" else (status or DEFAULT_STATUSES)
         try:
-            beliefs = ledger.list_beliefs(owner, wanted, (subject or "").strip() or None)
+            beliefs = ledger.list_beliefs(owner, _statuses(status),
+                                          (subject or "").strip() or None,
+                                          attribute=(attribute or "").strip() or None)
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
         return {"beliefs": beliefs, "stats": ledger.stats(owner)}
+
+    # Subjects and contacts (2.1). Literal paths, declared before /{belief_id}.
+    @router.get("/api/beliefs/subjects", dependencies=admin)
+    async def subjects(request: Request, kind: str | None = None) -> dict[str, Any]:
+        owner = _owner(request)
+        found = _subject_call(ledger.list_subjects, owner, (kind or "").strip() or None)
+        return {"subjects": found, "stats": ledger.stats(owner)}
+
+    @router.post("/api/beliefs/subjects/merge", dependencies=admin)
+    async def merge(request: Request, body: Merge) -> dict[str, Any]:
+        return _subject_call(ledger.merge_subjects, _owner(request), body.keep_id,
+                             body.drop_id)
+
+    @router.get("/api/beliefs/subjects/{subject_id:int}", dependencies=admin)
+    async def subject(request: Request, subject_id: int) -> dict[str, Any]:
+        owner = _owner(request)
+        found = _subject_call(ledger.get_subject, owner, subject_id)
+        return {"subject": found,
+                "beliefs": ledger.list_beliefs(owner, DEFAULT_STATUSES, subject_id=found["id"]),
+                "summary": ledger.subject_summary(owner, found["id"])}
+
+    @router.post("/api/beliefs/subjects/{subject_id:int}/kind", dependencies=admin)
+    async def subject_kind(request: Request, subject_id: int, body: Kind) -> dict[str, Any]:
+        return _subject_call(ledger.set_subject_kind, _owner(request), subject_id,
+                             body.kind.strip())
+
+    @router.post("/api/beliefs/subjects/{subject_id:int}/rename", dependencies=admin)
+    async def subject_rename(request: Request, subject_id: int,
+                             body: Rename) -> dict[str, Any]:
+        return _subject_call(ledger.rename_subject, _owner(request), subject_id, body.display)
+
+    @router.post("/api/beliefs/subjects/{subject_id:int}/link", dependencies=admin)
+    async def subject_link(request: Request, subject_id: int, body: Link) -> dict[str, Any]:
+        owner = _owner(request)
+        _subject_call(ledger.get_subject, owner, subject_id)  # 404 before 400
+        contact_id = body.contact_id.strip()
+        if not contact_id:
+            raise HTTPException(400, "a contact id is required")
+        if contact_id not in {c["id"] for c in await owner_contacts(owner)}:
+            raise HTTPException(400, f"contact {contact_id} not found")
+        return _subject_call(ledger.link_contact, owner, subject_id, contact_id)
+
+    @router.post("/api/beliefs/subjects/{subject_id:int}/unlink", dependencies=admin)
+    async def subject_unlink(request: Request, subject_id: int) -> dict[str, Any]:
+        return _subject_call(ledger.unlink_contact, _owner(request), subject_id)
+
+    @router.get("/api/beliefs/contacts", dependencies=admin)
+    async def contacts(request: Request) -> dict[str, Any]:
+        owner = _owner(request)
+        linked = {s["contact_id"]: s["id"] for s in ledger.list_subjects(owner)
+                  if s["contact_id"]}
+        return {"contacts": [{**c, "subject_id": linked.get(c["id"])}
+                             for c in await owner_contacts(owner)]}
+
+    @router.get("/api/beliefs/contact/{contact_id}", dependencies=admin)
+    async def contact_beliefs(request: Request, contact_id: str,
+                              status: str | None = None) -> dict[str, Any]:
+        try:
+            beliefs = ledger.beliefs_for_contact(_owner(request), contact_id,
+                                                 _statuses(status))
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        return {"contact_id": contact_id, "beliefs": beliefs}
 
     # /run before /{belief_id}: a literal path, not an id.
     @router.post("/api/beliefs/run", dependencies=admin)
     async def run(request: Request):
         return await run_facts(_owner(request))
 
-    @router.get("/api/beliefs/{belief_id}", dependencies=admin)
+    @router.get("/api/beliefs/{belief_id:int}", dependencies=admin)
     async def get_one(request: Request, belief_id: int) -> dict[str, Any]:
         return _found(ledger.get_belief, _owner(request), belief_id)
 
-    @router.post("/api/beliefs/{belief_id}/confirm", dependencies=admin)
+    @router.post("/api/beliefs/{belief_id:int}/confirm", dependencies=admin)
     async def confirm(request: Request, belief_id: int) -> dict[str, Any]:
         return _found(ledger.confirm, _owner(request), belief_id)
 
-    @router.post("/api/beliefs/{belief_id}/restore", dependencies=admin)
+    @router.post("/api/beliefs/{belief_id:int}/restore", dependencies=admin)
     async def restore(request: Request, belief_id: int) -> dict[str, Any]:
         return _found(ledger.restore, _owner(request), belief_id)
 
-    @router.post("/api/beliefs/{belief_id}/correct", dependencies=admin)
+    @router.post("/api/beliefs/{belief_id:int}/correct", dependencies=admin)
     async def correct(request: Request, belief_id: int, body: Correction) -> dict[str, Any]:
         owner = _owner(request)
         _found(ledger.get_belief, owner, belief_id)  # 404 before 400
@@ -167,7 +292,7 @@ def setup_beliefs_routes() -> APIRouter:
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
 
-    @router.post("/api/beliefs/{belief_id}/forget", dependencies=admin)
+    @router.post("/api/beliefs/{belief_id:int}/forget", dependencies=admin)
     async def forget_one(request: Request, belief_id: int,
                          body: Forget | None = None) -> dict[str, Any]:
         return await forget(_owner(request), belief_id, (body.reason if body else ""))
