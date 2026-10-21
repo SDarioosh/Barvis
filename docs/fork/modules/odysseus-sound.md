@@ -202,7 +202,8 @@ parsers and their tests.
 Confirmed facts also live in Odysseus memory, so chat context and the Memory page know
 them without a module call. The built-in task **Module Facts** (`src/module_facts.py`,
 hourly, posts nothing to chat) calls `list_facts` with `{"confirmed": true, "format":
-"json"}`, which returns `{"facts": [{"id", "subject", "about" (owner/person/other),
+"json", "limit": 1000}` (the JSON mode's cap, so no fact is cut off and mistaken for
+retired), which returns `{"facts": [{"id", "subject", "about" (owner/person/other),
 "fact", "times_said", "days", "first_said", "last_said", "link"}]}`.
 
 - **One memory per fact**, for the task's owner: text = the fact text as the module wrote

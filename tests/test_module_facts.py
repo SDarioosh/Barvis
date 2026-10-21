@@ -33,7 +33,7 @@ class FakeModule:
     async def __call__(self, tool, args):
         self.calls.append((tool, args))
         assert tool == "list_facts", f"the sync must not call {tool}"
-        assert args == {"confirmed": True, "format": "json"}
+        assert args == {"confirmed": True, "format": "json", "limit": 1000}
         if self.text is not None:
             return self.text
         return json.dumps({"facts": self.facts}, separators=(",", ":"))

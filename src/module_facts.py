@@ -260,7 +260,7 @@ def _update_vector_index(indexed: list[dict], removed: list[str]) -> None:
 async def sync(owner: str | None, call: CallTool, *, now: datetime | None = None
                ) -> dict[str, int] | None:
     """One pass. Counts, or None when the module answered with text (older module)."""
-    rows = parse_facts_json(await call("list_facts", {"confirmed": True, "format": "json"}))
+    rows = parse_facts_json(await call("list_facts", {"confirmed": True, "format": "json", "limit": 1000}))
     async with _lock(owner):
         state = load_state(owner)
         if rows is None:
