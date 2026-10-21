@@ -30,7 +30,7 @@ Source: `server/convo_server/mcp_server.py` (`build_mcp`).
 | `get_conversation` | `conversation_id` | read-only |
 | `get_transcript` | `conversation_id`, `start_seconds`, `end_seconds`, `max_lines` | read-only |
 | `list_action_items` | `status` (open/done/dismissed/all), `person`, `since`, `until` | read-only |
-| `list_facts` | `subject`, `query`, `limit` | read-only |
+| `list_facts` | `subject`, `query`, `limit`, `confirmed` (only facts the module has confirmed), `format` (`json` for the facts sync) | read-only |
 | `get_daily_digest` | `date` | read-only |
 | `list_people` | — | read-only |
 | `list_unnamed_speakers` | `limit` | read-only |
@@ -196,6 +196,33 @@ The text lines of `list_action_items` (what models read) are still parsed as a f
 `- #<id> [<status>] [<kind>: ]<text>[ (owner <name>)][ due <YYYY-MM-DD>[ <HH:MM>][ (<as said>)]| due <as said>][ [time unclear]] — from "<title>"[ (voice note)] <YYYY-MM-DD HH:MM> <link>`
 (`<kind>` is `event` or `reminder`; tasks have none). Change it only together with the
 parsers and their tests.
+
+## Facts in Odysseus memory
+
+Confirmed facts also live in Odysseus memory, so chat context and the Memory page know
+them without a module call. The built-in task **Module Facts** (`src/module_facts.py`,
+hourly, posts nothing to chat) calls `list_facts` with `{"confirmed": true, "format":
+"json"}`, which returns `{"facts": [{"id", "subject", "about" (owner/person/other),
+"fact", "times_said", "days", "first_said", "last_said", "link"}]}`.
+
+- **One memory per fact**, for the task's owner: text = the fact text as the module wrote
+  it, `source: "odysseus-sound"`, plus `module_fact_id`, `link` (the signed transcript
+  link), `subject`, `about`, `times_said`, `days`, `first_said`, `last_said` and
+  `synced_at`.
+- **Category**: about the owner → `preference` when the text has a preference word
+  (like(s), prefer(s), love(s), hate(s), enjoy(s), favorite/favourite, want(s),
+  dislike), else `fact`; about a person → `contact`; anything else → `fact`.
+- **Full reconcile every run** by `module_fact_id`: a new fact is added, a changed one
+  (text or metadata) is updated in place (same memory id and use count), a fact the
+  module no longer returns is deleted. Running twice changes nothing. Memory Tidy may
+  merge or delete copies like any memory; the next run puts them back as the module has
+  them. The owner's own memories and other owners' copies are never touched.
+- The result line has counts only (`facts: 12 kept, 2 added, 1 updated, 0 retired`);
+  a run with no change is not logged in Activity. An older module that answers
+  `list_facts` with text: nothing is synced (logged once).
+- Settings: `MODULE_FACTS_SYNC` (`on` default, `off` stops the sync; copies already in
+  memory stay) and the action-item task's `MODULE_ACTION_ITEMS_SERVER` (default
+  `convo`).
 
 ## Conversations page
 
