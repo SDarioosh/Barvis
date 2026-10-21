@@ -298,8 +298,19 @@ def order_candidates(todos: list[dict], events: list[dict],
     return ordered[:limit]
 
 
+_SOURCE_SUFFIX = re.compile(r"\s*\(source: https?://[^\s()]*\)\s*$")
+
+
+def _memory_text(text: Any) -> str:
+    """One line, without the trailing "(source: <link>)" of module copies: the link
+    is for chat answers; in the insight prompt it only costs tokens."""
+    text = re.sub(r"\s+", " ", str(text or "")).strip()
+    return _SOURCE_SUFFIX.sub("", text).strip()
+
+
 def select_memory(entries: Iterable[dict], limit: int = MAX_MEMORY) -> list[str]:
-    """Texts of preference/contact/fact entries and odysseus-sound facts, most used first."""
+    """Texts of preference/contact/fact entries and odysseus-sound facts, most used first
+    (source links stripped)."""
     picked = []
     for m in entries or []:
         if not isinstance(m, dict):
@@ -318,7 +329,8 @@ def select_memory(entries: Iterable[dict], limit: int = MAX_MEMORY) -> list[str]
             return 0.0
 
     picked.sort(key=lambda m: (num(m.get("uses")), num(m.get("timestamp"))), reverse=True)
-    return [re.sub(r"\s+", " ", str(m["text"])).strip()[:300] for m in picked[:limit]]
+    texts = (_memory_text(m["text"])[:300] for m in picked)
+    return [t for t in texts if t][:limit]
 
 
 def input_hash(candidates: list[dict], memory: list[str], digest: str | None,
@@ -747,9 +759,45 @@ async def add_vote(owner: str | None, vote: str, now: datetime | None = None) ->
         return insight
 
 
+_WANTS_INSIGHT = re.compile(
+    r"\b(?:today|today's|tonight|this (?:morning|afternoon|evening)|first|"
+    r"priorit(?:y|ies|ise|ize)|plans?|focus|agenda|schedule)\b"
+    r"|\bwhat(?:'s| is) next\b|\bwhat now\b|\bwhat (?:should|shall|can|do) i do\b|\bwhat to do\b"
+    r"|\bwhere (?:do|should) i (?:start|begin)\b",
+    re.IGNORECASE)
+# a short question that is only "what do I do (now)?", nothing else ("what do I need to
+# do before October 31?" is a module question, not today's plan)
+_SHORT_WHAT_TO_DO = re.compile(
+    r"(?:(?:ok(?:ay)?|so|and|now),?\s+)?(?:what|which)(?:\s+(?:should|shall|can|do)\s+i)?"
+    r"\s+(?:do|tackle|work on|start with|do now|do next)(?:\s+(?:now|next))?\s*[?.!]*",
+    re.IGNORECASE)
+
+
+def wants_insight(message: Any) -> bool:
+    """Whether a chat message is about today's plan (then the insight joins the context).
+    Slash commands and slash-invoked skills (``/sound``, ``/context``) never are: the
+    insight block made a small model answer from it instead of calling the module."""
+    text = str(message or "").strip()
+    if not text or text.startswith("/"):
+        return False
+    try:
+        from src.skill_invocation import INVOKE_PREFIX
+
+        if text.replace("\r\n", "\n").startswith(INVOKE_PREFIX):
+            return False
+    except Exception:  # noqa: BLE001
+        pass
+    if _WANTS_INSIGHT.search(text):
+        return True
+    return len(text) <= 60 and bool(_SHORT_WHAT_TO_DO.fullmatch(text))
+
+
 def context_block(owner: str | None, now: datetime | None = None,
-                  limit: int = CONTEXT_LIMIT) -> str:
-    """Today's insight as a short text for the chat memory context ("" when none)."""
+                  limit: int = CONTEXT_LIMIT, message: Any = None) -> str:
+    """Today's insight as a short text for the chat memory context ("" when none, or when
+    ``message`` is given and isn't about today's plan, see ``wants_insight``)."""
+    if message is not None and not wants_insight(message):
+        return ""
     try:
         if not insight_path(owner, "2000-01-01").parent.is_dir():
             return ""  # never written for this owner: skip the timezone lookup
@@ -759,8 +807,8 @@ def context_block(owner: str | None, now: datetime | None = None,
         return ""
     if not insight:
         return ""
-    text = (f"Today's insight for {insight.get('date')} (use it when asked what to do "
-            f"today, first, or about priorities):")
+    text = ("Today's plan, for questions about today, priorities or what to do first. "
+            f"For anything else use your tools as usual. ({insight.get('date')})")
     if insight.get("headline"):
         text += "\n" + _clip(insight["headline"], MAX_HEADLINE)
     for section, label in (("focus", "Do first"), ("coming_up", "Coming up"), ("also", "Also")):
