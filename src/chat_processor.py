@@ -375,7 +375,7 @@ class ChatProcessor:
             # Fork: today's insight joins the memory context on plan questions (src/today_insight.py)
             from src.today_insight import context_block as _fork_today_block
             if _fork_today := _fork_today_block(owner, message=message):
-                preface.append(untrusted_context_message("saved insight: today", _fork_today))
+                preface.append(untrusted_context_message("saved insight: today and beliefs", _fork_today))
 
             # (skills index injection moved out — see below; only fires in
             # agent mode so chat mode and incognito stay clean.)
