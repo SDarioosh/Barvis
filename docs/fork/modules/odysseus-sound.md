@@ -207,10 +207,12 @@ retired), which returns `{"facts": [{"id", "subject", "about" (owner/person/othe
 "fact", "times_said", "days", "first_said", "last_said", "link"}]}`.
 
 - **One memory per fact**, for the task's owner: text = the fact text as the module wrote
-  it, `source: "odysseus-sound"`, plus `module_fact_id`, `link` (the signed transcript
-  link), `subject`, `about`, `times_said`, `days`, `first_said`, `last_said` and
-  `synced_at`.
-- **Category**: about the owner → `preference` when the text has a preference word
+  it followed by ` (source: <link>)`; fields `source: "odysseus-sound"`, `module_fact_id`, `link`
+  (the signed transcript link), `subject`, `about`, `times_said`, `days`, `first_said`,
+  `last_said` and `synced_at`. The memory text ends with the transcript link so chat
+  answers can cite it (chat context injects only a memory's text).
+- **Category** (from the bare fact text, not the link): about the owner → `preference`
+  when it has a preference word
   (like(s), prefer(s), love(s), hate(s), enjoy(s), favorite/favourite, want(s),
   dislike), else `fact`; about a person → `contact`; anything else → `fact`.
 - **Full reconcile every run** by `module_fact_id`: a new fact is added, a changed one
