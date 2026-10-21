@@ -1,6 +1,7 @@
 # Belief ledger: evidence in, confirmed beliefs out
 
-Stages 1.1 (evidence intake) and 1.5 (expiry and decay) of
+Stages 1.1 (evidence intake), 1.3 (the [review page](#review-page-13)), 1.4 (forgetting
+propagates) and 1.5 (expiry and decay) of
 [personal-context.md](personal-context.md#phase-1-one-intake-a-review-page-and-forgetting).
 Code: `src/evidence_intake.py` (the ledger) and `src/module_facts.py` (its first source);
 tests `tests/test_evidence_intake.py` and `tests/test_module_facts.py`.
@@ -151,6 +152,57 @@ server (or `call`). It returns `{"retired", "failed", "unsupported"}`. A module 
 `retire_fact` is tolerated (logged once per owner); the fact then keeps coming back from
 the module, attaches to the rejected belief and stays out of memory. The review page
 calls `reject`, then `propagate_forget` with what `reject` returned.
+
+## Review page (1.3)
+
+`/beliefs` ("What I know about you", sidebar: **Beliefs**, under Today) is where the
+owner sees and decides. Code: `routes/beliefs_routes.py`, `static/beliefs.html`,
+`static/js/beliefs.js`; tests `tests/test_beliefs_routes.py`. Same auth as the Today
+page (admin session; API tokens are refused), and every call is scoped to the logged-in
+owner: another owner's belief id answers 404.
+
+| Route | Does |
+|---|---|
+| `GET /api/beliefs?status=&subject=` | `{"beliefs": [...], "stats": {...}}`. `status`: `tentative`, `confirmed`, `stale`, `rejected` or `all`; without it, all but rejected. `subject`: case-insensitive exact match. 400 for an unknown status. |
+| `GET /api/beliefs/{id}` | the belief with its evidence and 20 newest events |
+| `POST /api/beliefs/{id}/confirm` | `confirm`: confirmed by the owner (also a stale belief: restored and kept for good) |
+| `POST /api/beliefs/{id}/correct` `{"text"}` | `correct`; 400 on empty text |
+| `POST /api/beliefs/{id}/restore` | `restore`: back to tentative, then the rule |
+| `POST /api/beliefs/{id}/forget` `{"reason"?}` | `reject`, then `propagate_forget`; answers `{"belief", "propagated": {"retired", "failed", "unsupported"}}` |
+| `POST /api/beliefs/run` | the facts job for this owner now (`module_facts.sync`, at most 60 s); `{"summary": <counts line>, "stats"}`. 503 when the module isn't connected, 409 when `MODULE_FACTS_SYNC=off`, 502 on a failed call, 504 on timeout |
+
+The page has a count per status, tabs Tentative / Confirmed / Stale / Rejected (the tab
+is kept for the browser session), a subject filter, and the beliefs grouped by subject.
+Each card shows the text (the owner's correction marked "edited"), category, a status
+chip with how it was confirmed (by its source, by the rule, by you), first and last seen
+("not heard since" for stale ones), and one line per evidence: source name, times ×
+days, the dates and a link that opens in a new tab (odysseus-sound's are signed
+transcript links). Gone evidence is marked "no longer reported".
+
+| Status | Buttons |
+|---|---|
+| tentative | Confirm, Edit, Forget |
+| confirmed | Edit, Forget |
+| stale | Confirm (restores and keeps it), Forget |
+| rejected | Restore |
+
+Edit is an inline text field (Save / Cancel; Enter / Escape) that calls `correct`.
+**Sync now** calls `/api/beliefs/run` and reloads.
+
+**What Forget does.** After a confirmation prompt, the belief is rejected here first
+(out of memory at once, and it stays rejected whatever arrives later). Then each
+odysseus-sound fact behind it is retired in the module with `retire_fact`. The toast
+reports the `propagated` counts: "Forgotten; the module retired 1 fact", or "Forgotten
+here; the module could not be reached or cannot retire facts yet" (`unsupported`: the
+module isn't connected or lacks `retire_fact`), or "could not retire it" (`failed`: the
+call failed, timed out after 30 s, or raised). Forgetting never fails because of the
+module: the local rejection always stands. A belief with no odysseus-sound evidence
+makes no module call.
+
+**The "No fact" case.** After a re-summary the module may no longer know the fact id
+the ledger holds and answers `No fact #N.` That is a normal answer, not an error, so
+`propagate_forget` counts it as `retired`: the fact is gone from the module anyway.
+`Fact #N was already retired.` counts the same way.
 
 ## Memory mirroring
 
