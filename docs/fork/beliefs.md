@@ -430,30 +430,41 @@ after it, so the order of the parts is also the order of importance:
 | semantic | 0.12 | cosine similarity of the query to `"<subject>: <shown text>"`, scaled from `MIN_SIMILARITY` (0.5, adds nothing below) to 1; only with a local embedding lane |
 | keyword | 0.08 | token Jaccard of the query and the same text (lowercase words, stop words dropped): the fallback and tie-breaker |
 
+**Candidates.** Only the beliefs that can score are read (light rows, no evidence; the
+full belief dicts are loaded for the top `k` only): when the query names a subject, that
+subject's beliefs (plus the owner's when "I/me/my" is in it too, without the subject
+part); else, when it uses attribute words, the beliefs with those attributes and the
+unstructured ones (no attribute or `other`); else the newest `SCAN_LIMIT` (2000) by
+`last_seen`. The `status`, `subject_id`, `attribute` and `kinds` filters always apply.
+
 Only beliefs that score above 0 are returned. Ties: `last_seen` (newest first), then id;
 the same call always gives the same order. `why` names the parts that scored, in that
 order ("subject match, attribute, keyword"), plus "; no embeddings" when no lane was used.
 `status` is one status, several, `"all"` or None; `subject_id`, `attribute` and `kinds`
 (subject kinds) narrow the pool. `search_details(...)` returns the same hits with
-`semantic` (a lane was used), `embedded` and `pending` (see below).
+`semantic` (a lane was used), `embedded`, `pending` (see below) and `candidates` (beliefs
+scored).
 
-**Synonym map** (`SYNONYMS`, query word → attribute):
+**Synonym map.** Phrases (`PHRASES`) are read first, and their words then count no more:
+"do for a living", "for a living", "job title", "works as" → `role` and `works_at`;
+"related to", "relationship with/to", "who is … to me" → `relationship`; "going to",
+"plan(ning/ned) to" → `plans`. Then single words (`SYNONYMS`, query word → attribute):
 
 | Words | Attribute |
 |---|---|
 | allergy, allergies, allergic | `allergy` |
 | live, lives, living, home, address, based | `lives_in` |
-| work, works, working, job, employer, employed, company | `works_at` |
-| role, title, position | `role` |
+| work, works, working, job, employer, employed, company, profession, occupation | `works_at` |
+| role, title, position, job, profession, occupation | `role` |
 | birthday, birthdays, born | `birthday` |
 | diet, vegetarian, vegan, pescatarian, eat, eats, alcohol | `diet` |
 | like, likes, love, loves, favourite, favorite, enjoy, enjoys | `likes` |
 | dislike, dislikes, hate, hates | `dislikes` |
-| wife, husband, partner, sister, brother, mother, father, son, daughter, friend, colleague, boss, manager, married | `relationship` |
+| wife, husband, partner, sister, brother, mother, father, son, daughter, friend, colleague, boss, manager, married, related, relation, relationship, relative | `relationship` |
 | own, owns | `owns` |
 | pet, pets, dog, dogs, cat, cats | `pet` |
-| plan, plans, planning | `plans` |
-| decided, decision, decisions | `decision` |
+| plan, plans, planning, planned | `plans` |
+| decide, decides, decided, deciding, decision, decisions | `decision` |
 | phone, email, number, handle | `contact_info` |
 | health, medication, condition | `health` |
 | status, progress | `project_status` |
@@ -502,7 +513,8 @@ Lines that don't fit `max_chars` are skipped; "" when nothing matches.
   `wants_beliefs(message, owner)`: "what do you know about / tell me about / who is
   <known subject>", or an attribute question about a known subject or the owner ("where
   does Tom live", "am I allergic to anything", "when is Mom's birthday?", "does Jonas
-  have any allergies", "what's the status of Project Heron"). Known subjects: the
+  have any allergies", "what's the status of Project Heron", "how is Ben related to
+  me?", "what does Priya do for a living?"). Known subjects: the
   owner's subjects with a confirmed belief. Never on slash turns or slash-invoked skills,
   never with words about what was said or happened (said, told, asked, mentioned,
   promised, recommended, latest, a meeting, a conversation, a voice note, a month or
