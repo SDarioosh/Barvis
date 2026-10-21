@@ -3596,3 +3596,6 @@ _fork_today_register(BUILTIN_ACTIONS, BUILTIN_ACTION_INFO)
 # Fork: owner's notes -> belief ledger (src/notes_evidence.py)
 from src.notes_evidence import register_builtin_action as _fork_notes_register  # noqa: E402
 _fork_notes_register(BUILTIN_ACTIONS, BUILTIN_ACTION_INFO)
+# Fork: structure for confirmed beliefs (src/belief_structure.py)
+from src.belief_structure import register_builtin_action as _fork_structure_register  # noqa: E402
+_fork_structure_register(BUILTIN_ACTIONS, BUILTIN_ACTION_INFO)
