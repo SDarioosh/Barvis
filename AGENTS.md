@@ -70,7 +70,7 @@ their tests (`tests/test_mcp_trust.py`,
 `tests/test_module_turn_scope.py`, `tests/test_calendar_reminder_wall_time.py`,
 `tests/test_checklist_auto_archive.py`, `tests/test_module_facts.py`, `tests/test_evidence_intake.py`,
 `tests/test_today_insight.py`, `tests/test_beliefs_routes.py`, `tests/test_notes_evidence.py`,
-`tests/test_belief_eval.py`, `tests/test_subjects.py`, `tests/test_belief_structure.py`, `tests/test_belief_search.py`, `tests/test_belief_eval_scale.py`), and the hooks listed in [FORK.md](FORK.md).
+`tests/test_belief_eval.py`, `tests/test_subjects.py`, `tests/test_belief_structure.py`, `tests/test_belief_search.py`, `tests/test_belief_eval_scale.py`, `tests/test_ledger_perf.py`), and the hooks listed in [FORK.md](FORK.md).
 
 ## Fork rules (merge-friendly)
 

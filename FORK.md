@@ -85,7 +85,7 @@ Tests: `tests/test_mcp_trust.py`, `tests/test_mcp_empty_answer.py`, `tests/test_
 `tests/test_module_action_items.py`, `tests/test_sound_module_view.py`, `tests/test_checklist_auto_archive.py`,
 `tests/test_today_insight.py`, `tests/test_beliefs_routes.py`.
 `tests/test_today_insight.py`, `tests/test_notes_evidence.py`, `tests/test_subjects.py`,
-`tests/test_belief_structure.py`, `tests/test_belief_search.py`.
+`tests/test_belief_structure.py`, `tests/test_belief_search.py`, `tests/test_ledger_perf.py`.
 
 ## Setup
 
