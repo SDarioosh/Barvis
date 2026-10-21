@@ -296,7 +296,9 @@ def test_context_block(inputs):
     assert ti.context_block("alice", now=NOW) == ""
     _run(llm=FakeLLM(GOOD))
     block = ti.context_block("alice", now=NOW)
-    assert block.startswith("Today's insight for 2026-10-21")
+    assert block.splitlines()[0] == ("Today's plan, for questions about today, priorities or "
+                                     "what to do first. For anything else use your tools as "
+                                     "usual. (2026-10-21)")
     assert "Do first: 1. Send the Q4 deck: Overdue since yesterday; Tom waits on it" in block
     assert "Coming up: 1. Dentist: 12:00 today" in block
     assert len(block) <= 800
@@ -613,3 +615,82 @@ def test_refresh_route_returns_202_and_runs_in_the_background(inputs, monkeypatc
             _time.sleep(0.02)
         assert client.get("/api/insight/today").json()["refreshing"] is False
     assert calls == [("alice", {"wait_quiet": False})]
+
+
+# ------------------------------------------------------------------ round 2
+@pytest.mark.parametrize("message", [
+    "What should I do first today?", "what's on my agenda this afternoon", "Plan my evening",
+    "What are my priorities?", "what's next?", "What do I do now?", "what now",
+    "Anything tonight?", "What should I focus on?", "Which task first?", "So what do I do?",
+])
+def test_wants_insight_for_plan_questions(message):
+    assert ti.wants_insight(message)
+
+
+@pytest.mark.parametrize("message", [
+    # module questions (odysseus-sound bakeoff wording) must reach their tools
+    "What did the doctor say I should do?", "What did Dr. Patel tell me to avoid?",
+    "When is my next dentist appointment?", "What do I need to do before October 31?",
+    "What did Maria ask me to do last week?", "What did I promise Ben?",
+    "What did Alice say about the budget in September?", "What is Jonas allergic to?",
+    # slash commands and slash-invoked skills
+    "/sound what should I do first today?", "/context my priorities today",
+    "Apply the skill below to my request, following its Procedure. --- today first",
+    "", "   ",
+])
+def test_no_insight_for_other_questions(message):
+    from src.skill_invocation import INVOKE_PREFIX
+
+    if message.startswith("Apply the skill"):
+        message = INVOKE_PREFIX + "---\nname: sound\n---\nwhat should I do first today"
+    assert not ti.wants_insight(message)
+
+
+def test_context_block_only_for_plan_questions(inputs):
+    _run(llm=FakeLLM(GOOD))
+    assert ti.context_block("alice", now=NOW, message="What should I do first today?")
+    assert ti.context_block("alice", now=NOW, message="What did Dr. Patel tell me to avoid?") == ""
+    assert ti.context_block("alice", now=NOW, message="/sound what should I do today?") == ""
+
+
+def test_chat_preface_adds_the_block_only_for_plan_questions(inputs, monkeypatch):
+    from src.chat_processor import ChatProcessor
+
+    _run(llm=FakeLLM(GOOD))
+    monkeypatch.setattr(ti, "_now_local", lambda tz, now=None: NOW.astimezone(tz))
+
+    class _Memory:
+        def load(self, owner=None):
+            return []
+
+    class _Docs:
+        rag_manager = None
+
+    def preface(message):
+        out, _, _ = ChatProcessor(memory_manager=_Memory(), personal_docs_manager=_Docs()) \
+            .build_context_preface(message=message, session=SimpleNamespace(), use_rag=False,
+                                   use_memory=True, owner="alice")
+        return "\n".join(m.get("content", "") for m in out)
+
+    assert "Do first: 1. Send the Q4 deck" in preface("What should I do first today?")
+    assert "Send the Q4 deck" not in preface("What did Dr. Patel tell me to avoid?")
+    assert "Send the Q4 deck" not in preface("/sound what should I do first today?")
+
+
+def test_memory_source_links_are_stripped(inputs):
+    entries = [
+        {"text": "Jonas is allergic to peanuts (source: http://10.0.0.5:8000/view/abc?sig=x#t=40)",
+         "category": "contact", "source": "odysseus-sound"},
+        {"text": "Mentions (source: http://x/y) in the middle stay", "category": "fact"},
+        {"text": "Prefers tea (source: https://host/view/d?sig=1)  ", "category": "preference"},
+    ]
+    assert ti.select_memory(entries) == ["Jonas is allergic to peanuts",
+                                         "Mentions (source: http://x/y) in the middle stay",
+                                         "Prefers tea"]
+    inputs["memory"] = [entries[0]]
+    llm = FakeLLM(GOOD)
+    assert _run(llm=llm)[0] == "generated"
+    assert "source:" not in llm.calls[0][1]["content"]
+    inputs["memory"] = [{**entries[0], "text": "Jonas is allergic to peanuts (source: "
+                                               "http://10.0.0.5:8000/view/abc?sig=rotated)"}]
+    assert _run(llm=llm)[0] == "noop"  # only the link changed: same hash

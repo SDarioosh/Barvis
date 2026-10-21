@@ -22,7 +22,7 @@ built-ins. A run that finds nothing changed leaves no Activity entry.
 |---|---|
 | Calendar event occurrences from today 00:00 local to +7 days, not cancelled, not ended | the owner's calendars: events starting in the window (`_checkin_calendar_events`, as the check-in uses) and every recurring series, expanded with the calendar route's own `_expand_rrule` (`routes/calendar_routes.py`, skipped dates honoured): occurrence uid, summary, start, end, all-day, location, importance, event type |
 | Open items of to-do notes | notes of type `checklist`, `todo`, `goal`, not archived; each item with its index, the note's title, pinned flag, due date and label. Calendar-reminder notes are left out (the event is already a candidate) |
-| Memory | `MemoryManager(DATA_DIR).load(owner)`: entries of category `preference`, `contact`, `fact`, and every entry with `source: "odysseus-sound"`; at most 40, most used first, then newest |
+| Memory | `MemoryManager(DATA_DIR).load(owner)`: entries of category `preference`, `contact`, `fact`, and every entry with `source: "odysseus-sound"`; at most 40, most used first, then newest. A trailing ` (source: <link>)` (memory copies of module facts carry one) is cut off: it cost ~1,700 prompt tokens and says nothing to the model |
 | odysseus-sound | when its MCP server (`MODULE_ACTION_ITEMS_SERVER`, default `convo`) is connected: `get_daily_digest {"date": today}` and `list_action_items {"status": "open", "format": "json"}`. Items already filed into to-dos or the calendar by the Module Action Items task are left out (they are candidates already). A failed call or a disconnected module leaves that input out |
 
 The owner's day and time come from the task's crew timezone (`_resolve_task_timezone`),
@@ -138,9 +138,28 @@ look with each item's title and reason, in the odysseus-sound page's style.
 
 "What should I do first today?" is answered from the stored insight, without a new tool:
 while memory is on, `src/chat_processor.py` (`build_context_preface`) adds a short block
-from `today_insight.context_block(owner)` next to the saved memories, as untrusted
-context: the headline, then "Do first: 1. <title>: <why> …", "Coming up: …", "Also: …",
-at most 800 characters. Nothing is added when there is no insight for today (or memory is
+from `today_insight.context_block(owner, message=message)` next to the saved memories, as
+untrusted context, **only when the message is about today's plan**
+(`today_insight.wants_insight`): it names today, tonight, this morning/afternoon/evening,
+first, priority/priorities, plan, focus, agenda or schedule, or says "what should I do",
+"what's next", "what now", "what to do", "where do I start", or is a short "what do I do
+(now)?". Slash commands and slash-invoked skills (`/sound`, `/context`) never get it.
+
+Why: with the block on every turn, the sandbox model answered an action-item question
+("what did the doctor say…") with "no information in the provided context" and called no
+module tool (4 of 4 runs); without the block it called `list_action_items` and passed.
+
+The block's first line says what it is for:
+
+```
+Today's plan, for questions about today, priorities or what to do first. For anything else use your tools as usual. (2026-10-21)
+<headline>
+Do first: 1. <title>: <why> 2. …
+Coming up: 1. …
+Also: 1. …
+```
+
+At most 800 characters. Nothing is added when there is no insight for today (or memory is
 off, as in incognito).
 
 ## Settings
