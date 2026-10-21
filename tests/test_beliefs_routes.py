@@ -260,3 +260,9 @@ def test_routes_refuse_api_tokens(data):
     assert c.get("/api/beliefs").status_code in (401, 403)
     assert c.post("/api/beliefs/1/confirm").status_code in (401, 403)
     assert c.post("/api/beliefs/run").status_code in (401, 403)
+
+
+def test_page_is_served(client):
+    r = client.get("/beliefs")
+    assert r.status_code == 200
+    assert "What I know about you" in r.text and "/static/js/beliefs.js" in r.text
