@@ -872,7 +872,8 @@ async def _sync_status(owner: str, call: CallTool, item_id: int, entry: dict,
             await _set_module_status(call, item_id, "done")
             entry["module"] = "done"
             return 1
-        entry["module"] = module
+        if module != "open":  # the row of this pass may predate the "done" just set
+            entry["module"] = module
         return 0
     zone = row.get("timezone")
     last_module, last_hub = entry.get("module", "open"), entry.get("hub", "open")
