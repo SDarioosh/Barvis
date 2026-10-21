@@ -50,6 +50,7 @@ W_KEYWORD = 0.08
 TEXT_ATTRIBUTE = 0.6  # share of W_ATTRIBUTE for an unstructured belief whose text has the word
 MIN_SIMILARITY = 0.5  # cosine below this adds nothing (local models rate unrelated text ~0.3-0.5)
 EMBED_PER_CALL = 200
+SCAN_LIMIT = 2000  # newest beliefs scored when the query names no subject or attribute
 EMBED_BATCH = 50
 CONTEXT_K = 8
 CONTEXT_CHARS = 1200
@@ -60,23 +61,35 @@ CONTEXT_HEADER = ("What I know (confirmed). Use your tools for anything else, an
 SYNONYMS: dict[str, tuple[str, ...]] = {
     "allergy": ("allergy", "allergies", "allergic"),
     "lives_in": ("live", "lives", "living", "home", "address", "based"),
-    "works_at": ("work", "works", "working", "job", "employer", "employed", "company"),
-    "role": ("role", "title", "position"),
+    "works_at": ("work", "works", "working", "job", "employer", "employed", "company",
+                 "profession", "occupation"),
+    "role": ("role", "title", "position", "job", "profession", "occupation"),
     "birthday": ("birthday", "birthdays", "born"),
     "diet": ("diet", "vegetarian", "vegan", "pescatarian", "eat", "eats", "alcohol"),
     "likes": ("like", "likes", "love", "loves", "favourite", "favorite", "enjoy", "enjoys"),
     "dislikes": ("dislike", "dislikes", "hate", "hates"),
     "relationship": ("wife", "husband", "partner", "sister", "brother", "mother", "father",
-                     "son", "daughter", "friend", "colleague", "boss", "manager", "married"),
+                     "son", "daughter", "friend", "colleague", "boss", "manager", "married",
+                     "related", "relation", "relationship", "relative"),
     "owns": ("own", "owns"),
     "pet": ("pet", "pets", "dog", "dogs", "cat", "cats"),
-    "plans": ("plan", "plans", "planning"),
-    "decision": ("decided", "decision", "decisions"),
+    "plans": ("plan", "plans", "planning", "planned"),
+    "decision": ("decide", "decides", "decided", "deciding", "decision", "decisions"),
     "contact_info": ("phone", "email", "number", "handle"),
     "health": ("health", "medication", "condition"),
     "project_status": ("status", "progress"),
     "deadline": ("deadline", "due"),
 }
+# phrases read before single words (their words then count no more): "for a living" is
+# a job, not a home
+PHRASES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (r"\b(?:do|does|did)\s+for\s+(?:a\s+)?(?:living|work)\b|\bfor\s+a\s+living\b|"
+     r"\bjob\s+title\b|\bwork(?:s|ing)?\s+as\b", ("role", "works_at")),
+    (r"\brelated\s+to\b|\brelationship\s+(?:with|to)\b|\bwho\s+is\s+.+?\s+to\s+me\b",
+     ("relationship",)),
+    (r"\bgoing\s+to\b|\bplann?(?:ing|ed)?\s+to\b", ("plans",)),
+)
+_PHRASES = [(re.compile(p, re.IGNORECASE), set(a)) for p, a in PHRASES]
 _WORD_ATTRIBUTES: dict[str, set[str]] = {}
 for _attr, _words in SYNONYMS.items():
     for _w in _words:
@@ -266,9 +279,15 @@ def jaccard(a: set[str], b: set[str]) -> float:
 
 
 def query_attributes(query: Any) -> set[str]:
-    """Attributes whose words (:data:`SYNONYMS`) the query uses."""
+    """Attributes whose phrases (:data:`PHRASES`) or words (:data:`SYNONYMS`) the query
+    uses."""
     out: set[str] = set()
-    for w in tokens(query):
+    text = str(query or "")
+    for pattern, attrs in _PHRASES:
+        if pattern.search(text):
+            out |= attrs
+            text = pattern.sub(" ", text)
+    for w in tokens(text):
         out |= _WORD_ATTRIBUTES.get(w, set())
     return out
 
@@ -326,6 +345,57 @@ def named_subjects(query: Any, subjects: list[dict]) -> set[int]:
     return found
 
 
+_LIGHT = ("SELECT b.id, b.subject, b.text, b.owner_text, b.attribute, b.last_seen, "
+          "b.subject_id, s.display AS subject_display, s.kind AS subject_kind "
+          "FROM beliefs b LEFT JOIN subjects s ON s.id = b.subject_id")
+
+
+def _pool(owner: str, statuses: list[str] | None, subject_id: int | None,
+          attribute: str | None, kinds: list[str] | None, subjects: set[int],
+          attrs: set[str]) -> list[dict]:
+    """The beliefs worth scoring, as light rows (no evidence): the named subjects'
+    beliefs when the query names any; else those with a queried attribute and the
+    unstructured ones; else the newest :data:`SCAN_LIMIT`. The filters always apply."""
+    where, args = ["b.owner = ?"], [owner]
+    if statuses:
+        where.append(f"b.status IN ({','.join('?' * len(statuses))})")
+        args += statuses
+    if subject_id is not None:
+        where.append("b.subject_id = ?")
+        args.append(ledger._int(subject_id, -1))
+    if attribute is not None:
+        where.append("b.attribute = ?")
+        args.append(attribute)
+    if kinds is not None:
+        where.append(f"s.kind IN ({','.join('?' * len(kinds)) or 'NULL'})")
+        args += kinds
+    limit = ""
+    if subjects:
+        where.append(f"b.subject_id IN ({','.join('?' * len(subjects))})")
+        args += sorted(subjects)
+    elif attrs:
+        where.append(f"(b.attribute IN ({','.join('?' * len(attrs))}) OR b.attribute IS NULL "
+                     "OR b.attribute = 'other')")
+        args += sorted(attrs)
+    else:
+        limit = f" LIMIT {int(SCAN_LIMIT)}"
+    with ledger._connect() as db:
+        rows = db.execute(f"{_LIGHT} WHERE {' AND '.join(where)} "
+                          f"ORDER BY b.last_seen DESC, b.id DESC{limit}", args).fetchall()
+    return [{**dict(r), "shown_text": r["owner_text"] or r["text"]} for r in rows]
+
+
+def _full(owner: str, ids: list[int]) -> dict[int, dict]:
+    """The belief dicts (as ``list_beliefs`` returns them) of these ids."""
+    if not ids:
+        return {}
+    with ledger._connect() as db:
+        rows = db.execute(f"{ledger._BELIEF_SELECT} WHERE b.owner = ? AND b.id IN "
+                          f"({','.join('?' * len(ids))})", (owner, *ids)).fetchall()
+        evidence = ledger._evidence_rows(db, [r["id"] for r in rows])
+    return {r["id"]: ledger._belief_dict(r, evidence[r["id"]]) for r in rows}
+
+
 def search_details(owner: str | None, query: str, *, k: int = 10,
                    status: str | Iterable[str] | None = ("confirmed",),
                    subject_id: int | None = None, attribute: str | None = None,
@@ -333,23 +403,33 @@ def search_details(owner: str | None, query: str, *, k: int = 10,
                    emb: Embedder | None | bool = True) -> dict[str, Any]:
     """:func:`search_beliefs` with how it ranked: ``{"results", "semantic"`` (a local
     lane was used), ``"embedded"`` (vectors computed in this call), ``"pending"`` (left
-    for the next call)``}``. ``emb``: True for the hub's lane, None/False for none."""
+    for the next call), ``"candidates"`` (beliefs scored)``}``. ``emb``: True for the
+    hub's lane, None/False for none."""
     owner = owner or ""
-    out: dict[str, Any] = {"results": [], "semantic": False, "embedded": 0, "pending": 0}
+    out: dict[str, Any] = {"results": [], "semantic": False, "embedded": 0, "pending": 0,
+                           "candidates": 0}
+    if isinstance(status, str):
+        status = None if status == "all" else (status,)
+    statuses = list(status) if status else None
+    bad = [x for x in statuses or [] if x not in ledger.STATUSES]
+    if bad:
+        raise ValueError(f"unknown status: {', '.join(map(str, bad))}")
+    if attribute is not None and attribute not in ledger.ATTRIBUTES:
+        raise ValueError(f"unknown attribute: {attribute}")
     query = str(query or "").strip()
     if not query or not ledger.db_path().exists():
         return out
-    if isinstance(status, str):
-        status = None if status == "all" else (status,)
-    beliefs = ledger.list_beliefs(owner, status=list(status) if status else None,
-                                  subject_id=subject_id, attribute=attribute, limit=1_000_000)
-    if kinds is not None:
-        wanted = set(kinds)
-        beliefs = [b for b in beliefs if (b.get("subject_kind") or "") in wanted]
+    known = _subjects(owner)
+    subjects = named_subjects(query, known)
+    pool_subjects = set(subjects)
+    if OWNER_WORDS & set(tokens(query)):  # "I/my" next to a name: the owner's beliefs too
+        pool_subjects.update(s["id"] for s in known if s["kind"] == "owner")
+    attrs = query_attributes(query)
+    beliefs = _pool(owner, statuses, subject_id, attribute,
+                    None if kinds is None else sorted(set(kinds)), pool_subjects, attrs)
+    out["candidates"] = len(beliefs)
     if not beliefs:
         return out
-    subjects = named_subjects(query, _subjects(owner))
-    attrs = query_attributes(query)
     qwords = _keywords(query)
 
     lane = embedder() if emb is True else (emb or None)
@@ -373,7 +453,7 @@ def search_details(owner: str | None, query: str, *, k: int = 10,
             if b.get("attribute") in attrs:
                 score += W_ATTRIBUTE
                 why.append("attribute")
-            elif attrs & query_attributes(b.get("shown_text") or b.get("text")):
+            elif attrs & query_attributes(b.get("shown_text")):
                 score += W_ATTRIBUTE * TEXT_ATTRIBUTE
                 why.append("attribute")
         sim = sims.get(b["id"])
@@ -390,11 +470,15 @@ def search_details(owner: str | None, query: str, *, k: int = 10,
         reason = ", ".join(why)
         if not out["semantic"]:
             reason += "; no embeddings"
-        hits.append({**b, "score": score, "why": reason})
+        hits.append({"id": b["id"], "last_seen": b.get("last_seen"), "score": score,
+                     "why": reason})
     hits.sort(key=lambda h: h["id"])
     hits.sort(key=lambda h: h.get("last_seen") or "", reverse=True)
     hits.sort(key=lambda h: h["score"], reverse=True)
-    out["results"] = hits[:max(1, int(k))]
+    top = hits[:max(1, int(k))]
+    full = _full(owner, [h["id"] for h in top])
+    out["results"] = [{**full[h["id"]], "score": h["score"], "why": h["why"]}
+                      for h in top if h["id"] in full]
     return out
 
 
@@ -456,7 +540,8 @@ _ATTRIBUTE_QUESTIONS = (
     r"\bwhere\s+(?:does|do)\s+__S__\s+work\b",
     r"\bwho\s+(?:does|do)\s+__S__\s+work\s+for\b",
     r"\bwhat\s+(?:does|do)\s+__S__\s+do\s+for\s+(?:a\s+)?(?:living|work)\b",
-    r"\bwhat(?:['’]s|\s+is)\s+__S__(?:['’]s)?\s+(?:job|role|title|position)\b",
+    r"\bwhat(?:['’]s|\s+is)\s+__S__(?:['’]s)?\s+(?:job|role|title|position|"
+    r"profession|occupation)\b",
     # birthday
     r"\bwhen(?:['’]s|\s+is|\s+was)\s+__S__(?:['’]s)?\s+birthday\s*[?.!]*$",
     r"\bwhen\s+(?:was|were)\s+__S__\s+born\b",
@@ -477,6 +562,9 @@ _ATTRIBUTE_QUESTIONS = (
     r"\b__S__(?:['’]s)?\s+(?:phone(?:\s+number)?|email(?:\s+address)?)\b",
     r"\bwho\s+is\s+__S__(?:['’]s)?\s+(?:wife|husband|partner|sister|brother|mother|"
     r"father|son|daughter|boss|manager)\b",
+    r"\bhow\s+(?:is|are|am)\s+__S__\s+related\s+to\b",
+    r"\bwho\s+is\s+__S__\s+to\s+(?:me|__S__)\b",
+    r"\b__S__(?:['’]s)?\s+relationship\s+(?:to|with)\b",
     # projects
     r"\b(?:status|progress|deadline)\s+(?:of|on|for)\s+__S__\b",
     r"\bhow\s+is\s+__S__\s+going\b",
