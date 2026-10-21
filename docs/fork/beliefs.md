@@ -713,3 +713,129 @@ manifest. A recorded belief that another source now backs (evidence that isn't t
 module ids 9001–9099 or `belief-eval-note-*` notes) is kept and counted as `kept`. Other
 beliefs, other owners and the owner's other memories are never touched. Without a
 manifest it exits 2. After a cleanup the same owner can be seeded again.
+
+### At scale (2.5)
+
+`scripts/belief_eval_scale.py` is the same kind of eval at a few thousand entries (plan
+stage 2.5): a deterministic fictional corpus (seeded RNG) goes through the ledger's
+public API with `now` fixed at 2026-10-21, and the script measures the ledger, the
+Belief Structure task and retrieval. No model, no network;
+`tests/test_belief_eval_scale.py` runs the small preset through pytest.
+
+```bash
+venv/bin/python scripts/belief_eval_scale.py                 # medium, temp dir, removed after
+venv/bin/python scripts/belief_eval_scale.py --size small    # 30 subjects, 300 beliefs (seconds)
+venv/bin/python scripts/belief_eval_scale.py --size large    # 1000 subjects, 10000 beliefs
+venv/bin/python scripts/belief_eval_scale.py --data-dir /tmp/belief-scale --keep --out /tmp/scale.json
+```
+
+| Preset | Subjects (people / projects / things, plus the owner) | Beliefs | Queries |
+|---|---|---|---|
+| `small` | 30 (20 / 4 / 6) | 300 | up to 60 |
+| `medium` (default) | 300 (200 / 40 / 60) | 3000 | 200 |
+| `large` | 1000 (666 / 134 / 200) | 10000 | 200 |
+
+**The corpus.** One owner (Robin Vale), people with nicknames as aliases (about a quarter
+of them; the module sometimes uses the nickname), projects named so they are inferred as
+projects ("Project Kestrel", "Wren migration"), and things ("Blue van"). Beliefs come from
+23 text templates, one per kind of fact ("<name> lives in <city>", "<name> is allergic
+to <x>", "<project> is due on <date>", "The <thing> is kept in <place>" …), each with
+its attribute. They arrive as evidence from `odysseus-sound` (fact ids 100001+, with
+the module's person ids and a `list_people` sync first) and `notes`
+(`scale-note-<n>`), on dates between January and October 2026, and each belief has a
+planned fate:
+
+| Fate | Share | How | Ends |
+|---|---|---|---|
+| source | 42 % | the module confirms it (3–6 times on 2–4 days) | confirmed |
+| two sources | 8 % | once in a conversation, once in a note | confirmed (rule) |
+| rule | 5 % | two module ids, 3 sightings on 2 days | confirmed (rule) |
+| corrected | 3 % | said once, the owner corrects it | confirmed (owner) |
+| owner | 2 % | said once, the owner confirms it | confirmed (owner) |
+| aged | 5 % | module-confirmed, last heard before April | stale (decay) |
+| gone | 3 % | module-confirmed, then no longer listed | stale (reconcile) |
+| rejected | 4 % | module-confirmed, the owner forgets it | rejected |
+| once | 28 % | one sighting | tentative |
+
+So about 60 % end confirmed. The same `--seed` (default 7) and size give the same corpus;
+the run prints its digest (`corpus 95f5dd30b8c21f46` for medium).
+
+**What it does, in order, and what it times.** `sync_people`; submit every module item
+in calls of 1000 (`mirror=False`), then the notes; `reconcile_source`, `apply_decay`; a
+first `sync_memory` (writes every mirrored belief); the owner's decisions one call each
+(`correct`, `reject`, `confirm`: each mirrors memory, as on the review page); the hourly
+facts pass with nothing new (the same module items again, `reconcile_source`,
+`apply_decay`); `sync_memory` twice (the second must write nothing and leave
+`memory.json` byte-identical); `list_beliefs` (all, confirmed, the review page's default
+500, one subject), `list_subjects`, `stats`. Then the Belief Structure task
+(`belief_structure.run`) over every confirmed belief with a fake model that maps each
+template to its attribute and value, and the retrieval questions.
+
+**Retrieval** (stage 2.3, `src/belief_search.py`). A fixed question set generated from
+the corpus, each with the belief ids it expects (the confirmed beliefs it asks about):
+by subject name ("What do you know about Kaia Lindqvist?", ~25 %), by alias (the
+nickname, ~15 %), about the owner, one per attribute the owner has ("Am I allergic to
+anything?", "Where do I live?", "What do you know about me?"), and by attribute ("Where
+does … live?", "When is Project Kestrel due?", "Where is the Blue van kept?"). Each is
+asked with `search_beliefs(owner, q, k=10, status=("confirmed",))`:
+
+- **top-1**: share of questions whose first hit is an expected belief;
+- **top-5**: mean over questions of expected beliefs among the first five, out of
+  min(5, expected);
+- **p50 / p95**: latency per question in ms;
+- **leaks**: hits that aren't confirmed beliefs (must be 0).
+
+It runs twice: the **default** lane, then the **keyword** fallback forced (the module's
+`embedder()` replaced by one that answers None, "no lane"; the run prints what it
+replaced). A script process has no embedding lane loaded, so in the sandbox both lanes
+rank without embeddings ("default lane used embeddings: no"); the default lane
+uses embeddings only where the hub's memory index is loaded. While `src/belief_search.py`
+isn't importable the part is skipped with a message and the run still passes.
+
+**Checks and thresholds.** Exit 0 when all hold, 1 otherwise, 2 when the data dir already
+has beliefs for the owner (`--owner` or a fresh `--data-dir`):
+
+- every belief ends in its planned status; one belief per planned item; the expected
+  number of subjects, and every project inferred from its name;
+- one memory per confirmed belief; a second `sync_memory` writes nothing and leaves
+  `memory.json` byte-identical;
+- the Belief Structure task structures every confirmed belief, each with the planned
+  attribute and value;
+- when retrieval runs: top-5 recall of the default lane ≥ `--min-top5` (0.9) and no
+  leaks. The keyword lane's numbers are reported, not gated.
+
+**Reading the numbers.** Medium and large on the sandbox CPU (a reference, not a target;
+timings vary by machine, counts don't):
+
+| Measure | Medium | Large |
+|---|---|---|
+| beliefs (confirmed / tentative / stale / rejected) | 3000 (1815 / 830 / 232 / 123) | 10000 (6038 / 2732 / 796 / 434) |
+| evidence rows / subjects | 3432 / 301 | 11287 / 1001 |
+| `beliefs.db` / `memory.json` | 2.9 MB / 1.3 MB | 9.7 MB / 4.2 MB |
+| submit, new evidence, per 1000 (first → last chunk) | ~380 ms (190 → 570) | ~1200 ms (200 → 2150) |
+| submit, unchanged (the hourly pass), per 1000 | ~55 ms, flat | ~53 ms, flat |
+| `sync_memory` first / no-op | ~120 / ~110 ms | ~500 / ~230 ms |
+| owner action (correct, reject, confirm), mean / p95 | ~105 / ~135 ms | ~360 / ~440 ms |
+| `list_beliefs` all / review page (500) / one subject | ~85 / ~20 / ~1 ms | ~240 / ~35 / ~1 ms |
+| `list_subjects` | ~200 ms | ~4 s |
+| structure (fake model): as planned, per batch of 10, hourly runs | 1815 / 1815, ~21 ms, 46 | 6038 / 6038, ~21 ms, 151 |
+| retrieval (the 2.3 ranker, no embedding lane): top-1, top-5, p50 / p95 | 0.92, 0.97, ~75 / ~110 ms | 0.91, 0.97, ~365 / ~460 ms |
+
+- Per-chunk submit times should stay flat as the ledger grows (the unchanged pass does).
+  When the chunks of new evidence grow chunk after chunk, a lookup per item scales with
+  the ledger size. They do today (about +210 ms per 1000 beliefs already in the ledger),
+  and `list_subjects` grows with subjects × beliefs: without `ANALYZE` statistics SQLite
+  answers the text match in `submit` and the per-subject counts of `list_subjects` from
+  an index on `owner` alone, i.e. by scanning every belief of the owner. A fix belongs in
+  the ledger, not in the eval; rerun `--size large` to see it.
+- An owner action costs about one no-op `sync_memory` plus a read; it grows with the
+  number of mirrored beliefs, since each one reads and compares `memory.json`.
+- "hourly runs to structure all" is how long a backlog of this size takes the real task
+  (40 per run).
+- Retrieval: the per-kind top-5 (`alias`, `attribute`, `name`, `owner`) shows which
+  questions miss; the JSON lists up to 10 misses per lane.
+
+**Results file.** The full numbers (corpus digest and fates, ledger counts, every timing
+with the per-chunk times, memory, structure, retrieval per lane with misses, the checks)
+go to `--out`, by default `data/eval/belief_eval_scale.<size>.json` (under `data/`,
+gitignored).
