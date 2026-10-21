@@ -137,14 +137,20 @@ def texts(hits):
 
 # ------------------------------------------------------------------ ranking
 def test_subject_match_comes_first_and_beats_semantic(data, lane):
-    hits = bs.search_beliefs("alice", "Priya and the mountains on weekends", k=10)
-    assert set(texts(hits[:3])) == {"Priya Nair lives in Porto",
-                                    "Priya Nair is allergic to peanuts",
-                                    "Priya ran the design review"}
-    assert all("subject match" in h["why"] for h in hits[:3])
-    hike = next(h for h in hits if h["shown_text"].startswith("Tom goes hiking"))
-    assert "semantic" in hike["why"] and hike["score"] < hits[2]["score"]
+    found = bs.search_details("alice", "Priya and the mountains on weekends", k=10)
+    hits = found["results"]
+    # a named subject narrows the pool to its beliefs: Tom's hiking (semantically
+    # closest) isn't even scored
+    assert set(texts(hits)) == {"Priya Nair lives in Porto",
+                                "Priya Nair is allergic to peanuts",
+                                "Priya ran the design review"}
+    assert found["candidates"] == 3
+    assert all("subject match" in h["why"] for h in hits)
     assert all(0 < h["score"] <= 1 for h in hits)
+    # without a name, the same words rank by similarity over everything
+    hits = bs.search_beliefs("alice", "the mountains on weekends", k=10)
+    assert texts(hits)[0] == "Tom goes hiking in the mountains on weekends"
+    assert hits[0]["why"].startswith("semantic")
 
 
 def test_attribute_synonyms(data):
@@ -160,6 +166,67 @@ def test_attribute_synonyms(data):
     hits = bs.search_beliefs("alice", "allergies", k=5)
     assert set(texts(hits)) == {"I am allergic to penicillin", "Priya Nair is allergic to peanuts",
                                 "Jonas is allergic to peanuts"}
+
+
+def test_query_families_from_the_scale_eval(data):
+    # "related to me": the named person's relationship, not the owner's beliefs
+    assert bs.query_attributes("How is Dr. Patel related to me?") == {"relationship"}
+    hits = bs.search_beliefs("alice", "How is Dr. Patel related to me?", k=3)
+    assert texts(hits)[0] == "Dr. Patel is the owner's dentist"
+    assert hits[0]["why"].startswith("subject match, attribute")
+    assert bs.query_attributes("who is Ben to me") >= {"relationship"}
+    # "for a living" is a job, not a home
+    assert bs.query_attributes("What does Priya do for a living?") == {"role", "works_at"}
+    assert bs.query_attributes("what is her profession") >= {"role"}
+    assert bs.query_attributes("her occupation") >= {"role"}
+    assert bs.query_attributes("job title") >= {"role"}
+    ei.submit("alice", [ev(70, "Priya Nair works as a designer", "Priya Nair")], now=T0)
+    (b,) = [b for b in ei.list_beliefs("alice") if b["text"] == "Priya Nair works as a designer"]
+    ei.apply_structure("alice", b["id"], "role", "designer")
+    hits = bs.search_beliefs("alice", "What does Priya Nair do for a living?", k=3)
+    assert texts(hits)[0] == "Priya Nair works as a designer"
+    # decisions and plans
+    assert bs.query_attributes("What did I decide?") == {"decision"}
+    assert bs.query_attributes("what am I going to do") == {"plans"}
+    assert bs.query_attributes("what are my plans") == {"plans"}
+    ei.submit("alice", [ev(71, "I decided to sell the old car", "Me", "owner"),
+                        ev(72, "I plan to visit Kyoto in spring", "Me", "owner")], now=T0)
+    for text, attr in (("I decided to sell the old car", "decision"),
+                       ("I plan to visit Kyoto in spring", "plans")):
+        (b,) = [b for b in ei.list_beliefs("alice") if b["text"] == text]
+        ei.apply_structure("alice", b["id"], attr, text)
+    assert texts(bs.search_beliefs("alice", "What did I decide?", k=1)) == \
+        ["I decided to sell the old car"]
+    assert texts(bs.search_beliefs("alice", "What am I going to do?", k=1)) == \
+        ["I plan to visit Kyoto in spring"]
+
+
+def test_candidate_pool_is_narrowed_at_scale(data):
+    people = [f"Person{i:03d} Example" for i in range(300)]
+    words = ["lives in Porto", "likes chess", "works at Acme", "has a cat", "plays tennis",
+             "is allergic to dust", "owns a kayak", "dislikes rain", "is a nurse",
+             "follows a vegan diet"]
+    items = [ev(1000 + n, f"{people[n % 300]} {words[n // 300]}", people[n % 300],
+                seen_last=f"2026-10-{1 + n % 20:02d}")
+             for n in range(3000)]
+    ei.submit("alice", items, now=T0)
+    for b in ei.list_beliefs("alice", status="confirmed", limit=10_000):
+        if b["text"].endswith("lives in Porto"):
+            ei.apply_structure("alice", b["id"], "lives_in", "Porto")
+    assert len(ei.list_beliefs("alice", status="confirmed", limit=10_000)) > 3000
+    found = bs.search_details("alice", f"What do you know about {people[7]}?")
+    assert found["candidates"] < 200 and len(found["results"]) == 10
+    assert all(h["subject_display"] == people[7] for h in found["results"])
+    found = bs.search_details("alice", f"Where does {people[42]} live?", k=1)
+    assert found["candidates"] < 200
+    assert texts(found["results"]) == [f"{people[42]} lives in Porto"]
+    # attribute only: that attribute and the unstructured beliefs
+    found = bs.search_details("alice", "who lives where")
+    assert found["results"][0]["attribute"] == "lives_in"
+    # no subject, no attribute: the newest SCAN_LIMIT at most
+    found = bs.search_details("alice", "chess")
+    assert found["candidates"] == bs.SCAN_LIMIT
+    assert found == bs.search_details("alice", "chess")  # deterministic
 
 
 def test_owner_pronouns_mean_the_owner_subject(data):
@@ -309,6 +376,7 @@ def test_context_for_format_and_cap(data):
     "am I allergic to anything", "Am I allergic to anything?", "Is Priya allergic to nuts?",
     "Does Jonas have any allergies?", "When is Mom's birthday?", "what do you know about me",
     "What does Maria like?", "What's the status of Project Heron?",
+    "How is Dr. Patel related to me?", "Who is Ben to me?", "What does Priya do for a living?",
 ])
 def test_wants_beliefs(data, message):
     assert bs.wants_beliefs(message, "alice")
