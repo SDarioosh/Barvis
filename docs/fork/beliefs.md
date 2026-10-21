@@ -95,6 +95,15 @@ ledger.reconcile_source(owner, "notes", present_ids={"note-42:3", ...})
   to; else under a belief of the same owner whose text (or the owner's correction) has the
   same **normalized** text (lowercase, whitespace collapsed, trailing punctuation
   dropped); else a new `tentative` belief.
+- For facts about the owner (`about="owner"`) the key also folds the owner's leading
+  mention: `the owner`, `owner`, `me`, `i`, `i'm`, `i am` or the evidence's own
+  `subject` (e.g. the owner's name, as the module sends it) becomes `owner`, a following
+  `am`/`have` becomes `is`/`has`, and `my`, `the owner's` and `<name>'s` become
+  `owner's`. So "The owner is allergic to peanuts." (a note), "Me is allergic to
+  peanuts." (a conversation, subject `Me`) and "I am allergic to peanuts" are one belief.
+  Facts about people and things keep the plain key. An owner correction is keyed with the
+  belief's `about` and `subject`. Ledgers written before this are re-keyed once when
+  opened (`PRAGMA user_version` 1).
 - Re-submitting the same item changes nothing (`unchanged`); new totals or dates update
   the evidence; the belief's `first_seen`/`last_seen` are the min/max over its evidence.
 - When a source changes the text behind an id: if that evidence is the belief's only one

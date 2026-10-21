@@ -434,3 +434,69 @@ def test_events_stay_small(data):
 def test_normalize():
     assert ei.normalize("  Likes   JAZZ!. ") == "likes jazz"
     assert ei.normalize("Lives in St. Ives") == "lives in st. ives"
+
+
+def test_normalize_owner_mentions():
+    key = "owner is allergic to peanuts"
+    assert ei.normalize("The owner is allergic to peanuts.", "Owner", "owner") == key
+    assert ei.normalize("Me is allergic to peanuts.", "Me", "owner") == key
+    assert ei.normalize("I am allergic to peanuts", None, "owner") == key
+    assert ei.normalize("I’m allergic to peanuts", None, "owner") == key
+    assert ei.normalize("Rosalind is allergic to peanuts", "Rosalind", "OWNER") == key
+    assert ei.normalize("I have two cats", "Me", "owner") == "owner has two cats"
+    assert ei.normalize("My dog is Pixel", "Me", "owner") == "owner's dog is pixel"
+    assert ei.normalize("The owner's dog is Pixel.", "Owner", "owner") == "owner's dog is pixel"
+    # only a leading subject mention, only for the owner
+    assert ei.normalize("Meals at the office are free", "Me", "owner") == \
+        "meals at the office are free"
+    assert ei.normalize("Owners of the flat pay rent", None, "owner") == \
+        "owners of the flat pay rent"
+    assert ei.normalize("Likes jazz", "Me", "owner") == "likes jazz"
+    assert ei.normalize("I am allergic to peanuts", "Jenn", "person") == \
+        "i am allergic to peanuts"
+    assert ei.normalize("Jenn lives in Lisbon.", "Jenn", "person") == "jenn lives in lisbon"
+    assert ei.normalize("Me is allergic to peanuts.") == "me is allergic to peanuts"
+
+
+def test_owner_fact_from_a_note_and_a_conversation_is_one_belief(data):
+    ei.submit("alice", [ev("notes", "n-1:0", "The owner is allergic to peanuts.",
+                           subject="Owner")], now=T0)
+    counts = ei.submit("alice", [ev("odysseus-sound", "9", "Me is allergic to peanuts.",
+                                    subject="Me")], now=T1)
+    assert (counts["beliefs_added"], counts["confirmed"]) == (0, 1)
+    ei.submit("alice", [ev("chat", "c-3", "I am allergic to peanuts", subject="Me")], now=T1)
+    belief = only()
+    assert (belief["status"], belief["confirmed_by"]) == ("confirmed", "rule")
+    assert {e["source"] for e in belief["evidence"]} == {"notes", "odysseus-sound", "chat"}
+    # a person's fact with the same words is a different belief
+    ei.submit("alice", [ev("notes", "n-2:0", "I am allergic to peanuts", about="person",
+                           subject="Jenn")], now=T1)
+    assert len(ei.list_beliefs("alice")) == 2
+
+
+def test_owner_correction_is_normalized_with_the_beliefs_about(data):
+    ei.submit("alice", [ev("notes", "n-1:0", "The owner is vegetarian.", subject="Owner")],
+              now=T0)
+    belief = only()
+    ei.correct("alice", belief["id"], "I am vegan", now=T1)
+    with sqlite3.connect(data / "beliefs.db") as db:
+        assert db.execute("SELECT owner_norm FROM beliefs").fetchone()[0] == "owner is vegan"
+    ei.submit("alice", [ev("odysseus-sound", "4", "Me is vegan.", subject="Me")], now=T1)
+    belief = only()
+    assert len(belief["evidence"]) == 2 and belief["shown_text"] == "I am vegan"
+
+
+def test_existing_ledger_owner_keys_are_migrated_once(data):
+    ei.submit("alice", [ev("notes", "n-1:0", "I am allergic to peanuts", subject="Me"),
+                        ev("notes", "n-2:0", "Jenn is allergic to cats", about="person",
+                           subject="Jenn")], now=T0)
+    with sqlite3.connect(data / "beliefs.db") as db:  # as an older ledger stored them
+        db.execute("UPDATE beliefs SET norm = lower(rtrim(text, '.'))")
+        db.execute("PRAGMA user_version = 0")
+    counts = ei.submit("alice", [ev("odysseus-sound", "9", "The owner is allergic to peanuts.",
+                                    subject="Owner")], now=T1)
+    assert counts["beliefs_added"] == 0
+    with sqlite3.connect(data / "beliefs.db") as db:
+        assert db.execute("PRAGMA user_version").fetchone()[0] == ei.NORM_VERSION
+        assert sorted(r[0] for r in db.execute("SELECT norm FROM beliefs")) == \
+            ["jenn is allergic to cats", "owner is allergic to peanuts"]

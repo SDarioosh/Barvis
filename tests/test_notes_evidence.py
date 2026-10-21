@@ -402,3 +402,21 @@ def test_action_reports_counts_only(db, monkeypatch):
     assert "Jenn" not in text and "Lisbon" not in text
     with pytest.raises(TaskNoop, match="1 unchanged"):
         asyncio.run(ne.action_notes_evidence("alice"))
+
+
+def test_owner_fact_in_a_note_and_a_conversation_confirms(db):
+    db.add("n-me", ME)
+    asyncio.run(ne.run("alice", llm=FakeLlm({"Reminder to self": json.dumps(OWNER_FACTS)}),
+                       now=T0))
+
+    async def module(tool, args):
+        return json.dumps({"facts": [{
+            "id": 11, "subject": "Me", "about": "owner", "fact": "Me is allergic to peanuts.",
+            "times_said": 1, "days": 1, "first_said": "2026-10-20", "last_said": "2026-10-20",
+            "link": "http://h:8000/view/c11?sig=abc#t=5", "confirmed": False}]})
+
+    stats = asyncio.run(mf.sync("alice", module, now=T1))
+    assert (stats["beliefs_added"], stats["confirmed"]) == (0, 1)
+    (belief,) = ledger.list_beliefs("alice")
+    assert (belief["status"], belief["confirmed_by"]) == ("confirmed", "rule")
+    assert {e["source"] for e in belief["evidence"]} == {"notes", "odysseus-sound"}
