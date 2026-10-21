@@ -701,3 +701,167 @@ async def test_list_edits_keep_other_lines_as_stored(hub):
     assert lines(hub, shopping) == odd + [{"text": "Milk", "done": True}]
     await bai.unfile_item("alice", 60, module)
     assert lines(hub, shopping) == odd
+
+
+# ------------------------------------------------------------------------ notes
+def note_row(id, text, *, title=None, notes=None, **extra):
+    return row(id, text, "note", owner=None, list_name=notes, note_title=title, **extra)
+
+
+def make_note(factory, title, content, owner="alice"):
+    import uuid
+
+    with factory() as db:
+        n = cdb.Note(id=str(uuid.uuid4()), owner=owner, title=title, note_type="note",
+                     content=content)
+        db.add(n)
+        db.commit()
+        return n.id
+
+
+def content(factory, note_id):
+    with factory() as db:
+        return db.get(cdb.Note, note_id).content
+
+
+def test_notes_names_match_loosely():
+    assert bai.notes_key("My Hardware notes") == bai.notes_key("hardware") == "hardware"
+    assert bai.notes_key("the car note") == "car"
+    assert bai.notes_title("hardware") == "Hardware notes"
+    assert bai.notes_title("my Hardware notes") == "Hardware notes"
+    assert bai.notes_title("") is None and bai.notes_title("my notes") is None
+    assert bai.notes_title(None) is None
+
+
+@pytest.mark.asyncio
+async def test_create_a_note_files_an_odysseus_note(hub, pushes):
+    module = JsonModule()
+    await _start(module)
+    module.add(note_row(70, "Battery dimensions are 13 mm x 14 mm x 3 mm",
+                        title="Battery dimensions"))
+    stats = await bai.sync("alice", module, now=T0)
+    assert stats["filed"] == 1 and stats["pushed"] == 1
+    (note,) = notes(hub)
+    assert (note.title, note.note_type, note.owner, note.items) == (
+        "Battery dimensions", "note", "alice", None)
+    assert note.content.startswith("Battery dimensions are 13 mm x 14 mm x 3 mm\n\n")
+    assert 'voice note "Note 70"' in note.content and LINK.format(c="c70") in note.content
+    # a note is no to-do: done in the module at once
+    assert module.updates == [{"item_id": 70, "status": "done"}]
+    assert module.rows[70]["status"] == "done"
+    (p,) = pushes
+    assert p["title"] == "Filed from your voice note"
+    assert p["body"] == "📝 Battery dimensions are 13 mm x 14 mm x 3 mm → Notes"
+    assert (await bai.filed_state("alice"))[70] == {
+        "target": "note", "ref": note.id, "open_url": f"/#open=notes&note={note.id}",
+        "kind": "note", "at": "2031-10-20T05:00:00+00:00", "undone": False,
+        "removed": False}
+    # later passes change nothing, also when the owner edits or archives the note
+    module.updates.clear()
+    with hub() as db:
+        db.get(cdb.Note, note.id).archived = True
+        db.commit()
+    stats = await bai.sync("alice", module, now=T0)
+    assert stats["filed"] == stats["synced"] == 0 and module.updates == []
+
+
+@pytest.mark.asyncio
+async def test_note_without_title_takes_the_start_of_its_text(hub):
+    module = JsonModule()
+    await _start(module)
+    module.add(note_row(71, "The spare key is under the blue flower pot by the back door"))
+    await bai.sync("alice", module, now=T0)
+    (note,) = notes(hub)
+    assert note.title == "The spare key is under the blue flower …"
+
+
+@pytest.mark.asyncio
+async def test_add_to_named_notes_appends_a_line(hub, pushes):
+    mine = make_note(hub, "Hardware", "Old line")
+    make_note(hub, "Hardware notes", "", owner="bob")  # not alice's
+    module = JsonModule()
+    await _start(module)
+    module.add(note_row(72, "The screen is 1.4 inch", title="Screen", notes="hardware"))
+    module.add(note_row(73, "Battery is 3 mm thick", notes="Hardware notes"))
+    module.add(note_row(74, "Tyre pressure is 2.4 bar", notes="car"))
+    stats = await bai.sync("alice", module, now=T0)
+    assert stats["filed"] == 3
+    assert content(hub, mine) == "Old line\n- The screen is 1.4 inch\n- Battery is 3 mm thick"
+    (car,) = notes(hub)  # the missing notes are made, titled "<Name> notes"
+    assert (car.title, car.note_type, car.content) == (
+        "Car notes", "note", "- Tyre pressure is 2.4 bar")
+    assert {r["status"] for r in module.rows.values()} == {"done"}
+    (p,) = pushes
+    assert p["body"].splitlines() == ["📝 The screen is 1.4 inch → Hardware notes",
+                                      "📝 Battery is 3 mm thick → Hardware notes",
+                                      "📝 Tyre pressure is 2.4 bar → Car notes"]
+    state = await bai.filed_state("alice")
+    assert state[72] == {"target": "note", "ref": mine,
+                         "open_url": f"/#open=notes&note={mine}", "notes": "Hardware",
+                         "kind": "note", "at": "2031-10-20T05:00:00+00:00",
+                         "undone": False, "removed": False}
+    # the same line again is not repeated; a line the owner deleted shows as removed
+    module.add(note_row(75, "the screen is 1.4 inch", notes="hardware"))
+    await bai.sync("alice", module, now=T0)
+    assert content(hub, mine).count("1.4 inch") == 1
+    with hub() as db:
+        db.get(cdb.Note, mine).content = "Old line\n- Battery is 3 mm thick"
+        db.commit()
+    assert (await bai.filed_state("alice"))[72]["removed"] is True
+
+
+@pytest.mark.asyncio
+async def test_undo_removes_the_note_or_only_its_line(hub):
+    mine = make_note(hub, "Hardware notes", "Old line")
+    module = JsonModule()
+    await _start(module)
+    module.add(note_row(76, "Battery is 3 mm", title="Battery"))
+    module.add(note_row(77, "The screen is 1.4 inch", notes="hardware"))
+    await bai.sync("alice", module, now=T0)
+    assert await bai.unfile_item("alice", 77, module) == {
+        "ok": True, "target": "note", "ref": mine}
+    assert content(hub, mine) == "Old line"
+    (battery,) = notes(hub)
+    await bai.unfile_item("alice", 76, module)
+    assert [n.archived for n in notes(hub)] == [True]
+    assert module.rows[76]["status"] == module.rows[77]["status"] == "dismissed"
+
+
+@pytest.mark.asyncio
+async def test_marking_a_note_done_is_retried(hub):
+    class Flaky(JsonModule):
+        fail = True
+
+        async def __call__(self, tool, args):
+            if tool == "update_action_item" and self.fail:
+                self.fail = False
+                raise RuntimeError("module down")
+            return await super().__call__(tool, args)
+
+    module = Flaky()
+    await _start(module)
+    module.add(note_row(78, "Battery is 3 mm"))
+    stats = await bai.sync("alice", module, now=T0)  # the status pass tries again
+    assert stats["filed"] == stats["synced"] == 1 and module.rows[78]["status"] == "done"
+    stats = await bai.sync("alice", module, now=T0)
+    assert stats["filed"] == stats["synced"] == 0
+    assert len(notes(hub)) == 1  # filed once
+
+
+@pytest.mark.asyncio
+async def test_file_item_as_note_and_move_a_note_to_todos(hub, pushes):
+    module = JsonModule()
+    await _start(module)
+    item = note_row(79, "Battery is 3 mm", title="Battery", created="2031-10-19T09:05:00+00:00")
+    module.add(item)  # made before filing started: left for the page
+    await bai.sync("alice", module, now=T0)
+    assert notes(hub) == []
+    out = await bai.file_item("alice", module.rows[79], module)
+    (note,) = notes(hub)
+    assert out == {"target": "note", "ref": note.id,
+                   "open_url": f"/#open=notes&note={note.id}"}
+    assert module.rows[79]["status"] == "done" and pushes == []
+    # a note that should have been a to-do
+    back = await bai.move_item("alice", 79, module, kind="task")
+    (todo,) = notes(hub)
+    assert back["target"] == "todo" and todo.note_type == "todo"

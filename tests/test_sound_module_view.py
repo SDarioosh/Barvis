@@ -558,3 +558,22 @@ def test_check_list_name_and_json_list():
     assert item.list_name == "shopping"
     assert view.filed_for({5: {"target": "todo", "ref": "n1", "list": "Shopping"}}, 5) == {
         "target": "todo", "ref": "n1", "open_url": "/#open=notes&note=n1", "list": "Shopping"}
+
+
+def test_note_items_and_filed_notes():
+    item = view.item_from_json({"id": 6, "text": "Battery is 3 mm", "kind": "note",
+                                "note_title": "Battery", "list_name": "hardware"})
+    assert (item.kind, item.note_title, item.list_name) == ("note", "Battery", "hardware")
+    assert view.filed_for({6: {"target": "note", "ref": "n2", "notes": "Hardware notes"}},
+                          6) == {"target": "note", "ref": "n2",
+                                 "open_url": "/#open=notes&note=n2",
+                                 "notes": "Hardware notes"}
+    assert view.check_target("note") == "note"
+    with pytest.raises(ValueError):  # nothing is moved to a note
+        view.check_move("note", None, None)
+
+
+def test_file_as_note_route(filing):
+    r = filing.post("/api/modules/sound/action-items/13/file", json={"target": "note"})
+    assert r.status_code == 200 and r.json()["message"] == "Added to notes."
+    assert ("file", "", 13, "note") in filing.filing_calls
