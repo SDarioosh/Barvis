@@ -278,6 +278,9 @@ HOUSEKEEPING_DEFAULTS = {
 # Fork: seed the module action-item sync task (src/module_action_items.py)
 from src.module_action_items import register_housekeeping as _fork_housekeeping  # noqa: E402
 _fork_housekeeping(HOUSEKEEPING_DEFAULTS)
+# Fork: seed the module facts -> memory task (src/module_facts.py)
+from src.module_facts import register_housekeeping as _fork_facts_housekeeping  # noqa: E402
+_fork_facts_housekeeping(HOUSEKEEPING_DEFAULTS)
 
 RETIRED_HOUSEKEEPING_ACTIONS = frozenset({
     "tidy_calendar",
@@ -2839,3 +2842,5 @@ class TaskScheduler:
 
 # Fork: the action-item sync posts nothing to the assistant chat (src/module_action_items.py)
 TaskScheduler._SILENT_ACTIONS = TaskScheduler._SILENT_ACTIONS | {"barvis_sync_action_items"}
+# Fork: the facts sync posts nothing to the assistant chat (src/module_facts.py)
+TaskScheduler._SILENT_ACTIONS = TaskScheduler._SILENT_ACTIONS | {"module_sync_facts"}
