@@ -13,8 +13,8 @@ redirects there); its script calls:
 * ``POST /api/modules/sound/name-speaker``   {conversation_id, speaker_label, name}
 * ``GET  /api/modules/sound/action-items``   (status), with where each item was filed
 * ``POST /api/modules/sound/action-items/{id}`` {status}
-* ``POST /api/modules/sound/action-items/{id}/file`` {target: calendar|todo}: Add to
-  calendar / to-dos (a conversation's suggestion)
+* ``POST /api/modules/sound/action-items/{id}/file`` {target: calendar|todo|note}: Add
+  to calendar / to-dos / notes (a suggestion, or a note whose filing failed)
 * ``POST /api/modules/sound/action-items/{id}/move`` {kind, due_date?, due_time?,
   list_name?}: Move to calendar / to-dos / a to-do list, Change time
 * ``GET  /api/modules/sound/todo-lists``: the owner's to-do list titles (the list picker)
@@ -57,7 +57,7 @@ class ItemStatus(BaseModel):
 
 
 class FileItem(BaseModel):
-    target: str = Field(pattern="^(calendar|todo)$")
+    target: str = Field(pattern="^(calendar|todo|note)$")
 
 
 class MoveItem(BaseModel):
@@ -259,7 +259,7 @@ def setup_sound_module_routes() -> APIRouter:
         if view.filed_for(await _filed_state(owner), item_id):
             raise HTTPException(409, f"Action item #{item_id} is filed already; move it instead.")
         filed = await _filing_call("file", mai.file_item(owner, row, call, target=body.target))
-        where = "calendar" if body.target == "calendar" else "to-dos"
+        where = {"calendar": "calendar", "note": "notes"}.get(body.target, "to-dos")
         return {"ok": True, "message": f"Added to {where}.", "filed": filed,
                 "item": await _item_now(call, owner, item_id)}
 
