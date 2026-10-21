@@ -19,8 +19,8 @@ Subjects and contacts (plan stage 2.1, ``docs/fork/beliefs.md#review-page-13``):
 * ``GET  /api/beliefs?attribute=<one of ATTRIBUTES>``: structured beliefs only.
 * ``GET  /api/beliefs/subjects?kind=<person|project|thing|owner>``:
   ``{"subjects": [...], "stats": {...}}``.
-* ``GET  /api/beliefs/subjects/{id}``: ``{"subject", "beliefs", "summary"}``; beliefs of
-  every status but rejected.
+* ``GET  /api/beliefs/subjects/{id}``: ``{"subject", "beliefs", "summary", "stats"}``;
+  beliefs of every status but rejected.
 * ``POST /api/beliefs/subjects/{id}/kind`` {kind}, ``.../rename`` {display},
   ``.../link`` {contact_id}, ``.../unlink``; ``POST /api/beliefs/subjects/merge``
   {keep_id, drop_id}. 400 with the ledger's message, 404 for an unknown subject.
@@ -221,7 +221,8 @@ def setup_beliefs_routes() -> APIRouter:
         found = _subject_call(ledger.get_subject, owner, subject_id)
         return {"subject": found,
                 "beliefs": ledger.list_beliefs(owner, DEFAULT_STATUSES, subject_id=found["id"]),
-                "summary": ledger.subject_summary(owner, found["id"])}
+                "summary": ledger.subject_summary(owner, found["id"]),
+                "stats": ledger.stats(owner)}
 
     @router.post("/api/beliefs/subjects/{subject_id:int}/kind", dependencies=admin)
     async def subject_kind(request: Request, subject_id: int, body: Kind) -> dict[str, Any]:

@@ -296,6 +296,7 @@ def test_subject_detail_has_beliefs_with_structure_and_summary(client):
     assert (body["subject"]["display"], body["subject"]["kind"]) == ("Jenn", "person")
     assert [(b["attribute"], b["value"]) for b in body["beliefs"]] == [("lives_in", "Lisbon")]
     assert body["summary"] == "Jenn (person). lives in: Lisbon (since 2024-05-01)."
+    assert body["stats"]["rejected"] == 1
     owner = subject_ids()["Owner"]
     body = client.get(f"/api/beliefs/subjects/{owner}").json()
     assert {b["shown_text"] for b in body["beliefs"]} == {"Prefers oat milk in coffee",
