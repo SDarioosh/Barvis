@@ -126,7 +126,9 @@ CREATE TABLE IF NOT EXISTS beliefs (
 );
 CREATE INDEX IF NOT EXISTS beliefs_owner_status ON beliefs (owner, status);
 CREATE INDEX IF NOT EXISTS beliefs_owner_norm ON beliefs (owner, norm);
-CREATE INDEX IF NOT EXISTS beliefs_owner_owner_norm ON beliefs (owner, owner_norm);
+DROP INDEX IF EXISTS beliefs_owner_owner_norm;
+CREATE INDEX IF NOT EXISTS beliefs_owner_corrected ON beliefs (owner, owner_norm)
+    WHERE owner_norm IS NOT NULL;
 CREATE TABLE IF NOT EXISTS evidence (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     belief_id INTEGER NOT NULL REFERENCES beliefs (id) ON DELETE CASCADE,
@@ -385,8 +387,10 @@ def db_path() -> Path:
 
 
 @contextmanager
-def _connect(write: bool = False) -> Iterator[sqlite3.Connection]:
-    """One transaction on beliefs.db (``BEGIN IMMEDIATE`` for writes)."""
+def _connect(write: bool = False, *, optimize: bool = False) -> Iterator[sqlite3.Connection]:
+    """One transaction on beliefs.db (``BEGIN IMMEDIATE`` for writes). ``optimize``: run
+    ``PRAGMA optimize`` after the commit (the batch writers: cheap, and it keeps the
+    planner's statistics current as the ledger grows)."""
     path = db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(str(path), timeout=30, isolation_level=None)
@@ -401,6 +405,8 @@ def _connect(write: bool = False) -> Iterator[sqlite3.Connection]:
         _migrate_event_kinds(db)
         if version < SCHEMA_VERSION:
             _migrate_subjects(db)
+        if version < SCHEMA_VERSION:
+            db.execute("PRAGMA optimize")
         db.execute("BEGIN IMMEDIATE" if write else "BEGIN")
         try:
             yield db
@@ -408,6 +414,8 @@ def _connect(write: bool = False) -> Iterator[sqlite3.Connection]:
             db.execute("ROLLBACK")
             raise
         db.execute("COMMIT")
+        if optimize:
+            db.execute("PRAGMA optimize")
     finally:
         db.close()
 
@@ -864,11 +872,21 @@ def _refresh(db: sqlite3.Connection, belief_id: int, stamp: str, st: Settings, t
 
 
 # ----------------------------------------------------------------------- intake
+# Two indexed lookups, not one ``norm = ? OR owner_norm = ?``: SQLite planned the OR as a
+# scan of the owner's beliefs, which made intake quadratic. ``owner_norm`` (set only by a
+# correction) has a partial index over the non-null rows: a full index is almost all
+# NULLs, and with statistics the planner scans it instead of searching it.
+MATCH_SQL = ("SELECT id FROM beliefs INDEXED BY beliefs_owner_norm "
+             "WHERE owner = ? AND norm = ? AND id != ? "
+             "UNION SELECT id FROM beliefs INDEXED BY beliefs_owner_corrected "
+             "WHERE owner = ? AND owner_norm IS NOT NULL AND owner_norm = ? AND id != ? "
+             "ORDER BY 1 LIMIT 1")
+
+
 def _match(db: sqlite3.Connection, owner: str, norm: str, exclude: int | None = None
            ) -> int | None:
-    row = db.execute("SELECT id FROM beliefs WHERE owner = ? AND (norm = ? OR owner_norm = ?) "
-                     "AND id != ? ORDER BY id LIMIT 1",
-                     (owner, norm, norm, exclude or -1)).fetchone()
+    other = exclude or -1
+    row = db.execute(MATCH_SQL, (owner, norm, other, owner, norm, other)).fetchone()
     return row["id"] if row else None
 
 
@@ -992,7 +1010,7 @@ def submit(owner: str | None, evidence: list[Evidence], *, now: datetime | None 
     counts = dict.fromkeys(("beliefs_added", "evidence_added", "evidence_updated",
                             "confirmed", "unconfirmed", "unchanged", "skipped"), 0)
     with _WRITE:
-        with _connect(write=True) as db:
+        with _connect(write=True, optimize=True) as db:
             seen: set[int] = set()
             fresh: set[int] = set()
             cache = _Subjects(db, owner)
@@ -1031,7 +1049,7 @@ def reconcile_source(owner: str | None, source: str, present_ids: set[str], *,
     present = {str(i) for i in present_ids}
     counts = {"gone": 0, "stale": 0, "unconfirmed": 0}
     with _WRITE:
-        with _connect(write=True) as db:
+        with _connect(write=True, optimize=True) as db:
             touched: set[int] = set()
             for row in db.execute("SELECT * FROM evidence WHERE owner = ? AND source = ?",
                                   (owner, source)).fetchall():
@@ -1098,7 +1116,7 @@ def _owner_action(owner: str | None, belief_id: int, now: datetime | None, apply
             row = _belief(db, owner, belief_id)
             apply(db, row, _stamp(now), now.date())
         try:
-            sync_memory(owner, now=now)
+            sync_memory(owner, now=now, belief_ids=[row["id"]])
         except RuntimeError as e:  # MemoryStoreUnreadable: the next facts run mirrors it
             logger.error("belief %s saved, memory not updated: %s", row["id"], e)
         return get_belief(owner, row["id"])
@@ -1233,16 +1251,37 @@ def beliefs_by_attribute(owner: str | None, attribute: str, subject_id: int | No
 
 
 # ----------------------------------------------------------------- subjects (2.1)
-def _subject_dict(db: sqlite3.Connection, row: Mapping) -> dict:
-    counts = dict.fromkeys(STATUSES, 0)
-    for r in db.execute("SELECT status, COUNT(*) AS n FROM beliefs WHERE subject_id = ? "
-                        "AND owner = ? GROUP BY status", (row["id"], row["owner"])):
-        counts[r["status"]] = r["n"]
+# Belief counts per subject and status, and source person ids, in one query each (not
+# one per subject); ``{where}`` narrows to one subject.
+SUBJECT_COUNTS_SQL = ("SELECT subject_id, status, COUNT(*) AS n FROM beliefs "
+                      "INDEXED BY beliefs_owner_subject WHERE owner = ?{where} "
+                      "GROUP BY subject_id, status")
+SUBJECT_SOURCES_SQL = ("SELECT subject_id, source, source_person_id, name FROM subject_sources "
+                       "WHERE owner = ?{where} ORDER BY subject_id, source, source_person_id")
+
+
+def _subject_extras(db: sqlite3.Connection, owner: str, subject_id: int | None = None
+                    ) -> tuple[dict[int, dict[str, int]], dict[int, list[dict]]]:
+    where, args = ("", (owner,)) if subject_id is None else \
+        (" AND subject_id = ?", (owner, subject_id))
+    counts: dict[int, dict[str, int]] = {}
+    for r in db.execute(SUBJECT_COUNTS_SQL.format(where=where), args):
+        if r["subject_id"] is not None:
+            counts.setdefault(r["subject_id"], {})[r["status"]] = r["n"]
+    sources: dict[int, list[dict]] = {}
+    for r in db.execute(SUBJECT_SOURCES_SQL.format(where=where), args):
+        sources.setdefault(r["subject_id"], []).append(
+            {"source": r["source"], "person_id": r["source_person_id"], "name": r["name"]})
+    return counts, sources
+
+
+def _subject_dict(db: sqlite3.Connection, row: Mapping,
+                  extras: tuple[dict, dict] | None = None) -> dict:
+    counts_by, sources_by = extras or _subject_extras(db, row["owner"], row["id"])
+    found = counts_by.get(row["id"], {})
+    counts = {s: found.get(s, 0) for s in STATUSES}
     counts["total"] = sum(counts[s] for s in STATUSES)
-    sources = [{"source": r["source"], "person_id": r["source_person_id"], "name": r["name"]}
-               for r in db.execute("SELECT source, source_person_id, name FROM subject_sources "
-                                   "WHERE subject_id = ? ORDER BY source, source_person_id",
-                                   (row["id"],))]
+    sources = sources_by.get(row["id"], [])
     return {
         "id": row["id"], "owner": row["owner"], "key": row["key"], "display": row["display"],
         "kind": row["kind"], "kind_by": row["kind_by"], "contact_id": row["contact_id"],
@@ -1274,7 +1313,8 @@ def list_subjects(owner: str | None, kind: str | None = None) -> list[dict]:
     with _connect() as db:
         rows = db.execute(f"SELECT * FROM subjects WHERE {where} ORDER BY kind != 'owner', "
                           "display COLLATE NOCASE, id", args).fetchall()
-        return [_subject_dict(db, r) for r in rows]
+        extras = _subject_extras(db, owner)
+        return [_subject_dict(db, r, extras) for r in rows]
 
 
 def get_subject(owner: str | None, subject_id: int) -> dict:
@@ -1300,9 +1340,12 @@ def _subject_action(owner: str | None, subject_id: int, now: datetime | None, ap
         with _connect(write=True) as db:
             row = _subject(db, owner, subject_id)
             kept = apply(db, row, _stamp(now))
+            touched = [r["id"] for r in db.execute(
+                "SELECT id FROM beliefs WHERE owner = ? AND subject_id = ?",
+                (owner, kept or row["id"]))]
         if mirror:
             try:
-                sync_memory(owner, now=now)
+                sync_memory(owner, now=now, belief_ids=touched)
             except RuntimeError as e:  # MemoryStoreUnreadable: the next facts run mirrors it
                 logger.error("subject %s saved, memory not updated: %s", row["id"], e)
         return get_subject(owner, kept or row["id"])
@@ -1626,8 +1669,23 @@ def memory_fields(belief: dict) -> dict[str, Any]:
     return fields
 
 
-def sync_memory(owner: str | None, *, now: datetime | None = None) -> dict[str, int]:
+def _in_chunks(db: sqlite3.Connection, sql: str, head: tuple, ids: list[int]) -> list:
+    """``sql`` with ``{marks}`` run over ``ids`` in chunks of 500 (SQLite's variable cap)."""
+    out: list = []
+    for start in range(0, len(ids), 500):
+        chunk = ids[start:start + 500]
+        out += db.execute(sql.format(marks=",".join("?" * len(chunk))), (*head, *chunk)
+                          ).fetchall()
+    return out
+
+
+def sync_memory(owner: str | None, *, now: datetime | None = None,
+                belief_ids: Iterable[int] | None = None) -> dict[str, int]:
     """Exactly one Odysseus memory per confirmed belief of this owner.
+
+    ``belief_ids`` (the owner actions, subject edits): only the memory entries of these
+    beliefs are looked at and changed (added, updated or removed); every other entry is
+    left exactly as it is. Without it (the jobs), the whole store is reconciled.
 
     A mirrored entry carries ``belief_id``; a Phase 0 copy (``source: odysseus-sound``,
     ``module_fact_id``, no ``belief_id``) is adopted by the belief that has that fact id
@@ -1644,18 +1702,34 @@ def sync_memory(owner: str | None, *, now: datetime | None = None) -> dict[str, 
     now = _now(now)
     stamp = _stamp(now)
     counts = {"kept": 0, "added": 0, "updated": 0, "removed": 0}
+    only = None if belief_ids is None else {_int(i, -1) for i in belief_ids}
+    if only is not None and not only:
+        return counts
     with _WRITE:
         with _connect() as db:
-            rows = db.execute(f"{_BELIEF_SELECT} WHERE b.owner = ? AND b.status = 'confirmed' "
-                              "ORDER BY b.id", (owner,)).fetchall()
+            if only is None:
+                rows = db.execute(f"{_BELIEF_SELECT} WHERE b.owner = ? AND "
+                                  "b.status = 'confirmed' ORDER BY b.id", (owner,)).fetchall()
+                fact_rows = db.execute("SELECT source_id, belief_id FROM evidence "
+                                       "WHERE owner = ? AND source = ?",
+                                       (owner, MODULE_SOURCE)).fetchall()
+                link_rows = db.execute("SELECT id, memory_id FROM beliefs WHERE owner = ? "
+                                       "AND memory_id IS NOT NULL", (owner,)).fetchall()
+            else:
+                ids = sorted(only)
+                rows = _in_chunks(db, f"{_BELIEF_SELECT} WHERE b.owner = ? AND "
+                                  "b.status = 'confirmed' AND b.id IN ({marks}) ORDER BY b.id",
+                                  (owner,), ids)
+                fact_rows = _in_chunks(db, "SELECT source_id, belief_id FROM evidence WHERE "
+                                       "owner = ? AND source = ? AND belief_id IN ({marks})",
+                                       (owner, MODULE_SOURCE), ids)
+                link_rows = _in_chunks(db, "SELECT id, memory_id FROM beliefs WHERE owner = ? "
+                                       "AND memory_id IS NOT NULL AND id IN ({marks})",
+                                       (owner,), ids)
             evidence = _evidence_rows(db, [r["id"] for r in rows])
             want = {r["id"]: memory_fields(_belief_dict(r, evidence[r["id"]])) for r in rows}
-            by_fact = {e["source_id"]: e["belief_id"] for e in db.execute(
-                "SELECT source_id, belief_id FROM evidence WHERE owner = ? AND source = ?",
-                (owner, MODULE_SOURCE))}
-            linked = {r["id"]: r["memory_id"] for r in db.execute(
-                "SELECT id, memory_id FROM beliefs WHERE owner = ? AND memory_id IS NOT NULL",
-                (owner,))}
+            by_fact = {e["source_id"]: e["belief_id"] for e in fact_rows}
+            linked = {r["id"]: r["memory_id"] for r in link_rows}
         manager = MemoryManager(DATA_DIR)
         entries = manager.load_all_for_update()
         out: list[dict] = []
@@ -1672,10 +1746,13 @@ def sync_memory(owner: str | None, *, now: datetime | None = None) -> dict[str, 
                     out.append(entry)  # the owner's own memory
                     continue
                 belief_id = by_fact.get(str(_int(entry.get("module_fact_id"))))
-                if belief_id is None and not by_fact:
+                if belief_id is None and (not by_fact or only is not None):
                     out.append(entry)  # the ledger hasn't heard from the module yet
                     continue
             belief_id = _int(belief_id, -1)
+            if only is not None and belief_id not in only:
+                out.append(entry)  # a partial sync: not one of the beliefs asked for
+                continue
             if belief_id not in want or belief_id in placed:
                 counts["removed"] += 1
                 removed.append(str(entry.get("id") or ""))
