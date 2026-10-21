@@ -78,6 +78,10 @@ def personal_store_turn(message: Any, history: Any = ()) -> bool:
         return False
     if _NO_TOOLS.search(message):
         return False
+    from src.turn_contract import inline_text_transformation
+
+    if inline_text_transformation(message):  # text to edit (src/inline_rewrite.py)
+        return False
     from src.skill_invocation import parse_invoke_message
 
     if parse_invoke_message(message) is not None:

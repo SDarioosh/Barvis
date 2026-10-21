@@ -194,6 +194,10 @@ def classify_tool_intent(text: str) -> ToolIntent:
         return ToolIntent(False, reason="empty message")
     if _EXPLANATORY_PREFIX.search(text):
         return ToolIntent(False, reason="explanatory feature question")
+    # Fork: text to edit stays in chat mode (src/inline_rewrite.py)
+    from src.turn_contract import inline_text_transformation
+    if inline_text_transformation(text):
+        return ToolIntent(False, reason="inline text transformation")
     for category, reason, pattern in _ROUTING_PATTERNS:
         if pattern.search(text):
             return ToolIntent(True, category=category, reason=reason)

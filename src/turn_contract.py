@@ -870,6 +870,10 @@ def inline_text_transformation(message: str) -> bool:
     the delimiter. Names of tools or personal objects inside supplied text do
     not grant authority to operate on those objects.
     """
+    # Fork: pasted text with a rewrite request before or after it (src/inline_rewrite.py)
+    from src.inline_rewrite import pasted_text_rewrite
+    if pasted_text_rewrite(message):
+        return True
     return bool(re.fullmatch(
         r'\s*(?:please\s+)?(?:'
         r'(?:fix|correct)\s+(?:only\s+)?(?:the\s+)?(?:spelling|grammar|typos)(?:\s+only)?'

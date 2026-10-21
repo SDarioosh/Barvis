@@ -212,6 +212,10 @@ def module_turn_requested(message: Any, manager=None) -> bool:
 
     if not isinstance(message, str) or _is_slash(message):
         return False
+    from src.turn_contract import inline_text_transformation
+
+    if inline_text_transformation(message):  # text to edit (src/inline_rewrite.py)
+        return False
     manager = manager if manager is not None else _manager()
     if manager is None or not trusted_readonly_mcp_tools(manager):
         return False
@@ -224,6 +228,15 @@ def with_module_tools(contract, *, message: Any, schemas, manager=None):
 
     if contract is None or not isinstance(message, str) or _is_slash(message):
         return contract
+    from src.turn_contract import inline_text_transformation
+
+    if inline_text_transformation(message):
+        # Text to edit (src/inline_rewrite.py): no tools, not even ones used
+        # earlier in the chat, so the model rewrites instead of looking things up.
+        if not contract.offered:
+            return contract
+        logger.info("[module-scope] inline text edit: dropped=%s", sorted(contract.offered))
+        return replace(contract, offered=frozenset(), required=frozenset(), schema_json=())
     if contract.required_read_operation is not None or contract.unavailable:
         return contract
     manager = manager if manager is not None else _manager()
