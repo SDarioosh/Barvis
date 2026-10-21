@@ -248,8 +248,8 @@ retired), which returns `{"facts": [{"id", "subject", "about" (owner/person/othe
 - **Forgetting**: when the owner forgets a belief in Odysseus, the hub calls the module's
   `retire_fact {"fact_id", "reason"}` so the fact doesn't come back; a module without
   that tool is tolerated (the hub keeps the belief rejected).
-- The result line has counts only (`facts: 12 seen, 1 new, 1 confirmed, 0 gone, 0 stale;
-  memory: 11 kept, 1 added, 0 updated, 0 removed`); a run with no change is not logged
+- The result line has counts only (`facts: 12 seen, 1 new, 1 confirmed, 0 unconfirmed,
+  0 gone, 0 stale; memory: 11 kept, 1 added, 0 updated, 0 removed`); a run with no change is not logged
   in Activity. An older module that answers `list_facts` with text: nothing is synced
   (logged once).
 - Settings: `MODULE_FACTS_SYNC` (`on` default, `off` stops the sync; memories already

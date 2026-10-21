@@ -197,8 +197,9 @@ async def sync(owner: str | None, call: CallTool, *, now: datetime | None = None
         stats = {"facts": len(rows)}
         stats.update(ledger.submit(owner, [evidence(r, confirmed_ids) for r in rows],
                                    now=now, mirror=False))
-        stats.update(ledger.reconcile_source(owner, SOURCE, {str(r["id"]) for r in rows},
-                                             now=now, mirror=False))
+        for key, value in ledger.reconcile_source(owner, SOURCE, {str(r["id"]) for r in rows},
+                                                  now=now, mirror=False).items():
+            stats[key] = stats.get(key, 0) + value
         stats["stale"] += ledger.apply_decay(owner, now=now, mirror=False)["stale"]
         memory = ledger.sync_memory(owner, now=now)
         stats.update({f"memory_{k}": v for k, v in memory.items()})
@@ -218,7 +219,8 @@ def changed(stats: dict[str, int]) -> bool:
 def summary(stats: dict[str, int]) -> str:
     """Counts only: never fact text."""
     return (f"facts: {stats['facts']} seen, {stats['beliefs_added']} new, "
-            f"{stats['confirmed']} confirmed, {stats['gone']} gone, {stats['stale']} stale; "
+            f"{stats['confirmed']} confirmed, {stats['unconfirmed']} unconfirmed, "
+            f"{stats['gone']} gone, {stats['stale']} stale; "
             f"memory: {stats['memory_kept']} kept, {stats['memory_added']} added, "
             f"{stats['memory_updated']} updated, {stats['memory_removed']} removed")
 

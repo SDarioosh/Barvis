@@ -617,7 +617,8 @@ def cites(answer: str, link: str) -> bool:
 
 CHAT_EXPECT = (  # (label, belief text, does the answer state it, the link to cite)
     ("peanut allergy", PEANUTS, lambda a: "peanut" in a.lower(), module_link(9004)),
-    ("birthday (corrected)", BIRTHDAY_FIX, lambda a: mentions_date(a, 5, 21), note_link("3")),
+    # the transcript link outranks the newer note's relative link (link_rank)
+    ("birthday (corrected)", BIRTHDAY_FIX, lambda a: mentions_date(a, 5, 21), module_link(9015)),
     ("design review", REVIEW, lambda a: "design review" in a.lower(), module_link(9012)),
 )
 
