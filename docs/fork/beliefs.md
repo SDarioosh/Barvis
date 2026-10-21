@@ -252,3 +252,61 @@ logged in Activity.
 | `MODULE_FACTS_SYNC` | on | `off` stops the facts job (memories already mirrored stay) |
 
 Values below 1 count as 1; a value that isn't a number falls back to the default.
+
+## Measure (1.6)
+
+`scripts/belief_eval.py` is the memory eval: a fictional history seeded through the
+ledger's public API (`submit`, `reconcile_source`, `apply_decay`, `confirm`, `reject`,
+`correct`, `restore`, `list_beliefs`, `sync_memory`) with every `now` given, so a run is
+deterministic. No model is involved; `tests/test_belief_eval.py` runs the same checks
+through pytest.
+
+```bash
+venv/bin/python scripts/belief_eval.py                     # temp dir, removed after
+venv/bin/python scripts/belief_eval.py --data-dir /tmp/belief-eval --keep
+```
+
+- The history: one owner (Sam Rivera), three people (Priya Nair, Tomas Berg, Lena Okafor)
+  and Project Heron, from March to October 2026. `odysseus-sound` is simulated the way the
+  facts job drives it (each pass: submit everything the module lists, `reconcile_source`,
+  `apply_decay`, one `sync_memory`); `notes` adds single sightings.
+- Cases: said once (tentative), source-confirmed (3 times on 2 days), two sources
+  (conversation + note), gone upstream (stale on reconcile), forgotten (rejected; the
+  same fact under the same and a new module id stays rejected), corrected (memory shows
+  the correction in the same memory; the original and the corrected text both join the
+  belief), `valid_until` passed, decay (confirmed at day 179, stale at day 195, no flap
+  when the module repeats the old sighting), text variant (casing, spaces, punctuation
+  join; then 3 sightings on 3 days confirm by the rule), owner-confirmed (stays confirmed
+  when the module drops it and past 180 days), restored after a mistaken forget, a
+  two-source belief losing one source (back to tentative), gone then seen again, two
+  notes on one day, one note, a preference category, and what the ledger knows about
+  Priya Nair.
+- Memory: exactly the expected confirmed beliefs are mirrored, one memory each, as
+  `<shown text> (source: <link>)`; no memory keeps a corrected-away text; the owner's own
+  memory is untouched; a second `sync_memory` writes nothing (`memory.json`
+  byte-identical).
+- Output: one row per check (`case`, `step`, `expected`, `actual`, `ok`/`FAIL`, with
+  `status/confirmed_by/mem|out` for beliefs), then `cases: 18/18   checks: score 74/74`
+  and the details of any failure. Exit code 1 on any mismatch, 2 when the data dir already
+  holds this eval's beliefs for the owner.
+- `--data-dir` (default: a temp dir) and `--owner` (default `eval-owner`) choose where and
+  for whom to seed; an explicit `--data-dir` is kept, `--keep` keeps the temp dir. To look
+  at the seeded ledger on the review page, seed the owner you log in as (`--owner ''`
+  without auth) into a scratch dir and start Odysseus on it with
+  `ODYSSEUS_DATA_DIR=/tmp/belief-eval`.
+
+`--chat` (optional, not scored, the only non-deterministic part) then asks a running
+Odysseus "What do you know about Priya Nair?" with odysseus-sound's bakeoff client, and
+prints whether the answer has each expected fact (peanut allergy, the corrected
+birthday, the design review) and its link:
+
+```bash
+ODYSSEUS_URL=http://127.0.0.1:7010 ODYSSEUS_PASSWORD_FILE=$SBX/admin.txt \
+  venv/bin/python scripts/belief_eval.py --chat --owner admin \
+  --data-dir <the test instance's data dir> --bakeoff $SOUND/server/eval/bakeoff.py
+```
+
+It seeds that instance's `beliefs.db` and `memory.json` (sandbox or the test instance on
+`127.0.0.1:7010`, never production). Other module evidence of that owner is left alone,
+but the instance's own Module Facts pass retires the eval's module facts (ids 9001+), so
+ask right after seeding or set `MODULE_FACTS_SYNC=off` on that instance.
