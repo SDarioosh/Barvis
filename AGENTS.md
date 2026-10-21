@@ -61,7 +61,7 @@ Fork code so far: `src/mcp_trust.py`, `src/mcp_stdio_owner.py`, `src/mcp_session
 `routes/sound_module_routes.py`, `routes/today_insight_routes.py`, `routes/beliefs_routes.py`, `routes/belief_search_routes.py`, `static/sound-module.html`,
 `static/today.html`, `static/js/today.js`, `static/beliefs.html`, `static/js/beliefs.js`,
 `static/js/soundModule.js`, `static/js/forkChatAsk.js`, `static/js/forkEntityHash.js`,
-`scripts/modules_setup.py`, `scripts/belief_eval.py`,
+`scripts/modules_setup.py`, `scripts/belief_eval.py`, `scripts/unfile_voice_note_todos.py`,
 `scripts/module_slash_eval.py`, `scripts/fork_deploy.sh`, `docker/fork.override.yml`,
 their tests (`tests/test_mcp_trust.py`,
 `tests/test_mcp_http_annotations.py`, `tests/test_mcp_stdio_owner.py`, `tests/test_mcp_session_recovery.py`, `tests/test_modules_setup.py`,
