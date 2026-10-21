@@ -221,28 +221,40 @@ def todo_candidates(notes: Iterable[Any], today: Date, tz: tzinfo,
     return out
 
 
-def _event_local(value: datetime, is_utc: bool, tz: tzinfo) -> datetime:
-    if value.tzinfo is not None:
-        return value.astimezone(tz)
-    if is_utc:
-        return value.replace(tzinfo=timezone.utc).astimezone(tz)
-    return value.replace(tzinfo=tz)
+def _occurrence_time(value: Any, tz: tzinfo) -> datetime | None:
+    """An occurrence's ``dtstart``/``dtend`` as local time. The calendar route's dicts
+    hold ``YYYY-MM-DD`` (all-day), ISO with ``Z`` (stored as UTC) or naive ISO (local)."""
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        try:
+            dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    return dt.astimezone(tz) if dt.tzinfo else dt.replace(tzinfo=tz)
 
 
-def event_candidates(events: Iterable[Any], now_local: datetime) -> list[dict]:
-    """Events from today to +7 days that haven't ended, each with its bucket."""
+def event_candidates(occurrences: Iterable[dict], now_local: datetime) -> list[dict]:
+    """Event occurrences (the calendar route's ``_expand_rrule`` dicts) from today to
+    +7 days that haven't ended, each with its bucket. The ref is the occurrence uid:
+    ``{series uid}::{date or datetime}`` for a recurring event, the plain uid otherwise,
+    as in the calendar route's answer (and the T5 feed built from it)."""
     tz = now_local.tzinfo
     today = now_local.date()
     last = today + timedelta(days=7)
     out = []
-    for ev in events:
-        if (getattr(ev, "status", None) or "") == "cancelled" or not getattr(ev, "dtstart", None):
+    for ev in occurrences:
+        if not isinstance(ev, dict) or (ev.get("status") or "") == "cancelled":
             continue
-        is_utc = bool(getattr(ev, "is_utc", False))
-        all_day = bool(getattr(ev, "all_day", False))
-        start = _event_local(ev.dtstart, is_utc and not all_day, tz)
-        end_raw = getattr(ev, "dtend", None) or ev.dtstart
-        end = _event_local(end_raw, is_utc and not all_day, tz)
+        uid = str(ev.get("uid") or "").strip()
+        start = _occurrence_time(ev.get("dtstart"), tz)
+        if not uid or start is None:
+            continue
+        end = _occurrence_time(ev.get("dtend"), tz) or start
+        all_day = bool(ev.get("all_day"))
         if all_day:
             # all-day ends are dates (often the next midnight); over once its days are past
             last_day = max(start.date(), (end - timedelta(seconds=1)).date())
@@ -253,15 +265,15 @@ def event_candidates(events: Iterable[Any], now_local: datetime) -> list[dict]:
         if start.date() > last:
             continue
         day = max(start.date(), today)
-        out.append({"ref": f"event:{ev.uid}", "kind": "event",
+        out.append({"ref": f"event:{uid}", "kind": "event",
                     "bucket": "due_today" if day == today else "due_soon",
-                    "title": (str(getattr(ev, "summary", "") or "").strip() or "(no title)")[:200],
+                    "title": (str(ev.get("summary") or "").strip() or "(no title)")[:200],
                     "date": day.isoformat(),
                     "time": None if all_day else start.strftime("%H:%M"),
                     "all_day": all_day,
-                    "location": (str(getattr(ev, "location", "") or "").strip() or None),
-                    "importance": (getattr(ev, "importance", None) or "normal"),
-                    "event_type": getattr(ev, "event_type", None) or None})
+                    "location": (str(ev.get("location") or "").strip() or None),
+                    "importance": (ev.get("importance") or "normal"),
+                    "event_type": ev.get("event_type") or None})
     return out
 
 
@@ -339,8 +351,11 @@ def _load_notes(owner: str | None) -> list:
     return sorted(notes, key=order)
 
 
-def _load_events(owner: str | None, now_local: datetime) -> list:
-    from core.database import SessionLocal
+def _load_events(owner: str | None, now_local: datetime) -> list[dict]:
+    """The owner's event occurrences around the window, expanded by the calendar route's
+    own ``_expand_rrule`` (recurring series whose first date is long past included)."""
+    from core.database import CalendarCal, CalendarEvent, SessionLocal
+    from routes.calendar_routes import _expand_rrule
     from src.task_scheduler import _checkin_calendar_events
 
     midnight = datetime.combine(now_local.date(), time.min)
@@ -348,10 +363,20 @@ def _load_events(owner: str | None, now_local: datetime) -> list:
     start, end = midnight - timedelta(days=1), midnight + timedelta(days=9)
     db = SessionLocal()
     try:
-        events = _checkin_calendar_events(db, owner, start, end)
-        for ev in events:
-            db.expunge(ev)
-        return events
+        rows = {ev.uid: ev for ev in _checkin_calendar_events(db, owner, start, end)}
+        series = (db.query(CalendarEvent).join(CalendarCal,
+                                               CalendarEvent.calendar_id == CalendarCal.id)
+                  .filter(CalendarCal.owner == owner, CalendarEvent.status != "cancelled",
+                          CalendarEvent.rrule.isnot(None), CalendarEvent.rrule != "",
+                          CalendarEvent.dtstart < end).all())
+        rows.update((ev.uid, ev) for ev in series)
+        out = []
+        for ev in rows.values():
+            try:
+                out.extend(_expand_rrule(ev, start, end))
+            except Exception as e:  # noqa: BLE001 -- one bad row must not hide the rest
+                logger.warning("today insight: couldn't expand event %s: %s", ev.uid, e)
+        return out
     finally:
         db.close()
 

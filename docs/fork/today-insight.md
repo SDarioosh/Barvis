@@ -20,7 +20,7 @@ built-ins. A run that finds nothing changed leaves no Activity entry.
 
 | Input | Where from |
 |---|---|
-| Calendar events from today 00:00 local to +7 days, not cancelled, not ended | the owner's calendars (`_checkin_calendar_events`, as the check-in uses): uid, summary, start, end, all-day, location, importance, event type |
+| Calendar event occurrences from today 00:00 local to +7 days, not cancelled, not ended | the owner's calendars: events starting in the window (`_checkin_calendar_events`, as the check-in uses) and every recurring series, expanded with the calendar route's own `_expand_rrule` (`routes/calendar_routes.py`, skipped dates honoured): occurrence uid, summary, start, end, all-day, location, importance, event type |
 | Open items of to-do notes | notes of type `checklist`, `todo`, `goal`, not archived; each item with its index, the note's title, pinned flag, due date and label. Calendar-reminder notes are left out (the event is already a candidate) |
 | Memory | `MemoryManager(DATA_DIR).load(owner)`: entries of category `preference`, `contact`, `fact`, and every entry with `source: "odysseus-sound"`; at most 40, most used first, then newest |
 | odysseus-sound | when its MCP server (`MODULE_ACTION_ITEMS_SERVER`, default `convo`) is connected: `get_daily_digest {"date": today}` and `list_action_items {"status": "open", "format": "json"}`. Items already filed into to-dos or the calendar by the Module Action Items task are left out (they are candidates already). A failed call or a disconnected module leaves that input out |
@@ -39,7 +39,11 @@ else the owner's personal assistant's timezone, else the server's.
   without a trailing "list" ("shopping list", "Grocery List").
 - Candidates, in order: every overdue and due-today item (by date and time), then due soon
   by date, then items of pinned notes, then undated, then later; at most 30. Each keeps
-  its bucket and has a ref: `todo:<note id>:<item index>` or `event:<uid>`.
+  its bucket and has a ref: `todo:<note id>:<item index>` or `event:<uid>`. The event uid
+  is the occurrence uid exactly as the calendar route returns it: the plain uid for a
+  single event, `<series uid>::<YYYY-MM-DD>` (all-day) or `<series uid>::<YYYY-MM-DDTHH:MM>`
+  for an occurrence of a recurring series, so refs match the T5 feed's `calendar` list.
+  The "ended" and "+7 days" checks apply to each occurrence, not the series' first date.
 - Input hash: SHA-256 over the candidate list, the memory texts, the digest text and the
   open action-item lines. The model runs only when there is no insight for today yet or
   the hash differs from the stored one; otherwise the run is a no-op. With no candidates
@@ -63,8 +67,6 @@ code: refs not in the candidate list are dropped, a ref is used once across sect
 most 5 per section, `why` is cut to 80 characters, the headline to 300. Unparseable JSON
 is retried once; if that fails too, the previous insight (if any) stays and the run is
 logged as failed in Activity.
-
-Recurring calendar events are taken as stored (not expanded), like the check-in digest.
 
 ## Stored JSON
 
@@ -112,8 +114,10 @@ look with each item's title and reason, in the odysseus-sound page's style.
   (`POST /api/notes/<id>/items/<index>/toggle`) and shows the tick at once. The page reads
   the note first and finds the line by text if lines have moved; a line that is gone
   shows "No longer on this list." The title opens the note (`/#open=notes&note=<id>`).
-- Events link to the calendar on their day (`/#event-<uid>`, opened by
-  `static/js/forkEntityHash.js`).
+- Events link to the calendar on their day, opened by `static/js/forkEntityHash.js`:
+  `/#event-<uid>` for a single event (highlighted), `/#event-<YYYY-MM-DD>` for an
+  occurrence of a recurring series (the calendar would resolve its compound uid to the
+  series' first day).
 - 👍/👎 store a vote and show the latest one. **Refresh** rewrites the insight now.
 
 ## In chat

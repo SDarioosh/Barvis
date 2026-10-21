@@ -22,11 +22,20 @@ def _note(id, title="Errands", items=(), note_type="checklist", due_date=None, p
                            items=json.dumps([{"text": t, "done": d} for t, d in items]))
 
 
-def _event(uid, start, end, summary="Meeting", all_day=False, is_utc=False, status="confirmed",
+def _event(uid, start, end, summary="Meeting", all_day=False, is_utc=False, status=None,
            location="", importance="normal", event_type=None):
-    return SimpleNamespace(uid=uid, dtstart=start, dtend=end, summary=summary, all_day=all_day,
-                           is_utc=is_utc, status=status, location=location,
-                           importance=importance, event_type=event_type)
+    """An occurrence as the calendar route's ``_expand_rrule`` returns it."""
+    if all_day:
+        ds, de = start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
+    else:
+        z = "Z" if is_utc else ""
+        ds, de = start.isoformat() + z, end.isoformat() + z
+    d = {"uid": uid, "dtstart": ds, "dtend": de, "summary": summary, "all_day": all_day,
+         "is_utc": is_utc, "location": location, "importance": importance,
+         "event_type": event_type}
+    if status:
+        d["status"] = status
+    return d
 
 
 @pytest.fixture
@@ -104,6 +113,16 @@ def test_event_candidates_drop_ended_cancelled_and_far():
     assert out["event:e-utc"]["time"] == "12:00"  # stored in UTC
     assert out["event:e-allday"]["bucket"] == "due_today" and out["event:e-allday"]["time"] is None
     assert out["event:e-soon"]["bucket"] == "due_soon"
+
+
+def test_event_candidates_keep_occurrence_uids():
+    occ = [_event("wk::2026-10-21T07:00", datetime(2026, 10, 21, 7), datetime(2026, 10, 21, 7, 30)),
+           _event("wk::2026-10-21T15:00", datetime(2026, 10, 21, 15), datetime(2026, 10, 21, 15, 30)),
+           _event("day::2026-10-24", datetime(2026, 10, 24), datetime(2026, 10, 25), all_day=True)]
+    out = ti.event_candidates(occ, NOW.astimezone(TZ))
+    assert [(c["ref"], c["bucket"], c["time"]) for c in out] == [
+        ("event:wk::2026-10-21T15:00", "due_today", "15:00"),
+        ("event:day::2026-10-24", "due_soon", None)]
 
 
 def test_candidate_order_and_cap():
@@ -397,6 +416,16 @@ def test_gather_reads_the_owners_notes_events_and_timezone(tmp_path, monkeypatch
             db.add(cdb.CalendarEvent(uid="ev-a", calendar_id="cal-a", summary="Dentist",
                                      dtstart=datetime(2026, 10, 21, 10), is_utc=True,
                                      dtend=datetime(2026, 10, 21, 11)))
+            # weekly series started in September: Wed and Sat at 07:00 and 15:00 until
+            # Sunday 25 Oct, Saturday 15:00 skipped. Today 07:00 is over (it's 09:00).
+            db.add(cdb.CalendarEvent(uid="series-1", calendar_id="cal-a", summary="Team sync",
+                                     dtstart=datetime(2026, 9, 2, 7), dtend=datetime(2026, 9, 2, 7, 30),
+                                     rrule="FREQ=WEEKLY;BYDAY=WE,SA;BYHOUR=7,15;BYMINUTE=0;"
+                                           "UNTIL=20261025T000000",
+                                     recurrence_exdates=json.dumps(["2026-10-24T15:00"])))
+            db.add(cdb.CalendarEvent(uid="series-gone", calendar_id="cal-a", summary="Cancelled",
+                                     dtstart=datetime(2026, 9, 2, 8), dtend=datetime(2026, 9, 2, 9),
+                                     rrule="FREQ=DAILY", status="cancelled"))
             db.add(cdb.CalendarEvent(uid="ev-b", calendar_id="cal-b", summary="Not Alice's",
                                      dtstart=datetime(2026, 10, 21, 12),
                                      dtend=datetime(2026, 10, 21, 13)))
@@ -408,8 +437,11 @@ def test_gather_reads_the_owners_notes_events_and_timezone(tmp_path, monkeypatch
             db.commit()
         assert str(ti.owner_timezone("alice")) == "Europe/Berlin"
         got = asyncio.run(ti.gather("alice", now=NOW, call=None))
-        assert [(c["ref"], c["bucket"]) for c in got["candidates"]] == [
-            ("todo:n-a:0", "due_today"), ("event:ev-a", "due_today")]
-        assert got["candidates"][1]["time"] == "12:00"
+        assert [(c["ref"], c["bucket"], c["time"]) for c in got["candidates"]] == [
+            ("todo:n-a:0", "due_today", None),
+            ("event:ev-a", "due_today", "12:00"),
+            ("event:series-1::2026-10-21T15:00", "due_today", "15:00"),
+            ("event:series-1::2026-10-24T07:00", "due_soon", "07:00")]
+        assert got["candidates"][2]["title"] == "Team sync"
     finally:
         engine.dispose()
