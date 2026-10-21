@@ -3,7 +3,7 @@
 fork-specific status. Upstream's own plans are in [../../ROADMAP.md](../../ROADMAP.md);
 don't edit that file.
 
-_Last updated: 2026-10-20_
+_Last updated: 2026-10-21_
 
 ## Status
 
@@ -24,6 +24,7 @@ _Last updated: 2026-10-20_
 | 13 | Conversations page v2: transcript reader, click-to-fix speakers (`reassign_line`, `name_speaker`, `rename_speaker_everywhere`), Ask in chat (`/?ask=` prefills a new chat with `/sound …`) | PR (this branch) | [../../FORK.md](../../FORK.md) |
 | 14 | Voice notes into calendar and to-dos: module items get a kind (event / task / reminder) and a time; voice-note items are filed automatically into the Odysseus calendar and to-dos (one push, undo/move on `/modules/sound`), conversation items are suggestions; status syncs both ways (owner's decision 2026-10-20, replaces "no copies") | PR (this branch); module side PR in SDarioosh/barvis-sound | [modules/odysseus-sound.md](modules/odysseus-sound.md#action-items-in-odysseus) |
 | 15 | Named to-do lists for voice-note items: "add milk to my shopping list" adds a line to that Odysseus to-do list (made if missing) instead of a to-do of its own; status syncs per line; Add to a list / Change list on `/modules/sound` | PR (this branch); module side PR in SDarioosh/barvis-sound | [modules/odysseus-sound.md](modules/odysseus-sound.md#action-items-in-odysseus) |
+| 16 | Today insight and facts in memory (personal context, Phase 0): built-in tasks "Today Insight" (every 15 min; code buckets to-dos and events, skips shopping lists without a date, hashes inputs, local model only when they change; refs validated) and "Module Facts" (hourly; odysseus-sound's confirmed facts reconciled into memory with provenance); `/today` page with tickable to-dos and 👍/👎; chat answers "what should I do first?" from the stored insight; `GET /api/codex/insight/today` with scope `insight:read` for the phone and T5 | PR (this branch); module side on the same branch in SDarioosh/barvis-sound (MCP 0.4.0) | [personal-context.md](personal-context.md), [today-insight.md](today-insight.md), [modules/odysseus-sound.md](modules/odysseus-sound.md#facts-in-odysseus-memory) |
 | 16 | Notes from voice notes: "create a note …" becomes an Odysseus note (titled by the module); "add to my hardware notes …" adds a line to the "Hardware notes" note (made if missing); explicit commands only; Undo / Add to notes on `/modules/sound` | PR (this branch); module side PR in SDarioosh/barvis-sound | [modules/odysseus-sound.md](modules/odysseus-sound.md#action-items-in-odysseus) |
 
 ## Next
@@ -63,6 +64,10 @@ _Last updated: 2026-10-20_
 8. **Upstream:** offer the general fixes from PR #1 and the skill MCP toolsets from
    SDarioosh/Barvis#9 upstream
    ([upstream-sync.md](upstream-sync.md#sending-fixes-upstream)); weekly syncs.
+
+## Personal context system
+
+The phased plan for taking in the owner's data, confirming beliefs and using them (Today insight first) is in [personal-context.md](personal-context.md).
 
 ## Future modules (placeholders)
 

@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Today — Odysseus</title>
+  <meta name="theme-color" content="#282c34">
+  <link rel="icon" href="/static/icon.ico">
+  <script nonce="{{CSP_NONCE}}">
+  // Fork: apply the theme the owner picked in Odysseus (saved in localStorage
+  // as 'odysseus-theme'), like the early script in index.html and login.html.
+  // theme.js isn't imported: it boots the whole settings UI.
+  (function () {
+    try {
+      var t = JSON.parse(localStorage.getItem('odysseus-theme'));
+      var s = document.documentElement.style;
+      if (t && t.colors) {
+        var c = t.colors;
+        s.setProperty('--bg', c.bg);
+        s.setProperty('--fg', c.fg);
+        s.setProperty('--panel', c.panel);
+        s.setProperty('--border', c.border);
+        if (c.red) s.setProperty('--red', c.red);
+        var a = c.advanced || {};
+        if (a.inputBg) s.setProperty('--input-bg', a.inputBg);
+        if (a.inputBorder) s.setProperty('--input-border', a.inputBorder);
+        var m = document.querySelector('meta[name="theme-color"]');
+        if (m && c.bg) m.setAttribute('content', c.bg);
+      }
+      // Same names as FONT_MAP in static/js/theme.js; unknown fonts keep the default.
+      var fonts = {
+        mono: "'Fira Code', monospace",
+        sans: "system-ui, -apple-system, 'Segoe UI', sans-serif",
+        serif: "Georgia, 'Times New Roman', serif",
+        opendyslexic: "'OpenDyslexic', sans-serif"
+      };
+      if (t && t.font && fonts[t.font]) s.setProperty('--font-family', fonts[t.font]);
+      if (t && t.density && t.density !== 'comfortable') {
+        document.documentElement.classList.add('density-' + t.density);
+      }
+    } catch (e) { /* no saved theme: keep the defaults */ }
+  })();
+  </script>
+  <link rel="stylesheet" href="/static/css/00-tokens.css?v=20260929csssplit">
+  <style>
+    /* Fork: Today insight page, same look as the odysseus-sound page
+       (static/sound-module.html): Odysseus tokens plus the saved theme, no new colors. */
+    html, body { height: auto; overflow: visible; overscroll-behavior: auto; }
+    body { background: var(--bg); color: var(--fg); margin: 0; display: block;
+           min-height: 100vh;
+           font-family: var(--font-family, 'Fira Code', monospace); }
+    .bs-wrap { max-width: 860px; margin: 0 auto; padding: 16px; }
+    .bs-top { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+    .bs-top h1 { font-size: 1.1rem; font-weight: 600; margin: 0; flex: 1; }
+    .bs-top a { color: var(--fg); opacity: 0.7; text-decoration: none; }
+    .bs-top a:hover { opacity: 1; }
+    .bs-section { margin: 18px 0 8px; font-size: 0.85rem; text-transform: uppercase;
+                  letter-spacing: 0.06em; opacity: 0.6; }
+    .bs-card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+               padding: 12px 14px; margin-bottom: 10px; }
+    .bs-headline { font-size: 0.98rem; line-height: 1.5; margin: 0; }
+    .bs-meta { font-size: 0.8rem; opacity: 0.65; }
+    .bs-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+    .bs-btn { background: transparent; color: var(--fg); border: 1px solid var(--border);
+              border-radius: 6px; padding: 6px 10px; font: inherit; font-size: 0.85rem;
+              cursor: pointer; min-height: 36px; box-sizing: border-box; }
+    .bs-btn:hover { border-color: var(--fg); }
+    .bs-btn[aria-pressed="true"] { border-color: var(--red); color: var(--red); }
+    .bs-btn:disabled { opacity: 0.4; cursor: default; }
+    .bs-empty, .bs-status { font-size: 0.85rem; opacity: 0.7; padding: 6px 0; }
+    .bs-status.error { color: var(--red); opacity: 1; }
+    .bs-items { list-style: none; margin: 0; padding: 0; }
+    .bs-item { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; }
+    .bs-item + .bs-item { border-top: 1px solid color-mix(in srgb, var(--border) 40%, transparent); }
+    .bs-tick { flex: none; width: 20px; height: 20px; margin: 1px 0 0; accent-color: var(--red);
+               cursor: pointer; }
+    .bs-kind { flex: none; width: 20px; display: inline-flex; justify-content: center;
+               opacity: 0.7; padding-top: 2px; }
+    .bs-body { flex: 1; min-width: 0; }
+    .bs-title { font-size: 0.9rem; font-weight: 600; color: var(--fg); text-decoration: none;
+                overflow-wrap: anywhere; }
+    a.bs-title:hover { text-decoration: underline; }
+    .bs-why { font-size: 0.85rem; line-height: 1.45; opacity: 0.8; margin-top: 2px; }
+    .bs-done .bs-title { text-decoration: line-through; opacity: 0.6; }
+    .bs-msg:empty { display: none; }
+    .bs-msg.error { color: var(--red); }
+  </style>
+</head>
+<body>
+  <div class="bs-wrap">
+    <div class="bs-top">
+      <a href="/" title="Back to Odysseus">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+      </a>
+      <h1>Today</h1>
+      <button type="button" class="bs-btn" id="ti-refresh">Refresh</button>
+    </div>
+    <div id="ti-note" class="bs-status" hidden></div>
+    <div id="ti-main"><div class="bs-status">Loading…</div></div>
+  </div>
+  <script type="module" src="/static/js/today.js"></script>
+</body>
+</html>
