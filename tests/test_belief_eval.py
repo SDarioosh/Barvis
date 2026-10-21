@@ -84,8 +84,109 @@ def test_chat_needs_data_dir_and_bakeoff():
 
 def test_score_answer():
     link = belief_eval.module_link(9004)
-    answer = (f"Priya Nair is allergic to peanuts ({link}). Her birthday is on 21 May "
-              "(source: /notes#note-3).")
+    answer = (f"Priya Nair is allergic to peanuts ({link}). Her birthday is on May 21st "
+              f"(source: {belief_eval.note_link('3')}).")
     got = {label: (fact, cited) for label, fact, cited in belief_eval.score_answer(answer)}
     assert got == {"peanut allergy": (True, True), "birthday (corrected)": (True, True),
                    "design review": (False, False)}
+
+
+@pytest.mark.parametrize("text", [
+    "Her birthday is on 21 May.", "her birthday is May 21", "On May 21st she turns 40",
+    "the 21st of May", "born 2026-05-21", "21 MAY", "may 21.", "21st May", "May the 21st",
+    "21 may, I think", "(May 21)",
+])
+def test_mentions_date_accepts_either_order(text):
+    assert belief_eval.mentions_date(text, 5, 21)
+
+
+@pytest.mark.parametrize("text", [
+    "Her birthday is on 12 May.", "May 2", "May 210", "121 May", "21 Mayfair", "2026-05-12",
+    "21 June", "maybe 21", "",
+])
+def test_mentions_date_rejects_other_dates(text):
+    assert not belief_eval.mentions_date(text, 5, 21)
+
+
+def test_mentions_date_old_birthday_and_september():
+    assert belief_eval.mentions_date("It used to be May 12th", 5, 12)
+    assert belief_eval.mentions_date("12 of May", 5, 12)
+    assert belief_eval.mentions_date("Sept. 3", 9, 3)
+    assert belief_eval.mentions_date("3 sep", 9, 3)
+
+
+def test_link_matches_on_the_path_not_the_signed_url():
+    link = belief_eval.module_link(9004)
+    assert belief_eval.citation(link) == "/view/c9004"
+    assert belief_eval.cites("see http://h:8090/view/c9004?sig=OTHER#t=1", link)
+    assert belief_eval.cites("[source](/view/c9004)", link)
+    assert not belief_eval.cites("see /view/c90041", link)
+    assert not belief_eval.cites("from memory context", link)
+    note = belief_eval.note_link("3")
+    assert belief_eval.cites(f"(source: {note})", note)
+    assert not belief_eval.cites("(source: /notes#belief-eval-note-30)", note)
+
+
+# ------------------------------------------------------------------- cleanup
+def test_cleanup_removes_exactly_what_the_eval_seeded(tmp_path, monkeypatch, capsys):
+    from src import evidence_intake as ledger
+    from src.memory import MemoryManager
+
+    owner = belief_eval.OWNER
+    t0 = belief_eval.at(10, 20)
+
+    def other(source_id, text, who=owner, source="odysseus-sound"):
+        ledger.submit(who, [ledger.Evidence(
+            source=source, source_id=source_id, subject="Ana Silva", about="person",
+            text=text, link=f"/view/c{source_id}", seen_first="2026-10-20",
+            seen_last="2026-10-20", source_confirmed=True)], now=t0)
+
+    monkeypatch.setattr("src.constants.DATA_DIR", str(tmp_path))
+    other("15", "Ana Silva keeps bees")                       # before the eval, same owner
+    other("16", "Ana Silva rows on Sundays", who="someone")   # another owner
+    manager = MemoryManager(str(tmp_path))
+    mine = manager.add_entry("My own note about the boat", owner=owner)
+    manager.save([*manager.load_all_for_update(), mine])
+
+    assert belief_eval.main(["--data-dir", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "--cleanup" in out and str(tmp_path) in out
+    manifest = belief_eval.manifest_path(tmp_path, owner)
+    recorded = belief_eval.json.loads(manifest.read_text())
+    assert recorded["owner"] == owner and len(recorded["belief_ids"]) == 16
+    monkeypatch.setattr("src.constants.DATA_DIR", str(tmp_path))
+    other("17", "Ana Silva has a red kayak")                  # after the eval
+    # A later source backs one eval belief: cleanup must leave that one alone.
+    ledger.submit(owner, [ledger.Evidence(
+        source="notes", source_id="real-note-1", subject="Tomas Berg", about="person",
+        text=belief_eval.CELLO, link="/notes#real-note-1", seen_first="2026-10-20",
+        seen_last="2026-10-20")], now=t0)
+
+    assert belief_eval.main(["--cleanup", "--data-dir", str(tmp_path)]) == 0
+    assert "cleanup: 15 beliefs, 1 kept, 0 missing" in capsys.readouterr().out
+    monkeypatch.setattr("src.constants.DATA_DIR", str(tmp_path))
+    left = {b["text"] for b in ledger.list_beliefs(owner)}
+    assert left == {"Ana Silva keeps bees", "Ana Silva has a red kayak", belief_eval.CELLO}
+    assert {b["text"] for b in ledger.list_beliefs("someone")} == {"Ana Silva rows on Sundays"}
+    texts = {(m.get("owner"), m["text"]) for m in MemoryManager(str(tmp_path)).load_all()}
+    assert (owner, "My own note about the boat") in texts
+    assert not any(t == belief_eval.OWN_MEMORY for _, t in texts)
+    assert {t for o, t in texts if o == owner and "(source:" in t} == {
+        "Ana Silva keeps bees (source: /view/c15)", "Ana Silva has a red kayak (source: /view/c17)",
+        f"{belief_eval.CELLO} (source: /notes#real-note-1)"}  # two sources now: kept, confirmed
+    assert not manifest.exists()
+    # Cleanup twice: nothing recorded any more.
+    assert belief_eval.main(["--cleanup", "--data-dir", str(tmp_path)]) == 2
+
+
+def test_cleanup_then_rerun_in_the_same_dir(tmp_path, capsys):
+    assert belief_eval.main(["--data-dir", str(tmp_path), "--owner", "ann"]) == 0
+    assert belief_eval.main(["--data-dir", str(tmp_path), "--owner", "ann"]) == 2
+    assert belief_eval.main(["--cleanup", "--data-dir", str(tmp_path), "--owner", "ann"]) == 0
+    assert belief_eval.main(["--data-dir", str(tmp_path), "--owner", "ann"]) == 0
+    assert "score 74/74" in capsys.readouterr().out
+
+
+def test_cleanup_needs_data_dir():
+    with pytest.raises(SystemExit):
+        belief_eval.main(["--cleanup"])
