@@ -1,33 +1,28 @@
-"""Fork: odysseus-sound's confirmed facts as Odysseus memories.
+"""Fork: odysseus-sound's facts as evidence for the belief ledger, and so into memory.
 
-A built-in scheduled task ("Module Facts", hourly) reads the facts odysseus-sound has
-confirmed (``list_facts {"confirmed": true, "format": "json"}``) through the module's
-MCP server and keeps one Odysseus memory per fact, so chat context and the Memory page
-know them without a module call. odysseus-sound stays the source of truth: each run is a
-full reconcile of this owner's copies against the module's list.
+A built-in scheduled task ("Module Facts", hourly) reads every current fact odysseus-sound
+holds (``list_facts {"format": "json", "limit": 1000}``) through the module's MCP server
+and submits each one to the belief ledger (``src/evidence_intake.py``) as evidence from
+source ``odysseus-sound`` with the module fact id as source id. The ledger decides what is
+confirmed and mirrors confirmed beliefs into Odysseus memory, one memory per belief, text
+``<fact> (source: <link>)``; see ``docs/fork/beliefs.md``.
 
-* A fact id seen for the first time is added (``MemoryManager.add_entry``).
-* A copy whose text or metadata changed is updated in place: the memory keeps its id
-  and ``uses``.
-* A copy whose id the module no longer returns (retracted, replaced, merged) is
-  deleted.
-* Running twice changes nothing.
+* The module's own verdict travels as ``source_confirmed``: the row's ``confirmed`` field,
+  or, from a module that doesn't send it yet, membership in a second
+  ``list_facts {"confirmed": true, "format": "json", "limit": 1000}`` answer (one extra
+  call, made only then).
+* Facts the module no longer returns (retracted, replaced, merged) are marked gone in the
+  ledger (``reconcile_source``); a belief left without live evidence goes stale and
+  leaves memory unless the owner confirmed it. Then expiry runs (``apply_decay``) and
+  memory is mirrored once.
+* Running twice changes nothing. Upstream's "Memory Tidy" may merge, rewrite or delete
+  copies like any other memory; the next run restores them. Phase 0 copies (a
+  ``module_fact_id`` without ``belief_id``) are adopted, not duplicated.
 
-A copy is an ordinary memory entry with ``source: "odysseus-sound"``, ``owner``,
-``module_fact_id``, ``link`` (the signed transcript link), ``subject``, ``about``,
-``times_said``, ``days``, ``first_said``, ``last_said`` and ``synced_at``. Its text is
-the module's fact text, never rewritten, followed by `` (source: <link>)``: chat context
-injects only a memory's text, so the link must be in it for answers to cite the
-transcript (the module contract). Category, from the bare fact text: ``about`` owner ->
-``preference`` when it has a preference word ("likes", "prefers", "hates" ...), else
-``fact``; person -> ``contact``; other -> ``fact``.
-
-Upstream's "Memory Tidy" task (``action_consolidate_memory``) may merge, rewrite or
-delete copies like any other memory. That is harmless: the next run restores a
-rewritten copy's text and re-adds a deleted one. Entries without
-``module_fact_id`` (the owner's own memories) are never touched, and neither are
-another owner's copies. The task doesn't fire ``memory_added``, so syncing doesn't
-trigger Memory Tidy itself.
+:func:`propagate_forget` carries the owner's "forget" back to the module: it calls the
+module's ``retire_fact`` for each odysseus-sound fact behind a rejected belief, so the
+fact is not submitted again (an older module without the tool is tolerated; the ledger
+keeps the belief rejected either way).
 
 Odysseus never opens the module's database. Per-owner state (last run, counts) is in
 ``<DATA_DIR>/module_facts_<owner>.json``. An older module that answers ``list_facts``
@@ -37,8 +32,9 @@ Settings (environment; the former ``BARVIS_*`` names are still read as a fallbac
 
 * ``MODULE_ACTION_ITEMS_SERVER``: module MCP server name or id (default ``convo``),
   shared with the action-item task.
-* ``MODULE_FACTS_SYNC``: ``on`` (default) or ``off``. ``off`` stops the sync; copies
-  already in memory stay.
+* ``MODULE_FACTS_SYNC``: ``on`` (default) or ``off``. ``off`` stops the sync; memories
+  already mirrored stay.
+* The ledger's own settings (``BELIEF_*``) are in ``src/evidence_intake.py``.
 """
 
 from __future__ import annotations
@@ -47,11 +43,12 @@ import asyncio
 import json
 import logging
 import re
-import sys
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from src import evidence_intake as ledger
 from src.module_action_items import (
     CallTool,
     _env,
@@ -64,22 +61,21 @@ logger = logging.getLogger(__name__)
 
 ACTION = "module_sync_facts"
 TASK_NAME = "Module Facts"
-SOURCE = "odysseus-sound"
+SOURCE = ledger.MODULE_SOURCE
 HOUSEKEEPING_DEFAULT = {
     ACTION: {"name": TASK_NAME, "schedule": "cron", "scheduled_time": None,
              "cron_expression": "0 * * * *"},
 }
-INFO = ("Copy odysseus-sound's confirmed facts into Odysseus memory (one memory per fact, "
-        "with its transcript link) and keep them in step: new facts added, changed ones "
-        "updated, retracted ones removed. Reads them through the module's MCP tools.")
-
-PREFERENCE_WORDS = frozenset({
-    "like", "likes", "prefer", "prefers", "love", "loves", "hate", "hates", "enjoy",
-    "enjoys", "favorite", "favourite", "want", "wants", "dislike",
-})
-# Copied from the module row; a difference in any of them is an update.
-FIELDS = ("text", "category", "subject", "about", "times_said", "days", "first_said",
-          "last_said", "link")
+INFO = ("Feed odysseus-sound's facts into the belief ledger as evidence (with their "
+        "transcript links) and keep Odysseus memory in step with the confirmed beliefs: "
+        "new ones added, changed ones updated, retracted or expired ones removed. Reads "
+        "them through the module's MCP tools.")
+PREFERENCE_WORDS = ledger.PREFERENCE_WORDS
+LIST_ALL = {"format": "json", "limit": 1000}
+LIST_CONFIRMED = {"confirmed": True, "format": "json", "limit": 1000}
+FORGET_REASON = "owner forgot it in Odysseus"
+_MISSING_TOOL = re.compile(r"unknown tool|tool not found|no such tool|not found: retire_fact"
+                           r"|retire_fact.*not (found|available|exist)", re.IGNORECASE)
 _LOCKS: dict[str, asyncio.Lock] = {}
 
 
@@ -114,7 +110,7 @@ def save_state(owner: str | None, state: dict[str, Any]) -> None:
 
 
 def _lock(owner: str | None) -> asyncio.Lock:
-    """One memory reconcile per owner at a time."""
+    """One facts pass per owner at a time."""
     return _LOCKS.setdefault(owner or "", asyncio.Lock())
 
 
@@ -152,123 +148,41 @@ def parse_facts_json(result: str) -> list[dict] | None:
 
 
 def category(row: dict) -> str:
-    """The hub memory category for a module fact (fact|preference|contact)."""
-    about = str(row.get("about") or "").strip().lower()
-    if about == "owner":
-        words = set(re.findall(r"[a-z]+", str(row.get("fact") or "").lower()))
-        return "preference" if words & PREFERENCE_WORDS else "fact"
-    if about == "person":
-        return "contact"
-    return "fact"
+    """The hub memory category for a module fact (fact|preference|contact), from the bare
+    fact text (words in the link don't count)."""
+    return ledger.category_for(row.get("about"), row.get("fact"))
 
 
-def memory_text(row: dict) -> str:
-    """The copy's text: the fact, then its transcript link exactly as the module gave it."""
-    link = str(row.get("link") or "").strip()
-    return f"{row['fact']} (source: {link})" if link else row["fact"]
+def _truthy(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "1", "yes"}
+    return bool(value)
 
 
-def copy_fields(row: dict) -> dict[str, Any]:
-    """The memory fields a copy of ``row`` carries (besides id, owner, source ...)."""
-    return {
-        "text": memory_text(row),
-        "category": category(row),  # the bare fact: URL words don't count
-        "subject": str(row.get("subject") or ""),
-        "about": str(row.get("about") or ""),
-        "times_said": _int(row.get("times_said")),
-        "days": _int(row.get("days")),
-        "first_said": str(row.get("first_said") or ""),
-        "last_said": str(row.get("last_said") or ""),
-        "link": str(row.get("link") or ""),
-    }
-
-
-def _is_copy(entry: dict, owner: str | None) -> bool:
-    return (entry.get("source") == SOURCE and "module_fact_id" in entry
-            and (entry.get("owner") or "") == (owner or ""))
+def evidence(row: dict, confirmed_ids: set[int] | None = None) -> ledger.Evidence:
+    """One module fact as ledger evidence. ``source_confirmed`` is the row's own
+    ``confirmed`` field, else membership in ``confirmed_ids``."""
+    confirmed = (_truthy(row["confirmed"]) if "confirmed" in row
+                 else row["id"] in (confirmed_ids or set()))
+    return ledger.Evidence(
+        source=SOURCE, source_id=str(row["id"]), subject=str(row.get("subject") or ""),
+        about=str(row.get("about") or ""), text=row["fact"],
+        link=str(row.get("link") or ""), seen_first=str(row.get("first_said") or ""),
+        seen_last=str(row.get("last_said") or ""), times=max(1, _int(row.get("times_said"))),
+        days=max(1, _int(row.get("days"))), source_confirmed=confirmed,
+        category=category(row))
 
 
 # -------------------------------------------------------------------------- sync
-def reconcile(owner: str | None, rows: list[dict], *, now: datetime | None = None
-              ) -> dict[str, int]:
-    """Make this owner's copies match ``rows``; returns kept/added/updated/retired.
-
-    Same discipline as upstream's memory writers: a strict read
-    (``load_all_for_update``, raises ``MemoryStoreUnreadable`` instead of saving over
-    a store it couldn't read) and the save right after, with no await in between.
-    """
-    from src.constants import DATA_DIR
-    from src.memory import MemoryManager
-
-    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    stamp = now.isoformat(timespec="seconds")
-    manager = MemoryManager(DATA_DIR)
-    entries = manager.load_all_for_update()
-    by_id = {r["id"]: r for r in rows}
-    stats = {"kept": 0, "added": 0, "updated": 0, "retired": 0}
-    indexed: list[dict] = []  # copies whose text the vector index must (re)learn
-    removed: list[str] = []
-    seen: set[int] = set()
-    out: list[dict] = []
-    for entry in entries:
-        if not _is_copy(entry, owner):
-            out.append(entry)
-            continue
-        fact_id = _int(entry.get("module_fact_id"))
-        row = by_id.get(fact_id)
-        if row is None or fact_id in seen:  # retracted upstream, or a duplicate copy
-            stats["retired"] += 1
-            removed.append(str(entry.get("id") or ""))
-            continue
-        seen.add(fact_id)
-        fields = copy_fields(row)
-        if any(entry.get(k) != v for k, v in fields.items()):
-            if entry.get("text") != fields["text"]:
-                indexed.append(entry)
-            entry.update(fields, synced_at=stamp, timestamp=int(now.timestamp()))
-            stats["updated"] += 1
-        else:
-            stats["kept"] += 1
-        out.append(entry)
-    for row in rows:
-        if row["id"] in seen:
-            continue
-        fields = copy_fields(row)
-        entry = manager.add_entry(fields["text"], source=SOURCE, category=fields["category"],
-                                  owner=owner or None)
-        entry.update(fields, module_fact_id=row["id"], synced_at=stamp,
-                     timestamp=int(now.timestamp()))
-        out.append(entry)
-        indexed.append(entry)
-        stats["added"] += 1
-    if stats["added"] or stats["updated"] or stats["retired"]:
-        manager.save(out)
-        _update_vector_index(indexed, removed)
-    return stats
-
-
-def _update_vector_index(indexed: list[dict], removed: list[str]) -> None:
-    """Best effort, like upstream's manage_memory: the index Odysseus loaded, if any."""
-    ai = sys.modules.get("src.ai_interaction")
-    vector = getattr(ai, "_memory_vector", None) if ai is not None else None
-    if vector is None or not getattr(vector, "healthy", False):
-        return
-    for entry in indexed:
-        try:
-            vector.add(entry["id"], entry["text"])
-        except Exception:
-            logger.debug("memory vector add failed", exc_info=True)
-    for memory_id in removed:
-        try:
-            vector.remove(memory_id)
-        except Exception:
-            logger.debug("memory vector remove failed", exc_info=True)
-
-
 async def sync(owner: str | None, call: CallTool, *, now: datetime | None = None
                ) -> dict[str, int] | None:
     """One pass. Counts, or None when the module answered with text (older module)."""
-    rows = parse_facts_json(await call("list_facts", {"confirmed": True, "format": "json", "limit": 1000}))
+    rows = parse_facts_json(await call("list_facts", dict(LIST_ALL)))
+    confirmed_ids: set[int] | None = None
+    if rows and any("confirmed" not in r for r in rows):
+        # a module without the per-row flag: ask for its confirmed set (one extra call)
+        confirmed = parse_facts_json(await call("list_facts", dict(LIST_CONFIRMED)))
+        confirmed_ids = {r["id"] for r in confirmed or []}
     async with _lock(owner):
         state = load_state(owner)
         if rows is None:
@@ -278,18 +192,35 @@ async def sync(owner: str | None, call: CallTool, *, now: datetime | None = None
                 state["text_only"] = True
                 save_state(owner, state)
             return None
-        stats = reconcile(owner, rows, now=now)
+        now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        # no await from here on: the ledger and memory are written in one go
+        stats = {"facts": len(rows)}
+        stats.update(ledger.submit(owner, [evidence(r, confirmed_ids) for r in rows],
+                                   now=now, mirror=False))
+        stats.update(ledger.reconcile_source(owner, SOURCE, {str(r["id"]) for r in rows},
+                                             now=now, mirror=False))
+        stats["stale"] += ledger.apply_decay(owner, now=now, mirror=False)["stale"]
+        memory = ledger.sync_memory(owner, now=now)
+        stats.update({f"memory_{k}": v for k, v in memory.items()})
         state.pop("text_only", None)
-        state.update(stats, last_run=(now or datetime.now(timezone.utc))
-                     .astimezone(timezone.utc).isoformat(timespec="seconds"))
+        state.update(stats, last_run=now.isoformat(timespec="seconds"))
         save_state(owner, state)
         return stats
 
 
+def changed(stats: dict[str, int]) -> bool:
+    """Whether a pass changed anything in the ledger or in memory."""
+    return any(stats.get(k) for k in (
+        "beliefs_added", "evidence_added", "evidence_updated", "confirmed", "gone", "stale",
+        "unconfirmed", "memory_added", "memory_updated", "memory_removed"))
+
+
 def summary(stats: dict[str, int]) -> str:
     """Counts only: never fact text."""
-    return (f"facts: {stats['kept']} kept, {stats['added']} added, "
-            f"{stats['updated']} updated, {stats['retired']} retired")
+    return (f"facts: {stats['facts']} seen, {stats['beliefs_added']} new, "
+            f"{stats['confirmed']} confirmed, {stats['gone']} gone, {stats['stale']} stale; "
+            f"memory: {stats['memory_kept']} kept, {stats['memory_added']} added, "
+            f"{stats['memory_updated']} updated, {stats['memory_removed']} removed")
 
 
 async def action_sync_facts(owner: str, **kwargs) -> tuple[str, bool]:
@@ -309,9 +240,73 @@ async def action_sync_facts(owner: str, **kwargs) -> tuple[str, bool]:
         return f"Facts sync failed: {e}", False
     if stats is None:
         raise TaskNoop("odysseus-sound answered list_facts with text; nothing synced")
-    if not (stats["added"] or stats["updated"] or stats["retired"]):
+    if not changed(stats):
         raise TaskNoop(summary(stats))
     return summary(stats), True
+
+
+# ------------------------------------------------------------------------ forget
+def _fact_ids(belief: dict | Iterable[dict]) -> list[int]:
+    rows = (belief.get("evidence") or []) if isinstance(belief, dict) else list(belief)
+    ids = {_int(e.get("source_id")) for e in rows if e.get("source") == SOURCE}
+    return sorted(i for i in ids if i > 0)
+
+
+async def propagate_forget(owner: str | None, belief: dict | Iterable[dict],
+                           call: CallTool | None = None) -> dict[str, int]:
+    """Retire the module facts behind a belief the owner forgot.
+
+    ``belief`` is a belief dict (``evidence_intake.get_belief``) or its evidence list
+    (what ``evidence_intake.reject`` returns). For each odysseus-sound evidence it calls
+    ``retire_fact {"fact_id": <id>, "reason": "owner forgot it in Odysseus"}`` through
+    the module's MCP server (``call``, else the connected module server). A module
+    without that tool is tolerated (logged once per owner). Returns counts: ``retired``,
+    ``failed`` and ``unsupported`` (facts not retired because the tool is missing or the
+    module isn't connected)."""
+    ids = _fact_ids(belief)
+    stats = {"retired": 0, "failed": 0, "unsupported": 0}
+    if not ids:
+        return stats
+    if call is None:
+        from src.tool_utils import get_mcp_manager
+
+        manager = get_mcp_manager()
+        server_id = module_server_id(manager) if manager is not None else None
+        if server_id is None:
+            logger.info("module MCP server %r is not connected; %d fact(s) not retired",
+                        server_key(), len(ids))
+            stats["unsupported"] = len(ids)
+            return stats
+        call = mcp_caller(manager, server_id)
+    for n, fact_id in enumerate(ids):
+        try:
+            await call("retire_fact", {"fact_id": fact_id, "reason": FORGET_REASON})
+        except RuntimeError as e:
+            if _MISSING_TOOL.search(str(e)):
+                stats["unsupported"] = len(ids) - n
+                await _note_retire_support(owner, False)
+                return stats
+            logger.warning("retire_fact %d failed: %s", fact_id, e)
+            stats["failed"] += 1
+            continue
+        stats["retired"] += 1
+    if stats["retired"]:
+        await _note_retire_support(owner, True)
+    return stats
+
+
+async def _note_retire_support(owner: str | None, supported: bool) -> None:
+    async with _lock(owner):
+        state = load_state(owner)
+        if supported:
+            if state.pop("no_retire_fact", None):
+                save_state(owner, state)
+            return
+        if not state.get("no_retire_fact"):
+            logger.info("odysseus-sound has no retire_fact tool; a forgotten fact stays "
+                        "in the module (update the module). Odysseus keeps it rejected.")
+            state["no_retire_fact"] = True
+            save_state(owner, state)
 
 
 def register_builtin_action(actions: dict, info: dict) -> None:
