@@ -212,6 +212,24 @@ async def test_rewritten_copy_is_restored(data):
                            "(source: http://h:8000/view/c2?sig=abc#t=20)")
 
 
+@pytest.mark.asyncio
+async def test_raised_thresholds_are_counted_as_unconfirmed(data, monkeypatch):
+    monkeypatch.setenv("BELIEF_CONFIRM_TIMES", "1")
+    monkeypatch.setenv("BELIEF_CONFIRM_DAYS", "1")
+    module = FakeModule([fact(1, "Likes jazz", confirmed=False, times_said=1, days=1),
+                         fact(2, "Hates queues", confirmed=False, times_said=1, days=1)],
+                        flag=True)
+    assert (await mf.sync("alice", module, now=T0))["confirmed"] == 2
+    monkeypatch.setenv("BELIEF_CONFIRM_TIMES", "3")
+    monkeypatch.setenv("BELIEF_CONFIRM_DAYS", "2")
+    stats = await mf.sync("alice", module, now=T1)
+    assert counts(stats, "unconfirmed", "confirmed", "memory_removed") == \
+        {"unconfirmed": 2, "confirmed": 0, "memory_removed": 2}
+    assert mf.changed(stats)
+    assert ", 2 unconfirmed, " in mf.summary(stats)
+    assert copies(data) == {}
+
+
 def test_category_ignores_words_in_the_link():
     row = {**fact(5, "Works night shifts"), "link": "http://h:8000/view/likes-love?sig=want#t=1"}
     assert mf.category(row) == "fact"
@@ -349,9 +367,11 @@ def test_category_mapping(about, text, want):
 
 
 def test_summary_has_counts_only():
-    stats = {"facts": 12, "beliefs_added": 2, "confirmed": 1, "gone": 0, "stale": 1,
-             "memory_kept": 10, "memory_added": 1, "memory_updated": 0, "memory_removed": 1}
-    assert mf.summary(stats) == ("facts: 12 seen, 2 new, 1 confirmed, 0 gone, 1 stale; "
+    stats = {"facts": 12, "beliefs_added": 2, "confirmed": 1, "unconfirmed": 3, "gone": 0,
+             "stale": 1, "memory_kept": 10, "memory_added": 1, "memory_updated": 0,
+             "memory_removed": 1}
+    assert mf.summary(stats) == ("facts: 12 seen, 2 new, 1 confirmed, 3 unconfirmed, 0 gone, "
+                                 "1 stale; "
                                  "memory: 10 kept, 1 added, 0 updated, 1 removed")
 
 
@@ -433,7 +453,7 @@ async def test_action_reports_counts_then_noops(data, manager):
 
     result, ok = await mf.action_sync_facts("alice")
     assert ok is True
-    assert result == ("facts: 3 seen, 3 new, 3 confirmed, 0 gone, 0 stale; "
+    assert result == ("facts: 3 seen, 3 new, 3 confirmed, 0 unconfirmed, 0 gone, 0 stale; "
                       "memory: 0 kept, 3 added, 0 updated, 0 removed")
     assert "oat milk" not in result
     with pytest.raises(TaskNoop, match="3 kept"):

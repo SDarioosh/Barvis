@@ -484,7 +484,8 @@ def table(checks: list[Check], out=None) -> int:
 CHAT_QUESTION = f"What do you know about {PRIYA}?"
 CHAT_EXPECT = (  # (label, belief text, words that must all appear, the link to cite)
     ("peanut allergy", PEANUTS, ("peanut",), module_link(9004)),
-    ("birthday (corrected)", BIRTHDAY_FIX, ("21 may",), note_link("3")),
+    # the transcript link outranks the newer note's relative link (link_rank)
+    ("birthday (corrected)", BIRTHDAY_FIX, ("21 may",), module_link(9015)),
     ("design review", REVIEW, ("design review",), module_link(9012)),
 )
 

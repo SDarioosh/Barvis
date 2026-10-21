@@ -36,7 +36,7 @@ database; the ledger holds only what sources submitted.
 |---|---|
 | `beliefs` | `id`, `owner` (`''` without auth), `subject`, `about` (`owner`, `person`, `other`), `text`, `norm` (matching key), `category` (`fact`, `preference`, `contact`), `status` (`tentative`, `confirmed`, `stale`, `rejected`), `confirmed_by` (`source`, `owner`, `rule` or null), `first_seen`, `last_seen`, `valid_until` (ISO dates), `memory_id` (the mirrored memory), `created_at`, `updated_at` (UTC ISO), `owner_text` (the owner's correction; when set, memory shows it), `owner_norm`, `note` (e.g. the reason given when forgetting) |
 | `evidence` | `id`, `belief_id`, `owner`, `source`, `source_id`, `subject`, `about`, `category`, `text` (what the source said), `link`, `seen_first`, `seen_last` (ISO dates), `times`, `days`, `source_confirmed` (0/1), `payload` (JSON of extra fields; `gone: true` and `gone_at` when the source stopped reporting it, `valid_until` when given), `updated_at`. Unique on (`belief_id`, `source`, `source_id`) and on (`owner`, `source`, `source_id`): one source id maps to one belief per owner. |
-| `events` | `id`, `belief_id`, `at`, `kind` (`added`, `evidence`, `confirmed`, `stale`, `rejected`, `corrected`, `restored`, `retired_upstream`), `detail`. Only changes are logged (not every hourly re-submit), and only the newest 50 per belief are kept. |
+| `events` | `id`, `belief_id`, `at`, `kind` (`added`, `evidence`, `confirmed`, `stale`, `rejected`, `corrected`, `restored`, `retired_upstream` (a source stopped reporting it), `unconfirmed` (it no longer meets the rule)), `detail`. A ledger created before `unconfirmed` existed has its `events` table rebuilt with the wider CHECK on first open (rows and ids kept). Only changes are logged (not every hourly re-submit), and only the newest 50 per belief are kept. |
 
 ## Statuses and the confirmation rule
 
@@ -64,8 +64,10 @@ confirmed whatever the evidence does, and a rejected belief stays rejected even 
 evidence (from any source, even source-confirmed) arrives for it.
 
 The rule is re-checked whenever a belief's evidence changes. A belief confirmed by the
-rule or its source that no longer meets it (one of its two sources went away) goes back
-to `tentative` and leaves memory.
+rule or its source that no longer meets it (one of its two sources went away, or a
+threshold was raised) goes back to `tentative` and leaves memory: event `unconfirmed`
+("no longer meets the rule"), counted as `unconfirmed` by `submit` and
+`reconcile_source`.
 
 ## Submitting evidence (for a new source)
 
@@ -87,7 +89,8 @@ counts = ledger.submit(owner, [
         valid_until=None,            # optional ISO date: the belief ends that day
     ),
 ], now=None)
-# {"beliefs_added", "evidence_added", "evidence_updated", "confirmed", "unchanged", "skipped"}
+# {"beliefs_added", "evidence_added", "evidence_updated", "confirmed", "unconfirmed",
+#  "unchanged", "skipped"}
 ledger.reconcile_source(owner, "notes", present_ids={"note-42:3", ...})
 ```
 
@@ -148,7 +151,7 @@ ledger.reconcile_source(owner, "notes", present_ids={"note-42:3", ...})
 A belief dict has `id`, `owner`, `subject`, `about`, `text`, `owner_text`, `shown_text`,
 `category`, `status`, `confirmed_by`, `first_seen`, `last_seen` ("not heard since"),
 `valid_until`, `memory_id`, `created_at`, `updated_at`, `note`, `link` and `source` (of
-the most recent evidence) and `evidence` (each: `id`, `source`, `source_id`, `subject`,
+the citing evidence, see [Memory mirroring](#memory-mirroring)) and `evidence` (each: `id`, `source`, `source_id`, `subject`,
 `about`, `category`, `text`, `link`, `seen_first`, `seen_last`, `times`, `days`,
 `source_confirmed`, `gone`, `payload`, `updated_at`). Another owner's id raises
 `BeliefNotFound` (a `LookupError`). Owner actions update memory right away; if the memory
@@ -219,10 +222,19 @@ the ledger holds and answers `No fact #N.` That is a normal answer, not an error
 
 `sync_memory(owner)` keeps exactly one Odysseus memory per confirmed belief:
 
-- Text: `(owner_text or text) + " (source: <link>)"`, the link of the most recent
-  evidence (chat context injects only a memory's text, so the link must be in it for
-  answers to cite it). Category from the belief.
-- Fields: `source` (the most recent evidence's source: `odysseus-sound`, `notes` …),
+- Text: `(owner_text or text) + " (source: <link>)"` (chat context injects only a
+  memory's text, so the link must be in it for answers to cite it). Category from the
+  belief.
+- The link (and the memory's `source`) come from one **citing evidence**
+  (`primary_evidence`, ranked by `link_rank`): live evidence before gone evidence, then
+  1. an absolute `http(s)://` link from `odysseus-sound` (the signed transcript link),
+  2. any other absolute link,
+  3. a relative link (a note's `/#open=notes&note=…`),
+
+  and the newest (`seen_last`, then id) within the same rank. So a note that repeats a
+  conversation fact confirms it but doesn't take over its citation: answers keep citing
+  the transcript.
+- Fields: `source` (the citing evidence's source: `odysseus-sound`, `notes` …),
   `belief_id`, `owner`, `subject`, `about`, `link`, `first_seen`, `last_seen`,
   `synced_at`. A belief with odysseus-sound evidence also keeps the Phase 0 fields
   `module_fact_id`, `times_said`, `days`, `first_said`, `last_said`.
@@ -248,8 +260,8 @@ as seen dates, `times_said`/`days` as totals and the row's `confirmed` as
 `source_confirmed`. A module that doesn't send `confirmed` per row yet gets a second call
 `{"confirmed": true, "format": "json", "limit": 1000}`, whose ids are the confirmed set.
 Then `reconcile_source(owner, "odysseus-sound", ids)`, `apply_decay` and one
-`sync_memory`. Result line, counts only: `facts: 12 seen, 1 new, 1 confirmed, 0 gone,
-0 stale; memory: 11 kept, 1 added, 0 updated, 0 removed`; a pass with no change is not
+`sync_memory`. Result line, counts only: `facts: 12 seen, 1 new, 1 confirmed,
+0 unconfirmed, 0 gone, 0 stale; memory: 11 kept, 1 added, 0 updated, 0 removed`; a pass with no change is not
 logged in Activity.
 
 ## Sources

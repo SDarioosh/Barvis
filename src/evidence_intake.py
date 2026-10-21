@@ -55,7 +55,7 @@ CATEGORIES = ("fact", "preference", "contact")
 STATUSES = ("tentative", "confirmed", "stale", "rejected")
 CONFIRMED_BY = ("source", "owner", "rule")
 EVENT_KINDS = ("added", "evidence", "confirmed", "stale", "rejected", "corrected",
-               "restored", "retired_upstream")
+               "restored", "retired_upstream", "unconfirmed")
 NORM_VERSION = 1  # PRAGMA user_version: matching keys of this version
 EVENTS_KEPT = 50  # per belief: the history stays small
 PREFERENCE_WORDS = frozenset({
@@ -120,7 +120,7 @@ CREATE TABLE IF NOT EXISTS events (
     belief_id INTEGER NOT NULL REFERENCES beliefs (id) ON DELETE CASCADE,
     at TEXT NOT NULL,
     kind TEXT NOT NULL CHECK (kind IN ('added', 'evidence', 'confirmed', 'stale',
-        'rejected', 'corrected', 'restored', 'retired_upstream')),
+        'rejected', 'corrected', 'restored', 'retired_upstream', 'unconfirmed')),
     detail TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS events_belief ON events (belief_id);
@@ -328,6 +328,7 @@ def _connect(write: bool = False) -> Iterator[sqlite3.Connection]:
         db.executescript(SCHEMA)
         if db.execute("PRAGMA user_version").fetchone()[0] < NORM_VERSION:
             _migrate_norms(db)
+        _migrate_event_kinds(db)
         db.execute("BEGIN IMMEDIATE" if write else "BEGIN")
         try:
             yield db
@@ -353,6 +354,34 @@ def _migrate_norms(db: sqlite3.Connection) -> None:
                            (normalize(row["text"], row["subject"], row["about"]), owner_norm,
                             row["id"]))
             db.execute(f"PRAGMA user_version = {NORM_VERSION}")
+    except BaseException:
+        db.execute("ROLLBACK")
+        raise
+    db.execute("COMMIT")
+
+
+def _migrate_event_kinds(db: sqlite3.Connection) -> None:
+    """Once per ledger file: widen the ``events.kind`` CHECK to today's kinds (an older
+    ledger lacks ``unconfirmed``). SQLite can't alter a CHECK, so the table is rebuilt."""
+    sql = db.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'events'"
+                     ).fetchone()[0]
+    if "'unconfirmed'" in sql:
+        return
+    kinds = ", ".join(f"'{k}'" for k in EVENT_KINDS)
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        sql = db.execute("SELECT sql FROM sqlite_master WHERE type = 'table' "
+                         "AND name = 'events'").fetchone()[0]
+        if "'unconfirmed'" not in sql:
+            db.execute("CREATE TABLE events_new (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                       "belief_id INTEGER NOT NULL REFERENCES beliefs (id) ON DELETE CASCADE, "
+                       f"at TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN ({kinds})), "
+                       "detail TEXT NOT NULL DEFAULT '')")
+            db.execute("INSERT INTO events_new (id, belief_id, at, kind, detail) "
+                       "SELECT id, belief_id, at, kind, detail FROM events")
+            db.execute("DROP TABLE events")
+            db.execute("ALTER TABLE events_new RENAME TO events")
+            db.execute("CREATE INDEX IF NOT EXISTS events_belief ON events (belief_id)")
     except BaseException:
         db.execute("ROLLBACK")
         raise
@@ -401,13 +430,24 @@ def _evidence_rows(db: sqlite3.Connection, belief_ids: Iterable[int]) -> dict[in
     return out
 
 
+def link_rank(e: Mapping) -> int:
+    """How well an evidence's link serves as the belief's citation: 2 for an absolute
+    ``http(s)://`` link from odysseus-sound (the signed transcript link), 1 for any other
+    absolute link, 0 for a relative one (e.g. a note's ``/#open=notes…``)."""
+    link = str(e.get("link") or "").strip().lower()
+    if not link.startswith(("http://", "https://")):
+        return 0
+    return 2 if e.get("source") == MODULE_SOURCE else 1
+
+
 def primary_evidence(evidence: list[dict]) -> dict | None:
-    """The most recent evidence (live before gone): its link and source represent the
-    belief in memory."""
+    """The evidence whose link and source represent the belief in memory: live before
+    gone, then by :func:`link_rank` (transcript link, other absolute link, relative
+    link), then the most recent (``seen_last``, then id)."""
     if not evidence:
         return None
     pool = [e for e in evidence if not e.get("gone")] or evidence
-    return max(pool, key=lambda e: (e.get("seen_last") or "", e.get("id") or 0))
+    return max(pool, key=lambda e: (link_rank(e), e.get("seen_last") or "", e.get("id") or 0))
 
 
 def _belief_dict(row: Mapping, evidence: list[dict]) -> dict:
@@ -539,8 +579,8 @@ def _refresh(db: sqlite3.Connection, belief_id: int, stamp: str, st: Settings, t
         _set(db, belief_id, stamp, confirmed_by=rule)
     elif not rule and status == "confirmed":
         _set(db, belief_id, stamp, status="tentative", confirmed_by=None)
-        _event(db, belief_id, "retired_upstream", "no longer meets the rule", stamp)
-        return "tentative"
+        _event(db, belief_id, "unconfirmed", "no longer meets the rule", stamp)
+        return "unconfirmed"
     return changed
 
 
@@ -629,13 +669,15 @@ def submit(owner: str | None, evidence: list[Evidence], *, now: datetime | None 
     """File evidence from a source, apply the rule, and (``mirror``) update memory.
 
     Returns counts: ``beliefs_added``, ``evidence_added``, ``evidence_updated``,
-    ``confirmed`` (beliefs that became confirmed), ``unchanged`` (items identical to what
-    the ledger had) and ``skipped`` (items without source, id, text or link)."""
+    ``confirmed`` (beliefs that became confirmed), ``unconfirmed`` (beliefs confirmed by
+    their source or the rule that no longer meet it, e.g. after a threshold was raised;
+    back to tentative, event ``unconfirmed``), ``unchanged`` (items identical to what the
+    ledger had) and ``skipped`` (items without source, id, text or link)."""
     owner = owner or ""
     now = _now(now)
     stamp, today, st = _stamp(now), now.date(), settings()
     counts = dict.fromkeys(("beliefs_added", "evidence_added", "evidence_updated",
-                            "confirmed", "unchanged", "skipped"), 0)
+                            "confirmed", "unconfirmed", "unchanged", "skipped"), 0)
     with _WRITE:
         with _connect(write=True) as db:
             seen: set[int] = set()
@@ -652,9 +694,9 @@ def submit(owner: str | None, evidence: list[Evidence], *, now: datetime | None 
                 if changed:
                     fresh |= touched
             for belief_id in sorted(seen):
-                if _refresh(db, belief_id, stamp, st, today,
-                            revive=belief_id in fresh) == "confirmed":
-                    counts["confirmed"] += 1
+                result = _refresh(db, belief_id, stamp, st, today, revive=belief_id in fresh)
+                if result in ("confirmed", "unconfirmed"):
+                    counts[result] += 1
         if mirror:
             sync_memory(owner, now=now)
     return counts
@@ -666,7 +708,8 @@ def reconcile_source(owner: str | None, source: str, present_ids: set[str], *,
 
     A belief left without live evidence goes stale (and leaves memory) unless the owner
     confirmed it; a rule-confirmed belief that no longer meets the rule goes back to
-    tentative. Owner-confirmed and rejected beliefs keep their status. Returns counts:
+    tentative (event ``unconfirmed``). Owner-confirmed and rejected beliefs keep their
+    status. Returns counts:
     ``gone`` (evidence newly gone), ``stale`` and ``unconfirmed`` (beliefs)."""
     owner = owner or ""
     now = _now(now)
@@ -693,7 +736,7 @@ def reconcile_source(owner: str | None, source: str, present_ids: set[str], *,
                 result = _refresh(db, belief_id, stamp, st, today)
                 if result == "stale":
                     counts["stale"] += 1
-                elif result == "tentative":
+                elif result == "unconfirmed":
                     counts["unconfirmed"] += 1
         if mirror:
             sync_memory(owner, now=now)

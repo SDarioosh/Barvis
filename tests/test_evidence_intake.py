@@ -48,7 +48,7 @@ def only(owner="alice", **kw):
 def test_new_evidence_is_a_tentative_belief_outside_memory(data):
     counts = ei.submit("alice", [ev()], now=T0)
     assert counts == {"beliefs_added": 1, "evidence_added": 1, "evidence_updated": 0,
-                      "confirmed": 0, "unchanged": 0, "skipped": 0}
+                      "confirmed": 0, "unconfirmed": 0, "unchanged": 0, "skipped": 0}
     belief = only()
     assert (belief["status"], belief["confirmed_by"], belief["text"]) == \
         ("tentative", None, "Likes jazz")
@@ -90,15 +90,48 @@ def test_same_text_from_two_sources_is_one_belief_confirmed_by_rule(data):
     counts = ei.submit("alice", [ev("notes", "n9", "  likes   JAZZ ", seen_last="2026-10-09")],
                        now=T1)
     assert counts == {"beliefs_added": 0, "evidence_added": 1, "evidence_updated": 0,
-                      "confirmed": 1, "unchanged": 0, "skipped": 0}
+                      "confirmed": 1, "unconfirmed": 0, "unchanged": 0, "skipped": 0}
     belief = only()
     assert (belief["status"], belief["confirmed_by"]) == ("confirmed", "rule")
     assert {e["source"] for e in belief["evidence"]} == {"odysseus-sound", "notes"}
     assert belief["last_seen"] == "2026-10-09"
     entry = mirrored(data)[belief["id"]]
-    # the most recent evidence gives the link and source; module fields stay on
-    assert entry["text"] == "Likes jazz. (source: http://h/notes/n9)"
-    assert (entry["source"], entry["module_fact_id"]) == ("notes", 7)
+    # the module's absolute link outranks the newer note's; module fields stay on
+    assert entry["text"] == "Likes jazz. (source: http://h/odysseus-sound/7)"
+    assert (entry["source"], entry["module_fact_id"]) == ("odysseus-sound", 7)
+
+
+def test_memory_link_prefers_the_transcript_link(data):
+    ei.submit("alice", [ev("odysseus-sound", "4", "Jonas is allergic to peanuts",
+                           about="person", subject="Jonas", source_confirmed=True,
+                           seen_last="2026-10-02",
+                           link="http://h:8000/view/c4?sig=abc#t=40")], now=T0)
+    ei.submit("alice", [ev("notes", "n6", "Jonas is allergic to peanuts.", about="person",
+                           subject="Jonas", seen_last="2026-10-20",
+                           link="/#open=notes&note=n6")], now=T1)
+    (entry,) = mirrored(data).values()
+    assert entry["link"] == "http://h:8000/view/c4?sig=abc#t=40"
+    assert entry["text"] == ("Jonas is allergic to peanuts "
+                             "(source: http://h:8000/view/c4?sig=abc#t=40)")
+    assert entry["source"] == "odysseus-sound"
+    assert only()["link"] == "http://h:8000/view/c4?sig=abc#t=40"
+
+
+def test_link_rank_order():
+    module = {"source": "odysseus-sound", "link": "https://h/view/c1", "seen_last": "2026-01-01",
+              "id": 1}
+    web = {"source": "email", "link": "http://mail/x", "seen_last": "2026-10-01", "id": 2}
+    note = {"source": "notes", "link": "/#open=notes&note=1", "seen_last": "2026-10-20",
+            "id": 3}
+    rel_module = {**module, "link": "/view/c1", "id": 4, "seen_last": "2026-10-21"}
+    assert [ei.link_rank(e) for e in (module, web, note, rel_module)] == [2, 1, 0, 0]
+    assert ei.primary_evidence([note, web, module]) is module
+    assert ei.primary_evidence([note, web]) is web
+    assert ei.primary_evidence([note, rel_module]) is rel_module  # newest among relative
+    newer = {**module, "id": 5, "seen_last": "2026-02-01"}
+    assert ei.primary_evidence([module, newer]) is newer  # newest among the same rank
+    # live evidence still comes before gone evidence
+    assert ei.primary_evidence([{**module, "gone": True}, note]) is note
 
 
 def test_times_and_days_rule(data):
@@ -299,7 +332,48 @@ def test_reconcile_one_source_gone_drops_a_rule_confirmation(data):
     assert only()["confirmed_by"] == "rule"
     result = ei.reconcile_source("alice", "notes", set(), now=T1)
     assert result == {"gone": 1, "stale": 0, "unconfirmed": 1}
-    assert only()["status"] == "tentative" and mirrored(data) == {}
+    belief = ei.get_belief("alice", only()["id"])
+    assert belief["status"] == "tentative" and mirrored(data) == {}
+    assert [(e["kind"], e["detail"]) for e in belief["events"][:2]] == [
+        ("unconfirmed", "no longer meets the rule"), ("retired_upstream", "notes n1")]
+
+
+def test_raised_threshold_unconfirms_on_submit(data, monkeypatch):
+    monkeypatch.setenv("BELIEF_CONFIRM_TIMES", "1")
+    monkeypatch.setenv("BELIEF_CONFIRM_DAYS", "1")
+    ei.submit("alice", [ev()], now=T0)
+    assert only()["confirmed_by"] == "rule" and len(mirrored(data)) == 1
+    monkeypatch.setenv("BELIEF_CONFIRM_TIMES", "3")
+    monkeypatch.setenv("BELIEF_CONFIRM_DAYS", "2")
+    counts = ei.submit("alice", [ev()], now=T1)
+    assert (counts["unchanged"], counts["unconfirmed"], counts["confirmed"]) == (1, 1, 0)
+    belief = ei.get_belief("alice", only()["id"])
+    assert belief["status"] == "tentative" and mirrored(data) == {}
+    assert belief["events"][0]["kind"] == "unconfirmed"
+
+
+def test_older_ledger_gets_the_unconfirmed_event_kind(data):
+    """A ledger created before ``unconfirmed`` existed is migrated on first open."""
+    old = ei.SCHEMA.replace(", 'unconfirmed'", "")
+    assert "'unconfirmed'" not in old
+    with sqlite3.connect(data / "beliefs.db") as db:
+        db.executescript(old)
+        db.execute("INSERT INTO beliefs (id, owner, text, norm, created_at, updated_at) "
+                   "VALUES (1, 'alice', 'Likes jazz', 'likes jazz', 't', 't')")
+        db.execute("INSERT INTO events (id, belief_id, at, kind, detail) "
+                   "VALUES (7, 1, 't', 'added', 'from notes')")
+        with pytest.raises(sqlite3.IntegrityError):
+            db.execute("INSERT INTO events (belief_id, at, kind) VALUES (1, 't', 'unconfirmed')")
+    assert ei.stats("alice")["total"] == 1  # opening migrates
+    with sqlite3.connect(data / "beliefs.db") as db:
+        assert db.execute("SELECT id, kind, detail FROM events").fetchall() == \
+            [(7, "added", "from notes")]
+        db.execute("INSERT INTO events (belief_id, at, kind) VALUES (1, 't', 'unconfirmed')")
+        assert "'unconfirmed'" in db.execute(
+            "SELECT sql FROM sqlite_master WHERE name = 'events'").fetchone()[0]
+        assert db.execute("SELECT name FROM sqlite_master WHERE type = 'index' "
+                          "AND tbl_name = 'events'").fetchall() == [("events_belief",)]
+    ei.stats("alice")  # already migrated: nothing to do
 
 
 def test_reconcile_only_touches_that_source_and_owner(data):

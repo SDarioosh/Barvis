@@ -85,7 +85,7 @@ def test_chat_needs_data_dir_and_bakeoff():
 def test_score_answer():
     link = belief_eval.module_link(9004)
     answer = (f"Priya Nair is allergic to peanuts ({link}). Her birthday is on 21 May "
-              "(source: /notes#note-3).")
+              f"(source: {belief_eval.module_link(9015)}).")
     got = {label: (fact, cited) for label, fact, cited in belief_eval.score_answer(answer)}
     assert got == {"peanut allergy": (True, True), "birthday (corrected)": (True, True),
                    "design review": (False, False)}

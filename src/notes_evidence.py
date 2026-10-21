@@ -354,7 +354,9 @@ async def run(owner: str | None, *, llm: Llm | None = None, now: datetime | None
             save_state(owner, state)  # progress survives a restart mid-pass
 
         present = {str(i) for entry in current.values() for i in (entry.get("ids") or [])}
-        stats.update(ledger.reconcile_source(owner, SOURCE, present, now=now, mirror=False))
+        for key, value in ledger.reconcile_source(owner, SOURCE, present, now=now,
+                                                  mirror=False).items():
+            stats[key] = stats.get(key, 0) + value  # submit counts unconfirmed too
         stats["stale"] += ledger.apply_decay(owner, now=now, mirror=False)["stale"]
         memory = ledger.sync_memory(owner, now=now)
         stats.update({f"memory_{k}": v for k, v in memory.items()})
