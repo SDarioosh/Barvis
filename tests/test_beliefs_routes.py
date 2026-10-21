@@ -75,7 +75,7 @@ def test_list_defaults_to_all_but_rejected_with_stats(client):
     assert {b["shown_text"] for b in body["beliefs"]} == {
         "Prefers oat milk in coffee", "Lives in Lisbon with her dog Pixel"}
     assert body["stats"] == {"tentative": 1, "confirmed": 1, "stale": 0, "rejected": 1,
-                             "total": 3}
+                             "total": 3, "structured": 0}
     assert all(b["owner"] == "alice" for b in body["beliefs"])
 
 
@@ -208,6 +208,8 @@ class FactsModule:
 
     async def __call__(self, tool, args):
         self.calls.append((tool, args))
+        if tool == "list_people":
+            return "No people yet."  # an older module: text, tolerated
         assert tool == "list_facts"
         return json.dumps({"facts": self.facts})
 
@@ -227,7 +229,8 @@ def test_run_syncs_facts_now(client, monkeypatch):
     body = r.json()
     assert body["summary"].startswith("facts: 2 seen, 1 new, ")
     assert body["stats"]["facts"] == 2
-    assert module.calls == [("list_facts", {"format": "json", "limit": 1000})]
+    assert module.calls == [("list_facts", {"format": "json", "limit": 1000}),
+                            ("list_people", {"format": "json"})]
     assert "Runs on Saturday mornings" in ids()
 
 

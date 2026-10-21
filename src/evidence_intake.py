@@ -26,6 +26,21 @@ Storage: ``<DATA_DIR>/beliefs.db`` (stdlib sqlite3, WAL), one file for all owner
 Writes run under one process-wide lock; each public call is one transaction. Calls are
 synchronous and short: async callers may call them directly, as the facts job does.
 
+Phase 2 (``docs/fork/beliefs.md``, "Subjects and contacts", "Structure", "Projects"):
+
+* Every belief belongs to a **subject** (``subjects``: the owner, a person, a project or a
+  thing; :func:`list_subjects`). :func:`submit` resolves it from the evidence: by the
+  source's stable person id (``Evidence.person_id``, kept in ``subject_sources``), else by
+  name or alias (case-insensitive), else a new subject. A subject can be linked to an
+  Odysseus contact (:func:`link_contact`), merged, renamed and given a kind.
+* A confirmed belief can carry **structure** next to its text: ``attribute`` (one of
+  :data:`ATTRIBUTES`), ``value``, ``valid_from``; written by the Belief Structure task
+  (``src/belief_structure.py``) through :func:`structure_candidates` and
+  :func:`apply_structure`. Free text stays what memory shows.
+* A subject becomes a **project** when the owner says so, or when it isn't a module person
+  and its name says project/launch/release/migration/plan or it has a ``project_status``
+  or ``deadline`` belief.
+
 Settings (environment): ``BELIEF_CONFIRM_SOURCES`` (2), ``BELIEF_CONFIRM_TIMES`` (3),
 ``BELIEF_CONFIRM_DAYS`` (2), ``BELIEF_STALE_DAYS`` (180).
 """
@@ -57,6 +72,18 @@ CONFIRMED_BY = ("source", "owner", "rule")
 EVENT_KINDS = ("added", "evidence", "confirmed", "stale", "rejected", "corrected",
                "restored", "retired_upstream", "unconfirmed")
 NORM_VERSION = 1  # PRAGMA user_version: matching keys of this version
+SCHEMA_VERSION = 2  # PRAGMA user_version: subjects and structure columns (Phase 2)
+SUBJECT_KINDS = ("person", "project", "thing", "owner")
+# The controlled vocabulary of a belief's ``attribute`` (stage 2.2); anything else: other.
+ATTRIBUTES = ("lives_in", "works_at", "role", "birthday", "allergy", "diet", "likes",
+              "dislikes", "relationship", "owns", "pet", "plans", "decision",
+              "contact_info", "health", "project_status", "deadline", "other")
+PROJECT_ATTRIBUTES = ("project_status", "deadline")
+PROJECT_WORDS = re.compile(r"\b(project|launch|release|migration|plan)\b", re.IGNORECASE)
+GENERIC_SUBJECT = "General"  # the subject of evidence that names none
+OWNER_DISPLAY = "Owner"
+_OWNER_NAMES = frozenset({"", "me", "i", "myself", "owner", "the owner"})
+MAX_VALUE_CHARS = 120
 EVENTS_KEPT = 50  # per belief: the history stays small
 PREFERENCE_WORDS = frozenset({
     "like", "likes", "prefer", "prefers", "love", "loves", "hate", "hates", "enjoy",
@@ -64,6 +91,8 @@ PREFERENCE_WORDS = frozenset({
 })
 # Memory fields only a belief with odysseus-sound evidence carries (the Phase 0 shape).
 MODULE_FIELDS = ("module_fact_id", "times_said", "days", "first_said", "last_said")
+# Memory fields a mirrored entry carries only sometimes (removed when they no longer apply).
+OPTIONAL_FIELDS = (*MODULE_FIELDS, "contact_id")
 _RESERVED_PAYLOAD = ("gone", "gone_at")
 _WRITE = threading.RLock()
 
@@ -88,7 +117,12 @@ CREATE TABLE IF NOT EXISTS beliefs (
     updated_at TEXT NOT NULL,
     owner_text TEXT,
     owner_norm TEXT,
-    note TEXT
+    note TEXT,
+    subject_id INTEGER,
+    attribute TEXT,
+    value TEXT,
+    valid_from TEXT,
+    structured_at TEXT
 );
 CREATE INDEX IF NOT EXISTS beliefs_owner_status ON beliefs (owner, status);
 CREATE INDEX IF NOT EXISTS beliefs_owner_norm ON beliefs (owner, norm);
@@ -124,11 +158,40 @@ CREATE TABLE IF NOT EXISTS events (
     detail TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS events_belief ON events (belief_id);
+CREATE TABLE IF NOT EXISTS subjects (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner TEXT NOT NULL DEFAULT '',
+    key TEXT NOT NULL,
+    display TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'thing'
+        CHECK (kind IN ('person', 'project', 'thing', 'owner')),
+    kind_by TEXT NOT NULL DEFAULT 'auto' CHECK (kind_by IN ('auto', 'owner')),
+    contact_id TEXT,
+    aliases TEXT NOT NULL DEFAULT '[]',
+    note TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (owner, key)
+);
+CREATE TABLE IF NOT EXISTS subject_sources (
+    subject_id INTEGER NOT NULL REFERENCES subjects (id) ON DELETE CASCADE,
+    owner TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL,
+    source_person_id TEXT NOT NULL,
+    name TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL,
+    UNIQUE (source, source_person_id, owner)
+);
+CREATE INDEX IF NOT EXISTS subject_sources_subject ON subject_sources (subject_id);
 """
 
 
 class BeliefNotFound(LookupError):
     """No belief with that id for that owner."""
+
+
+class SubjectNotFound(LookupError):
+    """No subject with that id for that owner."""
 
 
 # ----------------------------------------------------------------------- settings
@@ -169,7 +232,10 @@ class Evidence:
     (required: evidence without a link is skipped); ``seen_first``/``seen_last`` are ISO
     dates or datetimes; ``times``/``days`` are the source's own totals (distinct
     sightings, distinct days); ``source_confirmed`` is the source's own verdict.
-    ``valid_until`` (ISO date, optional) ends the belief on that day."""
+    ``valid_until`` (ISO date, optional) ends the belief on that day. ``person_id``
+    (optional) is the source's stable id of the person the evidence is about (e.g.
+    odysseus-sound's ``list_people`` id): it files the belief under that person's subject
+    whatever name the source uses."""
 
     source: str
     source_id: str
@@ -185,6 +251,7 @@ class Evidence:
     category: str | None = None
     payload: dict | None = None
     valid_until: str | None = None
+    person_id: str | None = None
 
 
 _OWNER_LEADS = ("the owner", "owner", "i am", "i'm", "i've", "me", "my", "i")
@@ -297,7 +364,9 @@ def _clean(item: Evidence, today: str) -> dict | None:
     valid_until = _day(item.valid_until)
     if valid_until:
         payload["valid_until"] = valid_until
+    person_id = str(item.person_id if item.person_id is not None else "").strip()
     return {
+        "person_id": person_id or None,
         "source": source, "source_id": source_id, "subject": str(item.subject or "").strip(),
         "about": about, "text": text, "norm": normalize(text, item.subject, about),
         "category": cat,
@@ -326,9 +395,12 @@ def _connect(write: bool = False) -> Iterator[sqlite3.Connection]:
         db.execute("PRAGMA journal_mode = WAL")
         db.execute("PRAGMA foreign_keys = ON")
         db.executescript(SCHEMA)
-        if db.execute("PRAGMA user_version").fetchone()[0] < NORM_VERSION:
+        version = db.execute("PRAGMA user_version").fetchone()[0]
+        if version < NORM_VERSION:
             _migrate_norms(db)
         _migrate_event_kinds(db)
+        if version < SCHEMA_VERSION:
+            _migrate_subjects(db)
         db.execute("BEGIN IMMEDIATE" if write else "BEGIN")
         try:
             yield db
@@ -386,6 +458,202 @@ def _migrate_event_kinds(db: sqlite3.Connection) -> None:
         db.execute("ROLLBACK")
         raise
     db.execute("COMMIT")
+
+
+_NEW_BELIEF_COLUMNS = (("subject_id", "INTEGER"), ("attribute", "TEXT"), ("value", "TEXT"),
+                       ("valid_from", "TEXT"), ("structured_at", "TEXT"))
+
+
+def _migrate_subjects(db: sqlite3.Connection) -> None:
+    """Once per ledger file (``PRAGMA user_version`` 2): add the Phase 2 belief columns
+    (``subject_id``, ``attribute``, ``value``, ``valid_from``, ``structured_at``) and file
+    every belief under a subject, from its ``subject`` and ``about``: about the owner ->
+    the owner's one ``owner`` subject; a person -> kind ``person``; else ``thing`` (or
+    ``project`` when the name says so)."""
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        if db.execute("PRAGMA user_version").fetchone()[0] < SCHEMA_VERSION:
+            cols = {r[1] for r in db.execute("PRAGMA table_info(beliefs)")}
+            for name, decl in _NEW_BELIEF_COLUMNS:
+                if name not in cols:
+                    db.execute(f"ALTER TABLE beliefs ADD COLUMN {name} {decl}")
+            db.execute("CREATE INDEX IF NOT EXISTS beliefs_owner_subject "
+                       "ON beliefs (owner, subject_id)")
+            db.execute("CREATE INDEX IF NOT EXISTS beliefs_owner_attribute "
+                       "ON beliefs (owner, attribute)")
+            stamp = _stamp(_now(None))
+            caches: dict[str, _Subjects] = {}
+            for row in db.execute("SELECT id, owner, subject, about FROM beliefs "
+                                  "WHERE subject_id IS NULL ORDER BY id").fetchall():
+                cache = caches.setdefault(row["owner"], _Subjects(db, row["owner"]))
+                subject_id = _resolve_subject(cache, row["about"], row["subject"], None, None,
+                                              stamp)
+                db.execute("UPDATE beliefs SET subject_id = ? WHERE id = ?",
+                           (subject_id, row["id"]))
+            db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+    except BaseException:
+        db.execute("ROLLBACK")
+        raise
+    db.execute("COMMIT")
+
+
+# ----------------------------------------------------------------------- subjects
+def subject_key(name: Any) -> str:
+    """A subject's matching key: lowercase, whitespace collapsed, surrounding quotes and
+    trailing punctuation dropped. Names and aliases match on it."""
+    key = " ".join(str(name or "").casefold().replace("\u2019", "'").split())
+    return key.strip(" .,;:!?…\"'")
+
+
+def _clean_name(name: Any) -> str:
+    return " ".join(str(name or "").split())[:120]
+
+
+def _aliases(raw: Any) -> list[str]:
+    try:
+        value = json.loads(raw or "[]")
+    except (TypeError, ValueError):
+        return []
+    return [str(a) for a in value if str(a).strip()] if isinstance(value, list) else []
+
+
+def _is_owner_name(name: Any) -> bool:
+    return subject_key(name) in _OWNER_NAMES
+
+
+class _Subjects:
+    """One owner's subjects, for matching inside one transaction: subject keys first, then
+    alias keys (an alias never shadows another subject's own key)."""
+
+    def __init__(self, db: sqlite3.Connection, owner: str):
+        self.db, self.owner = db, owner
+        self.by_key: dict[str, int] = {}
+        self.owner_id: int | None = None
+        rows = db.execute("SELECT id, key, kind, aliases FROM subjects WHERE owner = ? "
+                          "ORDER BY id", (owner,)).fetchall()
+        for row in rows:
+            self.by_key.setdefault(row["key"], row["id"])
+            if row["kind"] == "owner" and self.owner_id is None:
+                self.owner_id = row["id"]
+        for row in rows:
+            for alias in _aliases(row["aliases"]):
+                self.by_key.setdefault(subject_key(alias), row["id"])
+
+    def row(self, subject_id: int) -> sqlite3.Row:
+        return self.db.execute("SELECT * FROM subjects WHERE id = ?", (subject_id,)).fetchone()
+
+    def create(self, display: str, kind: str, stamp: str) -> int:
+        key = subject_key(display)
+        n = 1
+        while key in self.by_key:  # only the owner subject can get here
+            n += 1
+            display = f"{OWNER_DISPLAY} {n}"
+            key = subject_key(display)
+        cur = self.db.execute(
+            "INSERT INTO subjects (owner, key, display, kind, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)", (self.owner, key, display, kind, stamp, stamp))
+        self.by_key[key] = cur.lastrowid
+        if kind == "owner":
+            self.owner_id = cur.lastrowid
+        return cur.lastrowid
+
+    def add_alias(self, subject_id: int, name: Any, stamp: str) -> bool:
+        """Add ``name`` as an alias unless it already names this subject."""
+        name = _clean_name(name)
+        key = subject_key(name)
+        row = self.row(subject_id)
+        if not key or row is None or key == row["key"]:
+            return False
+        aliases = _aliases(row["aliases"])
+        if any(subject_key(a) == key for a in aliases):
+            return False
+        self.db.execute("UPDATE subjects SET aliases = ?, updated_at = ? WHERE id = ?",
+                        (json.dumps([*aliases, name], ensure_ascii=False), stamp, subject_id))
+        self.by_key.setdefault(key, subject_id)
+        return True
+
+    def owner_subject(self, name: Any, stamp: str) -> int:
+        """The owner's one ``owner`` subject (created on first use, named after the first
+        real name it hears, else "Owner"); a real name becomes an alias."""
+        name = _clean_name(name)
+        if self.owner_id is None:
+            display = OWNER_DISPLAY if _is_owner_name(name) or subject_key(name) in self.by_key \
+                else name
+            self.create(display, "owner", stamp)
+        if not _is_owner_name(name):
+            self.add_alias(self.owner_id, name, stamp)
+        return self.owner_id
+
+    def mapped(self, source: str | None, person_id: str | None) -> int | None:
+        if not (source and person_id):
+            return None
+        row = self.db.execute("SELECT subject_id FROM subject_sources WHERE owner = ? AND "
+                              "source = ? AND source_person_id = ?",
+                              (self.owner, source, person_id)).fetchone()
+        return row["subject_id"] if row else None
+
+    def map(self, subject_id: int, source: str | None, person_id: str | None, name: Any,
+            stamp: str, *, move: bool = False) -> bool:
+        """Map (source, person id) to a subject. An existing mapping is kept unless
+        ``move``. Returns whether a mapping was added or moved."""
+        if not (source and person_id):
+            return False
+        current = self.mapped(source, person_id)
+        if current is None:
+            self.db.execute("INSERT INTO subject_sources (subject_id, owner, source, "
+                            "source_person_id, name, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                            (subject_id, self.owner, source, person_id, _clean_name(name),
+                             stamp))
+            return True
+        if current != subject_id and move:
+            self.db.execute("UPDATE subject_sources SET subject_id = ?, updated_at = ? WHERE "
+                            "owner = ? AND source = ? AND source_person_id = ?",
+                            (subject_id, stamp, self.owner, source, person_id))
+            return True
+        return False
+
+
+def _inferred_kind(about: str, name: str, person_id: str | None) -> str:
+    if about == "person" and name:
+        return "person"
+    if not person_id and PROJECT_WORDS.search(name or ""):
+        return "project"
+    return "thing"
+
+
+def _resolve_subject(cache: _Subjects, about: str, subject: Any, source: str | None,
+                     person_id: str | None, stamp: str) -> int:
+    """The subject an item belongs to: the owner subject for ``about="owner"``; else the
+    subject the source's person id maps to, else the one whose name or alias matches,
+    else a new one. A person id is mapped to the subject found; a name the subject
+    doesn't have yet becomes an alias."""
+    name = _clean_name(subject)
+    if about == "owner":
+        subject_id = cache.owner_subject(name, stamp)
+        cache.map(subject_id, source, person_id, name, stamp)
+        return subject_id
+    subject_id = cache.mapped(source, person_id)
+    if subject_id is not None:
+        if name:
+            cache.add_alias(subject_id, name, stamp)
+        return subject_id
+    display = name or GENERIC_SUBJECT
+    subject_id = cache.by_key.get(subject_key(display))
+    if subject_id is None:
+        subject_id = cache.create(display, _inferred_kind(about, name, person_id), stamp)
+    elif person_id and about == "person":
+        _person_kind(cache, subject_id, stamp)
+    cache.map(subject_id, source, person_id, name, stamp)
+    return subject_id
+
+
+def _person_kind(cache: _Subjects, subject_id: int, stamp: str) -> None:
+    """A subject a source knows as a person becomes kind person (if it is still an
+    inferred thing or project)."""
+    row = cache.row(subject_id)
+    if row is not None and row["kind"] in ("thing", "project") and row["kind_by"] == "auto":
+        cache.db.execute("UPDATE subjects SET kind = 'person', updated_at = ? WHERE id = ?",
+                         (stamp, subject_id))
 
 
 def _event(db: sqlite3.Connection, belief_id: int, kind: str, detail: str, stamp: str) -> None:
@@ -450,8 +718,16 @@ def primary_evidence(evidence: list[dict]) -> dict | None:
     return max(pool, key=lambda e: (link_rank(e), e.get("seen_last") or "", e.get("id") or 0))
 
 
+_BELIEF_SELECT = ("SELECT b.*, s.display AS subject_display, s.kind AS subject_kind, "
+                  "s.contact_id AS contact_id FROM beliefs b "
+                  "LEFT JOIN subjects s ON s.id = b.subject_id")
+
+
 def _belief_dict(row: Mapping, evidence: list[dict]) -> dict:
     main = primary_evidence(evidence)
+    keys = row.keys() if hasattr(row, "keys") else ()
+    joined = {k: (row[k] if k in keys else None)
+              for k in ("subject_display", "subject_kind", "contact_id")}
     return {
         "id": row["id"], "owner": row["owner"], "subject": row["subject"],
         "about": row["about"], "text": row["text"], "owner_text": row["owner_text"],
@@ -462,6 +738,9 @@ def _belief_dict(row: Mapping, evidence: list[dict]) -> dict:
         "created_at": row["created_at"], "updated_at": row["updated_at"],
         "note": row["note"], "link": main["link"] if main else "",
         "source": main["source"] if main else "", "evidence": evidence,
+        "subject_id": row["subject_id"], **joined,
+        "attribute": row["attribute"], "value": row["value"], "valid_from": row["valid_from"],
+        "structured_at": row["structured_at"],
     }
 
 
@@ -593,13 +872,19 @@ def _match(db: sqlite3.Connection, owner: str, norm: str, exclude: int | None = 
     return row["id"] if row else None
 
 
-def _new_belief(db: sqlite3.Connection, owner: str, ev: dict, stamp: str) -> int:
+def _subject_for(cache: _Subjects, ev: dict, stamp: str) -> int:
+    return _resolve_subject(cache, ev["about"], ev["subject"], ev["source"], ev["person_id"],
+                            stamp)
+
+
+def _new_belief(db: sqlite3.Connection, owner: str, ev: dict, stamp: str,
+                cache: _Subjects) -> int:
     cur = db.execute(
         "INSERT INTO beliefs (owner, subject, about, text, norm, category, status, "
-        "first_seen, last_seen, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, 'tentative', ?, ?, ?, ?)",
+        "first_seen, last_seen, created_at, updated_at, subject_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, 'tentative', ?, ?, ?, ?, ?)",
         (owner, ev["subject"], ev["about"], ev["text"], ev["norm"], ev["category"],
-         ev["seen_first"], ev["seen_last"], stamp, stamp))
+         ev["seen_first"], ev["seen_last"], stamp, stamp, _subject_for(cache, ev, stamp)))
     _event(db, cur.lastrowid, "added", f"from {ev['source']}", stamp)
     return cur.lastrowid
 
@@ -608,7 +893,23 @@ _EV_COLS = ("subject", "about", "category", "text", "link", "seen_first", "seen_
             "times", "days", "source_confirmed", "payload")
 
 
-def _attach(db: sqlite3.Connection, owner: str, ev: dict, stamp: str
+def _note_person(cache: _Subjects, belief_id: int, ev: dict, stamp: str) -> None:
+    """Evidence with a person id that joins an existing belief: an unmapped person id maps
+    to that belief's subject (unless that is the owner and the item isn't about them)."""
+    if not ev["person_id"] or cache.mapped(ev["source"], ev["person_id"]) is not None:
+        return
+    row = cache.db.execute("SELECT b.subject_id, s.kind FROM beliefs b LEFT JOIN subjects s "
+                           "ON s.id = b.subject_id WHERE b.id = ?", (belief_id,)).fetchone()
+    if row is None or row["subject_id"] is None:
+        return
+    if (row["kind"] == "owner") != (ev["about"] == "owner"):
+        return
+    cache.map(row["subject_id"], ev["source"], ev["person_id"], ev["subject"], stamp)
+    if ev["subject"] and row["kind"] != "owner":
+        cache.add_alias(row["subject_id"], ev["subject"], stamp)
+
+
+def _attach(db: sqlite3.Connection, owner: str, ev: dict, stamp: str, cache: _Subjects
             ) -> tuple[str, set[int], int, bool]:
     """File one item. Returns (count key, beliefs touched, beliefs added, changed)."""
     row = db.execute("SELECT * FROM evidence WHERE owner = ? AND source = ? AND source_id = ?",
@@ -617,9 +918,10 @@ def _attach(db: sqlite3.Connection, owner: str, ev: dict, stamp: str
         added = 0
         belief_id = _match(db, owner, ev["norm"])
         if belief_id is None:
-            belief_id, added = _new_belief(db, owner, ev, stamp), 1
+            belief_id, added = _new_belief(db, owner, ev, stamp, cache), 1
         else:
             _event(db, belief_id, "evidence", f"from {ev['source']}", stamp)
+            _note_person(cache, belief_id, ev, stamp)
         db.execute(
             f"INSERT INTO evidence (belief_id, owner, source, source_id, {', '.join(_EV_COLS)}, "
             "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -632,6 +934,8 @@ def _attach(db: sqlite3.Connection, owner: str, ev: dict, stamp: str
                            sort_keys=True, ensure_ascii=False) == ev["payload"])
     belief_id = row["belief_id"]
     if same:
+        if ev["person_id"]:
+            _note_person(cache, belief_id, ev, stamp)
         return "unchanged", {belief_id}, 0, False
     touched, added = {belief_id}, 0
     belief = db.execute("SELECT * FROM beliefs WHERE id = ?", (belief_id,)).fetchone()
@@ -645,16 +949,25 @@ def _attach(db: sqlite3.Connection, owner: str, ev: dict, stamp: str
         if others or decided or target is not None:
             # a different claim now: move it to the belief it matches, or a new one
             if target is None:
-                target, added = _new_belief(db, owner, ev, stamp), 1
+                target, added = _new_belief(db, owner, ev, stamp, cache), 1
             else:
                 _event(db, target, "evidence", f"from {ev['source']}", stamp)
+                _note_person(cache, target, ev, stamp)
             db.execute("UPDATE evidence SET belief_id = ? WHERE id = ?", (target, row["id"]))
             belief_id = target
             touched.add(target)
     if target is None and not others and not decided:
         # the belief's only evidence: it follows the source (an edit, a renamed speaker)
-        new = {k: ev[k] for k in ("text", "norm", "subject", "about", "category")}
+        new: dict[str, Any] = {k: ev[k] for k in ("text", "norm", "subject", "about",
+                                                  "category")}
+        if (ev["subject"], ev["about"]) != (belief["subject"], belief["about"]) \
+                or belief["subject_id"] is None:
+            new["subject_id"] = _subject_for(cache, ev, stamp)
+        elif ev["person_id"]:
+            _note_person(cache, belief_id, ev, stamp)
         if any(belief[k] != v for k, v in new.items()):
+            if new["text"] != belief["text"] and not belief["owner_text"]:
+                new["structured_at"] = None  # the shown text changed: structure it again
             _set(db, belief_id, stamp, **new)
     if was_gone:
         _event(db, belief_id, "evidence", f"back in {ev['source']}", stamp)
@@ -682,12 +995,13 @@ def submit(owner: str | None, evidence: list[Evidence], *, now: datetime | None 
         with _connect(write=True) as db:
             seen: set[int] = set()
             fresh: set[int] = set()
+            cache = _Subjects(db, owner)
             for item in evidence:
                 ev = _clean(item, today.isoformat())
                 if ev is None:
                     counts["skipped"] += 1
                     continue
-                key, touched, added, changed = _attach(db, owner, ev, stamp)
+                key, touched, added, changed = _attach(db, owner, ev, stamp, cache)
                 counts[key] += 1
                 counts["beliefs_added"] += added
                 seen |= touched
@@ -819,7 +1133,8 @@ def reject(owner: str | None, belief_id: int, reason: str = "", *,
 def correct(owner: str | None, belief_id: int, text: str, *,
             now: datetime | None = None) -> dict:
     """The owner corrects a belief: ``owner_text`` is what memory shows from now on; the
-    belief is confirmed by the owner. Raises ValueError for empty text."""
+    belief is confirmed by the owner and its structure is redone (``structured_at``
+    cleared). Raises ValueError for empty text."""
     text = " ".join(str(text or "").split())
     if not text:
         raise ValueError("a correction needs text")
@@ -827,7 +1142,7 @@ def correct(owner: str | None, belief_id: int, text: str, *,
     def apply(db, row, stamp, _today):
         _set(db, row["id"], stamp, owner_text=text,
              owner_norm=normalize(text, row["subject"], row["about"]),
-             status="confirmed", confirmed_by="owner")
+             status="confirmed", confirmed_by="owner", structured_at=None)
         _event(db, row["id"], "corrected", "by owner", stamp)
     return _owner_action(owner, belief_id, now, apply)
 
@@ -846,24 +1161,35 @@ def restore(owner: str | None, belief_id: int, *, now: datetime | None = None) -
 
 # ------------------------------------------------------------------------- reads
 def list_beliefs(owner: str | None, status: str | Iterable[str] | None = None,
-                 subject: str | None = None, limit: int = 500) -> list[dict]:
+                 subject: str | None = None, limit: int = 500, *,
+                 subject_id: int | None = None, attribute: str | None = None) -> list[dict]:
     """This owner's beliefs with their evidence, by subject then most recently seen.
-    ``status``: one status or several; ``subject``: case-insensitive exact match."""
+    ``status``: one status or several; ``subject``: case-insensitive exact match on the
+    source's subject name; ``subject_id``: one subject (:func:`list_subjects`);
+    ``attribute``: one of :data:`ATTRIBUTES` (structured beliefs only)."""
     owner = owner or ""
-    where, args = ["owner = ?"], [owner]
+    where, args = ["b.owner = ?"], [owner]
     if status:
         wanted = [status] if isinstance(status, str) else list(status)
         bad = [s for s in wanted if s not in STATUSES]
         if bad:
             raise ValueError(f"unknown status: {', '.join(map(str, bad))}")
-        where.append(f"status IN ({','.join('?' * len(wanted))})")
+        where.append(f"b.status IN ({','.join('?' * len(wanted))})")
         args += wanted
     if subject:
-        where.append("subject = ? COLLATE NOCASE")
+        where.append("b.subject = ? COLLATE NOCASE")
         args.append(subject.strip())
+    if subject_id is not None:
+        where.append("b.subject_id = ?")
+        args.append(_int(subject_id, -1))
+    if attribute is not None:
+        if attribute not in ATTRIBUTES:
+            raise ValueError(f"unknown attribute: {attribute}")
+        where.append("b.attribute = ?")
+        args.append(attribute)
     with _connect() as db:
-        rows = db.execute(f"SELECT * FROM beliefs WHERE {' AND '.join(where)} "
-                          "ORDER BY subject COLLATE NOCASE, last_seen DESC, id "
+        rows = db.execute(f"{_BELIEF_SELECT} WHERE {' AND '.join(where)} "
+                          "ORDER BY b.subject COLLATE NOCASE, b.last_seen DESC, b.id "
                           "LIMIT ?", (*args, max(1, int(limit)))).fetchall()
         evidence = _evidence_rows(db, [r["id"] for r in rows])
     return [_belief_dict(r, evidence[r["id"]]) for r in rows]
@@ -875,6 +1201,7 @@ def get_belief(owner: str | None, belief_id: int) -> dict:
     owner = owner or ""
     with _connect() as db:
         row = _belief(db, owner, belief_id)
+        row = db.execute(f"{_BELIEF_SELECT} WHERE b.id = ?", (row["id"],)).fetchone()
         out = _belief_dict(row, _evidence_rows(db, [row["id"]])[row["id"]])
         out["events"] = [dict(e) for e in db.execute(
             "SELECT at, kind, detail FROM events WHERE belief_id = ? ORDER BY id DESC LIMIT 20",
@@ -883,14 +1210,390 @@ def get_belief(owner: str | None, belief_id: int) -> dict:
 
 
 def stats(owner: str | None) -> dict[str, int]:
-    """Counts per status, plus ``total``."""
+    """Counts per status, plus ``total`` and ``structured`` (beliefs the Belief Structure
+    task has given an attribute)."""
     out = dict.fromkeys(STATUSES, 0)
     with _connect() as db:
         for row in db.execute("SELECT status, COUNT(*) AS n FROM beliefs WHERE owner = ? "
                               "GROUP BY status", (owner or "",)):
             out[row["status"]] = row["n"]
+        structured = db.execute("SELECT COUNT(*) FROM beliefs WHERE owner = ? AND "
+                                "structured_at IS NOT NULL", (owner or "",)).fetchone()[0]
     out["total"] = sum(out[s] for s in STATUSES)
+    out["structured"] = structured
     return out
+
+
+def beliefs_by_attribute(owner: str | None, attribute: str, subject_id: int | None = None,
+                         *, status: str | Iterable[str] | None = "confirmed") -> list[dict]:
+    """Structured beliefs with this ``attribute`` (one of :data:`ATTRIBUTES`), optionally
+    of one subject; confirmed ones unless ``status`` says otherwise (None: any status).
+    Raises ValueError for an unknown attribute."""
+    return list_beliefs(owner, status=status, subject_id=subject_id, attribute=attribute)
+
+
+# ----------------------------------------------------------------- subjects (2.1)
+def _subject_dict(db: sqlite3.Connection, row: Mapping) -> dict:
+    counts = dict.fromkeys(STATUSES, 0)
+    for r in db.execute("SELECT status, COUNT(*) AS n FROM beliefs WHERE subject_id = ? "
+                        "AND owner = ? GROUP BY status", (row["id"], row["owner"])):
+        counts[r["status"]] = r["n"]
+    counts["total"] = sum(counts[s] for s in STATUSES)
+    sources = [{"source": r["source"], "person_id": r["source_person_id"], "name": r["name"]}
+               for r in db.execute("SELECT source, source_person_id, name FROM subject_sources "
+                                   "WHERE subject_id = ? ORDER BY source, source_person_id",
+                                   (row["id"],))]
+    return {
+        "id": row["id"], "owner": row["owner"], "key": row["key"], "display": row["display"],
+        "kind": row["kind"], "kind_by": row["kind_by"], "contact_id": row["contact_id"],
+        "aliases": _aliases(row["aliases"]), "note": row["note"],
+        "created_at": row["created_at"], "updated_at": row["updated_at"],
+        "sources": sources, "counts": counts,
+    }
+
+
+def _subject(db: sqlite3.Connection, owner: str, subject_id: Any) -> sqlite3.Row:
+    row = db.execute("SELECT * FROM subjects WHERE id = ? AND owner = ?",
+                     (_int(subject_id, -1), owner)).fetchone()
+    if row is None:
+        raise SubjectNotFound(f"subject {subject_id} not found")
+    return row
+
+
+def list_subjects(owner: str | None, kind: str | None = None) -> list[dict]:
+    """This owner's subjects (the owner first, then by name), each with ``counts`` of its
+    beliefs per status and ``total``, its ``aliases`` and the source person ids mapped to
+    it (``sources``). ``kind``: person, project, thing or owner."""
+    owner = owner or ""
+    if kind is not None and kind not in SUBJECT_KINDS:
+        raise ValueError(f"unknown kind: {kind}")
+    where, args = "owner = ?", [owner]
+    if kind is not None:
+        where += " AND kind = ?"
+        args.append(kind)
+    with _connect() as db:
+        rows = db.execute(f"SELECT * FROM subjects WHERE {where} ORDER BY kind != 'owner', "
+                          "display COLLATE NOCASE, id", args).fetchall()
+        return [_subject_dict(db, r) for r in rows]
+
+
+def get_subject(owner: str | None, subject_id: int) -> dict:
+    """One subject (see :func:`list_subjects`). Raises :class:`SubjectNotFound`."""
+    owner = owner or ""
+    with _connect() as db:
+        return _subject_dict(db, _subject(db, owner, subject_id))
+
+
+def find_subject(owner: str | None, name: str) -> dict | None:
+    """The subject whose name or alias matches ``name`` (case-insensitive), or None."""
+    owner = owner or ""
+    with _connect() as db:
+        subject_id = _Subjects(db, owner).by_key.get(subject_key(name))
+        return _subject_dict(db, _subject(db, owner, subject_id)) if subject_id else None
+
+
+def _subject_action(owner: str | None, subject_id: int, now: datetime | None, apply,
+                    *, mirror: bool = True) -> dict:
+    owner = owner or ""
+    now = _now(now)
+    with _WRITE:
+        with _connect(write=True) as db:
+            row = _subject(db, owner, subject_id)
+            kept = apply(db, row, _stamp(now))
+        if mirror:
+            try:
+                sync_memory(owner, now=now)
+            except RuntimeError as e:  # MemoryStoreUnreadable: the next facts run mirrors it
+                logger.error("subject %s saved, memory not updated: %s", row["id"], e)
+        return get_subject(owner, kept or row["id"])
+
+
+def set_subject_kind(owner: str | None, subject_id: int, kind: str, *,
+                     now: datetime | None = None) -> dict:
+    """The owner sets a subject's kind (person, project or thing); inference never changes
+    it afterwards. The owner subject keeps its kind. Raises ValueError."""
+    if kind not in ("person", "project", "thing"):
+        raise ValueError(f"kind must be person, project or thing, not {kind!r}")
+
+    def apply(db, row, stamp):
+        if row["kind"] == "owner":
+            raise ValueError("the owner subject keeps its kind")
+        db.execute("UPDATE subjects SET kind = ?, kind_by = 'owner', updated_at = ? "
+                   "WHERE id = ?", (kind, stamp, row["id"]))
+    return _subject_action(owner, subject_id, now, apply)
+
+
+def link_contact(owner: str | None, subject_id: int, contact_id: str, *,
+                 now: datetime | None = None) -> dict:
+    """Link a subject to an Odysseus contact (its ``uid``). A contact links to one subject
+    per owner: linking it to a second raises ValueError (merge the two subjects instead)."""
+    contact_id = str(contact_id or "").strip()
+    if not contact_id:
+        raise ValueError("a contact id is required")
+
+    def apply(db, row, stamp):
+        other = db.execute("SELECT id FROM subjects WHERE owner = ? AND contact_id = ? "
+                           "AND id != ?", (row["owner"], contact_id, row["id"])).fetchone()
+        if other is not None:
+            raise ValueError(f"contact {contact_id} is linked to subject {other['id']}")
+        db.execute("UPDATE subjects SET contact_id = ?, updated_at = ? WHERE id = ?",
+                   (contact_id, stamp, row["id"]))
+    return _subject_action(owner, subject_id, now, apply)
+
+
+def unlink_contact(owner: str | None, subject_id: int, *, now: datetime | None = None) -> dict:
+    """Remove a subject's contact link."""
+    def apply(db, row, stamp):
+        if row["contact_id"] is not None:
+            db.execute("UPDATE subjects SET contact_id = NULL, updated_at = ? WHERE id = ?",
+                       (stamp, row["id"]))
+    return _subject_action(owner, subject_id, now, apply)
+
+
+def rename_subject(owner: str | None, subject_id: int, display: str, *,
+                   now: datetime | None = None) -> dict:
+    """The owner renames a subject; the old name becomes an alias. Raises ValueError for
+    an empty name or one another subject already has (merge them instead)."""
+    display = _clean_name(display)
+    key = subject_key(display)
+    if not key:
+        raise ValueError("a subject needs a name")
+
+    def apply(db, row, stamp):
+        other = db.execute("SELECT id FROM subjects WHERE owner = ? AND key = ? AND id != ?",
+                           (row["owner"], key, row["id"])).fetchone()
+        if other is not None:
+            raise ValueError(f"subject {other['id']} is already called {display!r}")
+        aliases = [a for a in _aliases(row["aliases"]) if subject_key(a) != key]
+        if row["key"] != key and not any(subject_key(a) == row["key"] for a in aliases):
+            aliases.append(row["display"])
+        db.execute("UPDATE subjects SET key = ?, display = ?, aliases = ?, updated_at = ? "
+                   "WHERE id = ?", (key, display, json.dumps(aliases, ensure_ascii=False),
+                                    stamp, row["id"]))
+    return _subject_action(owner, subject_id, now, apply, mirror=False)
+
+
+def merge_subjects(owner: str | None, keep_id: int, drop_id: int, *,
+                   now: datetime | None = None) -> dict:
+    """Merge ``drop_id`` into ``keep_id``: its beliefs and source person ids move, its
+    name and aliases join the kept aliases, its contact link is kept when the kept subject
+    has none, and its kind when the kept one is an inferred ``thing``. The dropped subject
+    is deleted. The owner subject can be kept, not dropped. Raises ValueError,
+    :class:`SubjectNotFound`."""
+    if _int(keep_id, -1) == _int(drop_id, -2):
+        raise ValueError("a subject can't be merged into itself")
+
+    def apply(db, keep, stamp):
+        drop = _subject(db, keep["owner"], drop_id)
+        if drop["kind"] == "owner":
+            raise ValueError("the owner subject can only be kept")
+        db.execute("UPDATE beliefs SET subject_id = ? WHERE subject_id = ? AND owner = ?",
+                   (keep["id"], drop["id"], keep["owner"]))
+        db.execute("UPDATE subject_sources SET subject_id = ? WHERE subject_id = ?",
+                   (keep["id"], drop["id"]))
+        aliases = _aliases(keep["aliases"])
+        keys = {keep["key"], *(subject_key(a) for a in aliases)}
+        for name in (drop["display"], *_aliases(drop["aliases"])):
+            if subject_key(name) not in keys:
+                keys.add(subject_key(name))
+                aliases.append(name)
+        kind, kind_by = keep["kind"], keep["kind_by"]
+        if kind == "thing" and kind_by == "auto" and drop["kind"] != "thing":
+            kind, kind_by = drop["kind"], drop["kind_by"]
+        db.execute("DELETE FROM subjects WHERE id = ?", (drop["id"],))
+        db.execute("UPDATE subjects SET aliases = ?, contact_id = ?, kind = ?, kind_by = ?, "
+                   "updated_at = ? WHERE id = ?",
+                   (json.dumps(aliases, ensure_ascii=False),
+                    keep["contact_id"] or drop["contact_id"], kind, kind_by, stamp,
+                    keep["id"]))
+    return _subject_action(owner, keep_id, now, apply)
+
+
+def beliefs_for_contact(owner: str | None, contact_id: str,
+                        status: str | Iterable[str] | None = None) -> list[dict]:
+    """The beliefs of the subject linked to this Odysseus contact (none when no subject
+    is linked); ``status`` as in :func:`list_beliefs`."""
+    owner = owner or ""
+    contact_id = str(contact_id or "").strip()
+    if not contact_id:
+        return []
+    with _connect() as db:
+        row = db.execute("SELECT id FROM subjects WHERE owner = ? AND contact_id = ?",
+                         (owner, contact_id)).fetchone()
+    return list_beliefs(owner, status=status, subject_id=row["id"]) if row else []
+
+
+def sync_people(owner: str | None, source: str, people: Iterable[Mapping], *,
+                now: datetime | None = None, mirror: bool = True) -> dict[str, int]:
+    """A source's people (odysseus-sound's ``list_people`` JSON: ``id``, ``name``,
+    ``aliases``, ``is_owner``) as subjects. Each id maps to a subject: the one it already
+    maps to, the owner subject for ``is_owner``, else the subject whose name or alias
+    matches, else a new ``person``. Names and aliases the subject doesn't have become
+    aliases; a matched inferred ``thing`` becomes a ``person``. A person the source no
+    longer lists (e.g. merged there) keeps its mapping. Returns counts ``people``,
+    ``subjects_added``, ``mapped`` (new or moved mappings) and ``aliases_added``."""
+    owner = owner or ""
+    now = _now(now)
+    stamp = _stamp(now)
+    counts = dict.fromkeys(("people", "subjects_added", "mapped", "aliases_added"), 0)
+    with _WRITE:
+        with _connect(write=True) as db:
+            cache = _Subjects(db, owner)
+            for person in people:
+                if not isinstance(person, Mapping):
+                    continue
+                person_id = str(person.get("id") if person.get("id") is not None else "").strip()
+                name = _clean_name(person.get("name"))
+                if not person_id:
+                    continue
+                counts["people"] += 1
+                aliases = person.get("aliases") if isinstance(person.get("aliases"), list) \
+                    else []
+                if _truthy(person.get("is_owner")):
+                    had_owner = cache.owner_id is not None
+                    subject_id = cache.owner_subject(name, stamp)
+                    counts["subjects_added"] += 0 if had_owner else 1
+                    _name_owner(cache, subject_id, name, stamp)
+                    moved = cache.map(subject_id, source, person_id, name, stamp, move=True)
+                else:
+                    subject_id = cache.mapped(source, person_id)
+                    if subject_id is None:
+                        subject_id = next((cache.by_key[k] for k in map(
+                            subject_key, (name, *aliases)) if k and k in cache.by_key), None)
+                    if subject_id is None:
+                        if not name:
+                            continue
+                        subject_id = cache.create(name, "person", stamp)
+                        counts["subjects_added"] += 1
+                    else:
+                        _person_kind(cache, subject_id, stamp)
+                    moved = cache.map(subject_id, source, person_id, name, stamp)
+                    for alias in (name, *aliases):
+                        counts["aliases_added"] += cache.add_alias(subject_id, alias, stamp)
+                counts["mapped"] += int(moved)
+                if not moved and name:
+                    db.execute("UPDATE subject_sources SET name = ? WHERE owner = ? AND "
+                               "source = ? AND source_person_id = ? AND name != ?",
+                               (name, owner, source, person_id, name))
+        if mirror:
+            sync_memory(owner, now=now)
+    return counts
+
+
+def _name_owner(cache: _Subjects, subject_id: int, name: str, stamp: str) -> None:
+    """An owner subject still called "Owner" takes the owner's real name (the old name
+    stays an alias)."""
+    row = cache.row(subject_id)
+    key = subject_key(name)
+    if (row is None or _is_owner_name(name) or row["key"] != subject_key(OWNER_DISPLAY)
+            or (key in cache.by_key and cache.by_key[key] != subject_id)):
+        return
+    aliases = [a for a in _aliases(row["aliases"]) if subject_key(a) != key]
+    cache.db.execute("UPDATE subjects SET key = ?, display = ?, aliases = ?, updated_at = ? "
+                     "WHERE id = ?", (key, name, json.dumps([*aliases, row["display"]],
+                                                            ensure_ascii=False),
+                                      stamp, subject_id))
+    cache.by_key[key] = subject_id
+
+
+def _truthy(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "1", "yes"}
+    return bool(value)
+
+
+# ---------------------------------------------------------------- structure (2.2)
+def structure_candidates(owner: str | None, limit: int = 40) -> list[dict]:
+    """Confirmed beliefs the Belief Structure task hasn't structured yet, or whose shown
+    text changed since (a correction or a source edit clears ``structured_at``), oldest
+    first: ``id``, ``subject`` (the subject's name), ``kind`` (the subject's kind) and
+    ``text`` (what memory shows)."""
+    owner = owner or ""
+    with _connect() as db:
+        rows = db.execute(f"{_BELIEF_SELECT} WHERE b.owner = ? AND b.status = 'confirmed' "
+                          "AND b.structured_at IS NULL ORDER BY b.id LIMIT ?",
+                          (owner, max(1, int(limit)))).fetchall()
+    return [{"id": r["id"], "subject": r["subject_display"] or r["subject"] or "",
+             "kind": r["subject_kind"] or "", "text": r["owner_text"] or r["text"]}
+            for r in rows]
+
+
+def clean_attribute(value: Any) -> str:
+    """One of :data:`ATTRIBUTES` (anything else: ``other``)."""
+    key = str(value or "").strip().lower().replace(" ", "_").replace("-", "_")
+    return key if key in ATTRIBUTES else "other"
+
+
+def clean_value(value: Any) -> str:
+    text = " ".join(str(value if value is not None else "").split())
+    return text if len(text) <= MAX_VALUE_CHARS else text[:MAX_VALUE_CHARS - 1].rstrip() + "…"
+
+
+def apply_structure(owner: str | None, belief_id: int, attribute: Any, value: Any,
+                    valid_from: Any = None, valid_to: Any = None, *,
+                    expected_text: str | None = None, now: datetime | None = None) -> bool:
+    """Write a belief's structure: ``attribute`` (unknown -> ``other``), ``value`` (at most
+    120 characters), ``valid_from`` (an ISO date or None) and ``structured_at`` = now;
+    ``valid_to`` becomes ``valid_until`` only when the belief has none yet. Then a
+    ``project_status`` or ``deadline`` makes the belief's subject a project (when it is an
+    inferred thing that no source knows as a person). Returns False (nothing written) when
+    the belief is gone, no longer confirmed, or its shown text isn't ``expected_text``."""
+    owner = owner or ""
+    now = _now(now)
+    stamp = _stamp(now)
+    attribute = clean_attribute(attribute)
+    with _WRITE, _connect(write=True) as db:
+        row = db.execute("SELECT * FROM beliefs WHERE id = ? AND owner = ?",
+                         (_int(belief_id, -1), owner)).fetchone()
+        if row is None or row["status"] != "confirmed":
+            return False
+        if expected_text is not None and (row["owner_text"] or row["text"]) != expected_text:
+            return False
+        fields: dict[str, Any] = {"attribute": attribute, "value": clean_value(value),
+                                  "valid_from": _day(valid_from), "structured_at": stamp}
+        until = _day(valid_to)
+        if until and not row["valid_until"]:
+            fields["valid_until"] = until
+        _set(db, row["id"], stamp, **fields)
+        if attribute in PROJECT_ATTRIBUTES and row["subject_id"] is not None:
+            _infer_project(db, row["subject_id"], stamp)
+    return True
+
+
+def _infer_project(db: sqlite3.Connection, subject_id: int, stamp: str) -> None:
+    row = db.execute("SELECT kind, kind_by FROM subjects WHERE id = ?", (subject_id,)).fetchone()
+    if row is None or row["kind"] != "thing" or row["kind_by"] != "auto":
+        return
+    if db.execute("SELECT 1 FROM subject_sources WHERE subject_id = ? LIMIT 1",
+                  (subject_id,)).fetchone():
+        return  # a source knows it as a person
+    db.execute("UPDATE subjects SET kind = 'project', updated_at = ? WHERE id = ?",
+               (stamp, subject_id))
+
+
+def subject_summary(owner: str | None, subject_id: int) -> str:
+    """One paragraph on a subject from its confirmed beliefs, grouped by attribute in
+    vocabulary order (``value``, ``since <valid_from>``); unstructured beliefs follow as
+    their text under "Also". Empty when nothing about it is confirmed. Raises
+    :class:`SubjectNotFound`."""
+    subject = get_subject(owner, subject_id)
+    beliefs = list_beliefs(owner, status="confirmed", subject_id=subject["id"])
+    if not beliefs:
+        return ""
+    groups: dict[str, list[str]] = {}
+    loose: list[str] = []
+    for b in sorted(beliefs, key=lambda b: (b["valid_from"] or "", b["id"])):
+        shown = b["owner_text"] or b["text"]
+        if not b["attribute"] or b["attribute"] == "other" or not b["value"]:
+            loose.append(shown.rstrip(" .") + ".")
+            continue
+        item = b["value"] + (f" (since {b['valid_from']})" if b["valid_from"] else "")
+        groups.setdefault(b["attribute"], []).append(item)
+    parts = [f"{a.replace('_', ' ')}: {'; '.join(groups[a])}." for a in ATTRIBUTES
+             if a in groups]
+    if loose:
+        parts.append("Also: " + " ".join(loose))
+    return f"{subject['display']} ({subject['kind']}). " + " ".join(parts)
 
 
 # ------------------------------------------------------------------------- memory
@@ -910,7 +1613,11 @@ def memory_fields(belief: dict) -> dict[str, Any]:
         "link": link,
         "first_seen": belief["first_seen"] or "",
         "last_seen": belief["last_seen"] or "",
+        "subject_id": belief.get("subject_id"),
+        "subject_kind": belief.get("subject_kind") or "",
     }
+    if belief.get("contact_id"):
+        fields["contact_id"] = belief["contact_id"]
     module = primary_evidence([e for e in evidence if e["source"] == MODULE_SOURCE])
     if module is not None:  # the Phase 0 copy's fields, kept for older readers
         fields.update(module_fact_id=_int(module["source_id"]), times_said=module["times"],
@@ -939,8 +1646,8 @@ def sync_memory(owner: str | None, *, now: datetime | None = None) -> dict[str, 
     counts = {"kept": 0, "added": 0, "updated": 0, "removed": 0}
     with _WRITE:
         with _connect() as db:
-            rows = db.execute("SELECT * FROM beliefs WHERE owner = ? AND status = 'confirmed' "
-                              "ORDER BY id", (owner,)).fetchall()
+            rows = db.execute(f"{_BELIEF_SELECT} WHERE b.owner = ? AND b.status = 'confirmed' "
+                              "ORDER BY b.id", (owner,)).fetchall()
             evidence = _evidence_rows(db, [r["id"] for r in rows])
             want = {r["id"]: memory_fields(_belief_dict(r, evidence[r["id"]])) for r in rows}
             by_fact = {e["source_id"]: e["belief_id"] for e in db.execute(
@@ -974,7 +1681,7 @@ def sync_memory(owner: str | None, *, now: datetime | None = None) -> dict[str, 
                 removed.append(str(entry.get("id") or ""))
                 continue
             fields = want[belief_id]
-            stale_keys = [k for k in MODULE_FIELDS if k in entry and k not in fields]
+            stale_keys = [k for k in OPTIONAL_FIELDS if k in entry and k not in fields]
             if stale_keys or any(entry.get(k) != v for k, v in fields.items()):
                 if entry.get("text") != fields["text"]:
                     indexed.append(entry)

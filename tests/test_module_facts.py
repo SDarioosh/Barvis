@@ -15,6 +15,7 @@ T0 = datetime.datetime(2026, 10, 21, 9, 0, tzinfo=datetime.timezone.utc)
 T1 = T0 + datetime.timedelta(hours=1)
 ALL = {"format": "json", "limit": 1000}
 CONFIRMED = {"confirmed": True, "format": "json", "limit": 1000}
+PEOPLE = {"format": "json"}
 
 
 def fact(fid, text, about="owner", subject="Me", confirmed=True, **kw):
@@ -31,16 +32,20 @@ class MissingTool(Exception):
 
 
 class FakeModule:
-    """The module's list_facts (and retire_fact), as the MCP call returns them.
+    """The module's list_facts (and retire_fact, list_people), as the MCP call returns
+    them.
 
     ``flag``: the module sends the per-row ``confirmed`` field; without it, the hub asks
-    a second time with ``confirmed=true``. ``retire``: whether retire_fact exists."""
+    a second time with ``confirmed=true``. ``retire``: whether retire_fact exists.
+    ``people``: list_people's JSON rows, a text answer (str), or None (an older module
+    without the tool)."""
 
-    def __init__(self, facts=None, text=None, flag=False, retire=True):
+    def __init__(self, facts=None, text=None, flag=False, retire=True, people=None):
         self.facts = list(facts or [])
         self.text = text
         self.flag = flag
         self.retire = retire
+        self.people = people
         self.calls = []
 
     def _row(self, row):
@@ -56,6 +61,13 @@ class FakeModule:
                 raise RuntimeError("retire_fact: Unknown tool: retire_fact")
             self.facts = [f for f in self.facts if f["id"] != args["fact_id"]]
             return f"Fact {args['fact_id']} retired."
+        if tool == "list_people":
+            assert args == PEOPLE
+            if self.people is None:
+                raise RuntimeError("list_people: Unknown tool: list_people")
+            if isinstance(self.people, str):
+                return self.people
+            return json.dumps({"people": self.people})
         assert tool == "list_facts", f"the sync must not call {tool}"
         if self.text is not None:
             return self.text
@@ -132,7 +144,7 @@ async def test_unconfirmed_facts_are_tentative_not_in_memory(data):
     assert (stats["beliefs_added"], stats["confirmed"]) == (2, 1)
     assert set(copies(data)) == {1}
     assert ledger.stats("alice") == {"tentative": 1, "confirmed": 1, "stale": 0,
-                                     "rejected": 0, "total": 2}
+                                     "rejected": 0, "total": 2, "structured": 0}
     # the module confirms it later
     module.facts[1]["_confirmed"] = True
     stats = await mf.sync("alice", module, now=T1)
@@ -144,16 +156,17 @@ async def test_per_row_flag_saves_the_second_call(data):
     flagged = FakeModule([fact(1, "Likes jazz"), fact(2, "Hates queues", confirmed=False)],
                          flag=True)
     await mf.sync("alice", flagged, now=T0)
-    assert flagged.calls == [("list_facts", ALL)]
+    assert flagged.calls == [("list_facts", ALL), ("list_people", PEOPLE)]
     assert set(copies(data)) == {1}
     unflagged = FakeModule([fact(1, "Likes jazz"), fact(2, "Hates queues", confirmed=False)])
     await mf.sync("bob", unflagged, now=T0)
-    assert unflagged.calls == [("list_facts", ALL), ("list_facts", CONFIRMED)]
+    assert unflagged.calls == [("list_facts", ALL), ("list_facts", CONFIRMED),
+                               ("list_people", PEOPLE)]
     assert set(copies(data, "bob")) == {1}
     # no facts at all: no second call
     empty = FakeModule([])
     await mf.sync("carol", empty, now=T0)
-    assert empty.calls == [("list_facts", ALL)]
+    assert empty.calls == [("list_facts", ALL), ("list_people", PEOPLE)]
 
 
 @pytest.mark.asyncio
@@ -364,6 +377,13 @@ def test_evidence_from_a_row():
 ])
 def test_category_mapping(about, text, want):
     assert mf.category({"about": about, "fact": text}) == want
+
+
+def test_evidence_carries_the_module_person_id():
+    row = fact(1, "Priya is allergic to peanuts", about="person", subject="Priya")
+    assert mf.evidence(row).person_id is None
+    assert mf.evidence({**row, "person_id": 12}).person_id == "12"
+    assert mf.evidence({**row, "person_id": " "}).person_id is None
 
 
 def test_summary_has_counts_only():

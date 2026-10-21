@@ -489,7 +489,7 @@ def test_list_filters_and_stats(data):
     with pytest.raises(ValueError):
         ei.list_beliefs("alice", status="maybe")
     assert ei.stats("alice") == {"tentative": 2, "confirmed": 1, "stale": 0, "rejected": 0,
-                                 "total": 3}
+                                 "total": 3, "structured": 0}
     assert ei.stats("nobody")["total"] == 0
     assert ei.list_beliefs(None) == [] and ei.list_beliefs("bob") == []
 
@@ -571,6 +571,6 @@ def test_existing_ledger_owner_keys_are_migrated_once(data):
                                     subject="Owner")], now=T1)
     assert counts["beliefs_added"] == 0
     with sqlite3.connect(data / "beliefs.db") as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == ei.NORM_VERSION
+        assert db.execute("PRAGMA user_version").fetchone()[0] == ei.SCHEMA_VERSION
         assert sorted(r[0] for r in db.execute("SELECT norm FROM beliefs")) == \
             ["jenn is allergic to cats", "owner is allergic to peanuts"]
