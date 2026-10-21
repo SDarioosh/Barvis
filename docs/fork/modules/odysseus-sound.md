@@ -150,6 +150,8 @@ belong, so voice notes land in the hub's own calendar and to-dos:
 | `task` | "get the proposal done on Wednesday" | to-do (checklist note, label `odysseus-sound`), due that day at `MODULE_DIGEST_HOUR` |
 | `reminder` | "remind me at 5 to call Mom" | to-do due at that time (Odysseus fires its own reminder) |
 | any task or reminder with a `list_name` | "add milk to my shopping list" | one line on that to-do list (see below) |
+| `note` | "create a note battery dimensions are 13mm x 14mm x 3mm" | an Odysseus note (type note, label `odysseus-sound`) titled with the module's `note_title` ("Battery dimensions"), the text and the source link as content |
+| `note` with a `list_name` | "add to my hardware notes: the screen is 1.4 inch" | one line `- The screen is 1.4 inch` on those notes (see below) |
 
 - **Named to-do lists.** When the note names a list, the module returns `list_name`
   (`shopping`, without "my"/"the"/"list") and the item text without the phrase
@@ -165,6 +167,16 @@ belong, so voice notes land in the hub's own calendar and to-dos:
   (`src/checklist_auto_archive.py`), so the next "add … to my shopping list" starts a
   new one; pin a list to keep it.
 
+- **Notes.** Voice notes only, and only on an explicit command ("create a note",
+  "make a note", "note that", "add to my … notes"); a plain statement makes no note.
+  A note with a `list_name` (`hardware`) is added as a line to the open note titled
+  with that name, with or without "notes" ("Hardware notes", "hardware"); if there is
+  none, Odysseus creates "Hardware notes". The same line isn't added twice. Once filed
+  the module item is marked done (a note is no to-do; the module's text listing, digest
+  and HTTP list leave notes out anyway), and status isn't synced after that: edit,
+  archive or delete the note in Odysseus as you like. Undo on `/modules/sound` (shown
+  while the item is still open) removes the note, or only its line. A note whose
+  filing failed waits there with **Add to notes**.
 - **Voice notes are filed automatically.** One push per pass ("Filed from your voice
   note": what went where, "check the time" when the module flagged it). Filed items get
   no other "new item" or "due today" push; Odysseus' own event and to-do reminders take

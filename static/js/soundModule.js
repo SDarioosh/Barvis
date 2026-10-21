@@ -116,10 +116,10 @@ async function loadWho() {
 
 // ----------------------------------------------------------------- action items
 // Live from odysseus-sound, the source of truth. Voice-note items are filed into the
-// Odysseus calendar / to-dos by src/module_action_items.py; conversation items are
+// Odysseus calendar / to-dos / notes by src/module_action_items.py; conversation items are
 // suggestions until the owner taps Add. Every change answers with the item as it is
 // now, and the card is drawn again from that answer.
-// Monochrome icons in the sidebar's style (calendar, checked box, bell).
+// Monochrome icons in the sidebar's style (calendar, checked box, bell, page).
 const _ICON = (body) => '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" ' +
   'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
   body + '</svg>';
@@ -129,10 +129,13 @@ const KIND_ICON = {
   task: _ICON('<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 12l3 3 5-6"/>'),
   reminder: _ICON('<path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/>' +
     '<path d="M13.73 21a2 2 0 0 1-3.46 0"/>'),
+  note: _ICON('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>' +
+    '<path d="M14 2v6h6"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/>'),
 };
-const KIND_NAME = { event: 'Event', task: 'To-do', reminder: 'Reminder' };
-const WHERE = { calendar: 'In calendar', todo: 'In to-dos' };
-const whereLabel = (filed) => (filed.list ? `On ${filed.list} list` : (WHERE[filed.target] || 'Filed'));
+const KIND_NAME = { event: 'Event', task: 'To-do', reminder: 'Reminder', note: 'Note' };
+const WHERE = { calendar: 'In calendar', todo: 'In to-dos', note: 'In notes' };
+const whereLabel = (filed) => (filed.notes ? `In ${filed.notes}`
+  : (filed.list ? `On ${filed.list} list` : (WHERE[filed.target] || 'Filed')));
 
 function hubLink(url) {
   // filed entries open in Odysseus itself: only same-origin paths
@@ -270,7 +273,12 @@ function itemCard(it, note = '') {
       editor.querySelector('input').focus();
     });
   }
-  if (filed) {
+  if (filed && filed.target === 'note') {
+    btn('Undo', () => run('Undoing', () => postJSON(`${base}/undo`)));
+  } else if (kind === 'note') {
+    // a note whose filing failed: file it by hand
+    btn('Add to notes', () => run('Adding', () => postJSON(`${base}/file`, { target: 'note' })), true);
+  } else if (filed) {
     if (filed.target === 'calendar') {
       btn('Move to to-dos', () => run('Moving', () => postJSON(`${base}/move`, { kind: 'task' })));
     } else {
@@ -300,11 +308,13 @@ function itemCard(it, note = '') {
   const where = filed ? (hubLink(filed.open_url)
     ? el('a', { className: 'bs-chip bs-where', href: hubLink(filed.open_url),
                 title: filed.target === 'calendar' ? 'Open the Odysseus calendar'
-                  : (filed.list ? 'Open the list' : 'Open the to-do') },
+                  : (filed.target === 'note' ? 'Open the note'
+                    : (filed.list ? 'Open the list' : 'Open the to-do')) },
       whereLabel(filed))
     : el('span', { className: 'bs-chip bs-where' }, whereLabel(filed)))
-    : (it.list_name ? el('span', { className: 'bs-chip', title: 'The list named in the recording' },
-      `for ${it.list_name} list`) : null);
+    : (it.list_name ? el('span', { className: 'bs-chip', title: kind === 'note'
+      ? 'The notes named in the recording' : 'The list named in the recording' },
+      kind === 'note' ? `for ${it.list_name} notes` : `for ${it.list_name} list`) : null);
   const due = dueLabel(it);
   const source = it.voice_note ? 'voice note' : 'conversation';
   const actions = el('div', { className: 'bs-row bs-actions' }, ...buttons);
@@ -314,7 +324,7 @@ function itemCard(it, note = '') {
       el('span', { className: 'bs-kind', title: KIND_NAME[kind] || 'To-do',
                    'aria-label': KIND_NAME[kind] || 'To-do',
                    html: KIND_ICON[kind] || KIND_ICON.task }),
-      el('span', {}, it.text)),
+      el('span', {}, kind === 'note' && it.note_title ? `${it.note_title}: ${it.text}` : it.text)),
     el('div', { className: 'bs-row bs-facts' },
       due ? el('span', { className: 'bs-due' }, due) : null,
       it.time_unclear ? el('span', { className: 'bs-chip warn', title: 'Check the time' },
