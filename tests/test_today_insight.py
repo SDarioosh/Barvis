@@ -241,7 +241,8 @@ def test_run_writes_the_documented_json(inputs, store):
     assert stored["coming_up"][0]["title"] == "Dentist"
     assert len(stored["input_hash"]) == 64 and stored["votes"] == []
     prompt = llm.calls[0][1]["content"]
-    assert "todo:n1:0 [overdue, 2026-10-20] Send the Q4 deck" in prompt
+    assert "T1 [overdue, 2026-10-20] Send the Q4 deck" in prompt
+    assert "E1 [due_today, 2026-10-21 12:00] Dentist" in prompt and "todo:n1:0" not in prompt
     assert "Tom is a colleague" in prompt
     assert ti.public(stored) == {k: stored[k] for k in
                                  ("date", "generated", "headline", "focus", "coming_up", "also")}
@@ -445,3 +446,170 @@ def test_gather_reads_the_owners_notes_events_and_timezone(tmp_path, monkeypatch
         assert got["candidates"][2]["title"] == "Team sync"
     finally:
         engine.dispose()
+
+
+# ------------------------------------------------------------------ sandbox defects
+def _answer(**sections):
+    return json.dumps({"headline": "A busy Wednesday.", **sections})
+
+
+def test_labels_in_the_prompt_map_back_to_refs(inputs):
+    llm = FakeLLM(_answer(focus=[{"ref": "T1", "why": "Overdue"}, {"ref": "e1", "why": "At 12"}],
+                          also=[{"ref": "[T2]", "why": "Sunday"}, {"ref": "T9", "why": "no such"}]))
+    status, insight = _run(llm=llm)
+    assert status == "generated"
+    assert [r["ref"] for r in insight["focus"]] == ["todo:n1:0", "event:e1"]
+    assert [r["ref"] for r in insight["also"]] == ["todo:n4:0"]
+
+
+def test_bare_ids_resolve_when_unique():
+    cands = [{"ref": "todo:d4a48534-aaaa:0", "title": "Print flyers"},
+             {"ref": "todo:d4a48534-aaaa:1", "title": "Email slides"},
+             {"ref": "todo:c946d7f3-bbbb:0", "title": "Ask Alice"},
+             {"ref": "event:56c59904-cccc", "title": "Plumber"},
+             {"ref": "event:c0a50e0b-dddd::2026-10-22T09:30", "title": "Team sync"},
+             {"ref": "event:allday-eeee::2026-10-23", "title": "Holiday"}]
+    r = lambda raw: ti.resolve_ref(raw, cands)  # noqa: E731
+    assert r("T2") == "todo:d4a48534-aaaa:1" and r("E2") == "event:c0a50e0b-dddd::2026-10-22T09:30"
+    assert r("todo:c946d7f3-bbbb:0") == "todo:c946d7f3-bbbb:0"  # exact
+    assert r("d4a48534-aaaa:0") == "todo:d4a48534-aaaa:0"  # prefix missing
+    assert r("c946d7f3-bbbb") == "todo:c946d7f3-bbbb:0"  # bare note id, one item
+    assert r("56c59904-cccc") == "event:56c59904-cccc"
+    assert r("c0a50e0b-dddd") == "event:c0a50e0b-dddd::2026-10-22T09:30"  # bare series uid
+    assert r("d4a48534-aaaa") is None  # two items: ambiguous
+    assert r("2026-10-23") is None and r("2026-10-21T09:00") is None  # dates never match
+    assert r("0") is None and r("") is None and r("T9") is None
+
+
+def test_model_answering_with_bare_ids(inputs):
+    inputs["notes"] = [_note("d4a48534-8bfd-4aa9", "Work", [("Send the Q4 deck", False)],
+                             due_date="2026-10-20")]
+    inputs["events"] = [_event("c0a50e0b-86ab::2026-10-21T15:00", datetime(2026, 10, 21, 15),
+                               datetime(2026, 10, 21, 16), "Team sync")]
+    llm = FakeLLM(_answer(focus=[{"ref": "d4a48534-8bfd-4aa9:0", "why": "Overdue"},
+                                 {"ref": "c0a50e0b-86ab", "why": "At 15:00"},
+                                 {"ref": "2026-10-23", "why": "a date"}]))
+    status, insight = _run(llm=llm)
+    assert status == "generated" and len(llm.calls) == 1
+    assert [r["ref"] for r in insight["focus"]] == [
+        "todo:d4a48534-8bfd-4aa9:0", "event:c0a50e0b-86ab::2026-10-21T15:00"]
+
+
+def test_all_sections_empty_is_unusable(inputs, store):
+    empty = _answer(focus=[{"ref": "2026-10-23", "why": "x"}], coming_up=[], also=[])
+    llm = FakeLLM(empty, empty)
+    assert _run(llm=llm) == ("kept", None) and len(llm.calls) == 2
+    assert "labels" in llm.calls[1][-1]["content"]
+    assert not (store / "today_insight" / "alice" / "2026-10-21.json").exists()
+    _run(llm=FakeLLM(GOOD))
+    inputs["memory"].append({"text": "Allergic to peanuts", "category": "fact"})
+    status, kept = _run(llm=FakeLLM(empty, empty))
+    assert status == "kept" and kept["focus"][0]["ref"] == "todo:n1:0"
+    assert ti.load("alice", "2026-10-21")["focus"][0]["ref"] == "todo:n1:0"
+    llm = FakeLLM(empty, GOOD)
+    assert _run(llm=llm)[0] == "generated" and len(llm.calls) == 2
+    assert asyncio.run(ti.generate_now("alice", llm=FakeLLM(empty, empty), now=NOW,
+                                       call=None)) is None
+
+
+def test_hash_ignores_memory_order(inputs):
+    c = [{"ref": "todo:n:0", "title": "x"}]
+    assert ti.input_hash(c, ["b", "a"], "d") == ti.input_hash(c, ["a", "b"], "d")
+    assert ti.input_hash(c, ["a"], "d") != ti.input_hash(c, ["a", "c"], "d")
+    inputs["memory"] = [{"text": "Tom is a colleague", "category": "contact", "uses": 1},
+                        {"text": "Likes cats", "category": "fact", "uses": 2}]
+    llm = FakeLLM(GOOD)
+    assert _run(llm=llm)[0] == "generated"
+    assert llm.calls[0][1]["content"].index("Likes cats") < \
+        llm.calls[0][1]["content"].index("Tom is a colleague")  # prompt keeps most used first
+    inputs["memory"][0]["uses"] = 9  # a chat used it: order changes, content doesn't
+    assert _run(llm=llm)[0] == "noop" and len(llm.calls) == 1
+
+
+def test_refresh_skips_the_interactive_quiet_wait(monkeypatch):
+    import src.interactive_gate as gate
+    import src.llm_core as llm_core
+    import src.task_endpoint as te
+
+    waited, sent = [], []
+
+    async def fake_wait(label):
+        waited.append(label)
+
+    async def fake_call(cands, messages, **kw):
+        sent.append(kw["workload"])
+        return "{}"
+
+    monkeypatch.setattr(gate, "wait_for_interactive_quiet", fake_wait)
+    monkeypatch.setattr(llm_core, "llm_call_async_with_fallback", fake_call)
+    monkeypatch.setattr(te, "resolve_task_candidates", lambda **kw: [("http://llm", "m", {})])
+
+    async def go(flag):
+        call = await ti.default_llm("alice", wait_quiet=flag)
+        await call([{"role": "user", "content": "hi"}])
+
+    asyncio.run(go(False))
+    assert waited == [] and sent == ["foreground"]
+    asyncio.run(go(True))
+    assert waited == ["today insight"] and sent[-1] == "background"
+
+    seen = {}
+
+    async def fake_run(owner, **kw):
+        seen.update(kw)
+        return "generated", {"date": "2026-10-21"}
+
+    monkeypatch.setattr(ti, "run", fake_run)
+    asyncio.run(ti.generate_now("alice"))
+    assert seen["wait_quiet"] is False and seen["force"] is True
+
+
+def test_refresh_route_returns_202_and_runs_in_the_background(inputs, monkeypatch):
+    import threading
+    import time as _time
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    import routes.today_insight_routes as tir
+    from core.middleware import require_admin
+
+    release, calls = threading.Event(), []
+
+    async def slow_generate(owner, **kw):
+        calls.append((owner, kw))
+        while not release.is_set():
+            await asyncio.sleep(0.01)
+        return {"generated": "new"}
+
+    monkeypatch.setattr(ti, "generate_now", slow_generate)
+    monkeypatch.setattr(tir, "_REFRESHES", {})
+    monkeypatch.setattr(tir, "_REFRESH_ERRORS", {})
+    asyncio.run(ti.run("alice", call=None, llm=FakeLLM(GOOD)))  # a previous insight, today
+    previous = ti.load_today("alice")["generated"]
+
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def session(request, call_next):
+        request.state.current_user = "alice"
+        request.state.api_token = False
+        return await call_next(request)
+
+    app.dependency_overrides[require_admin] = lambda: None
+    app.include_router(tir.setup_today_insight_routes())
+    with TestClient(app) as client:
+        t0 = _time.monotonic()
+        r = client.post("/api/insight/refresh")
+        assert r.status_code == 202 and _time.monotonic() - t0 < 5
+        assert r.json() == {"status": "started", "generated": previous}
+        assert client.post("/api/insight/refresh").json()["status"] == "running"
+        body = client.get("/api/insight/today").json()
+        assert body["refreshing"] is True and body["refresh_error"] is None
+        release.set()
+        for _ in range(200):
+            if not client.get("/api/insight/today").json()["refreshing"]:
+                break
+            _time.sleep(0.02)
+        assert client.get("/api/insight/today").json()["refreshing"] is False
+    assert calls == [("alice", {"wait_quiet": False})]
