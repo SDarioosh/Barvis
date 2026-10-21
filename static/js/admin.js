@@ -3334,6 +3334,7 @@ const _TOKEN_SCOPES = [
   { key: 'memory:write',      label: 'Memory write',      detail: 'Write memory when enabled' },
   { key: 'cookbook:read',     label: 'Cookbook read',     detail: 'List cookbook tasks + tail their tmux output' },
   { key: 'cookbook:launch',   label: 'Cookbook launch',   detail: 'Launch and stop cookbook serve tasks' },
+  { key: 'insight:read',      label: 'Insight read',      detail: "Read today's insight" }, // Fork: Today insight (routes/today_insight_routes.py)
 ];
 
 function _renderTokenScopeRows(t) {

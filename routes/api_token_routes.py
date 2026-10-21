@@ -28,6 +28,7 @@ ALLOWED_SCOPES = {
     "cookbook:read",
     "cookbook:launch",
 }
+ALLOWED_SCOPES.add("insight:read")  # Fork: Today insight token route (routes/today_insight_routes.py)
 TOKEN_PROFILES = {
     "chat": ["chat"],
     "codex_todos": ["todos:read", "todos:write"],

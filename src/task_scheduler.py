@@ -281,6 +281,9 @@ _fork_housekeeping(HOUSEKEEPING_DEFAULTS)
 # Fork: seed the module facts -> memory task (src/module_facts.py)
 from src.module_facts import register_housekeeping as _fork_facts_housekeeping  # noqa: E402
 _fork_facts_housekeeping(HOUSEKEEPING_DEFAULTS)
+# Fork: seed the Today insight task (src/today_insight.py)
+from src.today_insight import register_housekeeping as _fork_today_housekeeping  # noqa: E402
+_fork_today_housekeeping(HOUSEKEEPING_DEFAULTS)
 
 RETIRED_HOUSEKEEPING_ACTIONS = frozenset({
     "tidy_calendar",
@@ -2844,3 +2847,6 @@ class TaskScheduler:
 TaskScheduler._SILENT_ACTIONS = TaskScheduler._SILENT_ACTIONS | {"barvis_sync_action_items"}
 # Fork: the facts sync posts nothing to the assistant chat (src/module_facts.py)
 TaskScheduler._SILENT_ACTIONS = TaskScheduler._SILENT_ACTIONS | {"module_sync_facts"}
+# Fork: the Today insight posts nothing to chat and queues for the model (src/today_insight.py)
+TaskScheduler._SILENT_ACTIONS = TaskScheduler._SILENT_ACTIONS | {"today_insight"}
+TaskScheduler._MODEL_BACKED_ACTIONS = TaskScheduler._MODEL_BACKED_ACTIONS | {"today_insight"}

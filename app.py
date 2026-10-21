@@ -879,6 +879,9 @@ app.include_router(setup_mcp_routes(mcp_manager))
 # Fork: odysseus-sound conversations page (routes/sound_module_routes.py)
 from routes.sound_module_routes import setup_sound_module_routes  # noqa: E402
 app.include_router(setup_sound_module_routes())
+# Fork: Today insight page, votes and token route (routes/today_insight_routes.py)
+from routes.today_insight_routes import setup_today_insight_routes  # noqa: E402
+app.include_router(setup_today_insight_routes())
 logger.info("MCP routes initialized")
 
 # AI Interaction tools (debates, pipelines, self-managing AI, UI control)

@@ -1,0 +1,89 @@
+"""Fork: the Today insight page and its data (``src/today_insight.py``).
+
+* ``GET  /today``: ``static/today.html`` (sidebar: Today).
+* ``GET  /api/insight/today``: today's insight with its ``votes`` (404 when none yet).
+* ``POST /api/insight/today/vote`` {vote: up|down}: 👍/👎 on today's insight.
+* ``POST /api/insight/refresh``: write it now, even when the inputs didn't change.
+* ``GET  /api/codex/insight/today``: for API-token clients (odysseus-sound's phone and PC
+  relays, the T5 PDA) with scope ``insight:read``; same JSON without ``input_hash`` and
+  ``votes``, 404 ``{"error": "no insight yet"}`` when there is none.
+
+The page routes use the same auth as the odysseus-sound page (admin session). To-dos are
+ticked through the notes API's own ``toggle`` route, not a new one.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
+
+from core.middleware import require_admin
+from src import today_insight as ti
+from src.auth_helpers import effective_user
+
+logger = logging.getLogger(__name__)
+
+INSIGHT_READ_SCOPES = {"insight:read"}
+
+
+class Vote(BaseModel):
+    vote: str = Field(pattern="^(up|down)$")
+
+
+def _owner(request: Request) -> str:
+    return effective_user(request) or ""
+
+
+def _no_insight() -> JSONResponse:
+    return JSONResponse(status_code=404, content={"error": "no insight yet"})
+
+
+def setup_today_insight_routes() -> APIRouter:
+    router = APIRouter()
+
+    @router.get("/today", include_in_schema=False)
+    async def page(request: Request):
+        from src.app_helpers import serve_html_with_nonce
+        from src.constants import BASE_DIR
+
+        return serve_html_with_nonce(request, os.path.join(BASE_DIR, "static/today.html"))
+
+    @router.get("/api/codex/insight/today")
+    async def token_insight(request: Request):
+        from routes.codex_routes import _scope_owner
+
+        owner = _scope_owner(request, INSIGHT_READ_SCOPES)
+        insight = ti.load_today(owner)
+        return ti.public(insight) if insight else _no_insight()
+
+    @router.get("/api/insight/today", dependencies=[Depends(require_admin)])
+    async def insight(request: Request):
+        found = ti.load_today(_owner(request))
+        if not found:
+            return _no_insight()
+        return {**ti.public(found), "votes": found.get("votes") or []}
+
+    @router.post("/api/insight/today/vote", dependencies=[Depends(require_admin)])
+    async def vote(request: Request, body: Vote) -> dict[str, Any]:
+        found = await ti.add_vote(_owner(request), body.vote)
+        if not found:
+            raise HTTPException(404, "no insight yet")
+        return {"ok": True, "votes": found.get("votes") or []}
+
+    @router.post("/api/insight/refresh", dependencies=[Depends(require_admin)])
+    async def refresh(request: Request):
+        try:
+            found = await ti.generate_now(_owner(request))
+        except Exception as e:  # noqa: BLE001 -- the page shows the message
+            logger.warning("today insight refresh failed: %s", e)
+            raise HTTPException(502, f"Couldn't write the insight: {e}") from e
+        if not found:
+            raise HTTPException(502, "The model's answer wasn't usable; try again.")
+        return {**ti.public(found), "votes": found.get("votes") or []}
+
+    return router
