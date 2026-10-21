@@ -56,6 +56,7 @@ STATUSES = ("tentative", "confirmed", "stale", "rejected")
 CONFIRMED_BY = ("source", "owner", "rule")
 EVENT_KINDS = ("added", "evidence", "confirmed", "stale", "rejected", "corrected",
                "restored", "retired_upstream")
+NORM_VERSION = 1  # PRAGMA user_version: matching keys of this version
 EVENTS_KEPT = 50  # per belief: the history stays small
 PREFERENCE_WORDS = frozenset({
     "like", "likes", "prefer", "prefers", "love", "loves", "hate", "hates", "enjoy",
@@ -186,9 +187,51 @@ class Evidence:
     valid_until: str | None = None
 
 
-def normalize(text: str) -> str:
-    """Matching key: lowercase, whitespace collapsed, trailing punctuation dropped."""
-    return " ".join(str(text or "").lower().split()).rstrip(" .,;:!?…")
+_OWNER_LEADS = ("the owner", "owner", "i am", "i'm", "i've", "me", "my", "i")
+_OWNER_VERBS = {"am": "is", "have": "has"}
+
+
+def normalize(text: str, subject: str | None = None, about: str | None = None) -> str:
+    """Matching key: lowercase, whitespace collapsed, trailing punctuation dropped.
+
+    For a fact about the owner (``about="owner"``) a leading mention of the owner (``the
+    owner``, ``owner``, ``me``, ``i``, ``i'm``, ``i am``, ``my`` or the evidence's own
+    ``subject``, e.g. the owner's name) becomes the token ``owner``, and ``am``/``have``
+    right after it become ``is``/``has``: "I am vegetarian", "Me is vegetarian" and "The
+    owner is vegetarian." share one key. A possessive (``my``, ``the owner's``,
+    ``<name>'s``) becomes ``owner's``. Facts about people and things keep the plain key."""
+    norm = " ".join(str(text or "").lower().split()).rstrip(" .,;:!?…")
+    if str(about or "").strip().lower() != "owner":
+        return norm
+    return _owner_key(norm.replace("\u2019", "'"), subject)
+
+
+def _owner_key(norm: str, subject: str | None) -> str:
+    name = " ".join(str(subject or "").lower().split()).replace("\u2019", "'")
+    leads = sorted({*_OWNER_LEADS, *([name] if name else [])}, key=len, reverse=True)
+    for lead in leads:
+        if not norm.startswith(lead):
+            continue
+        rest = norm[len(lead):]
+        if lead == "my":
+            if rest.startswith(" "):
+                return "owner's" + rest
+            continue
+        if rest.startswith("'s ") or rest == "'s":
+            return "owner" + rest
+        if rest and not rest.startswith(" "):
+            continue  # "meals …", "ice …": not a subject mention
+        if lead == "i'm":
+            rest = " is" + rest
+        elif lead == "i've":
+            rest = " has" + rest
+        elif lead == "i am":
+            rest = " is" + rest
+        words = rest.split()
+        if words and words[0] in _OWNER_VERBS:
+            words[0] = _OWNER_VERBS[words[0]]
+        return " ".join(["owner", *words])
+    return norm
 
 
 def category_for(about: str, text: str) -> str:
@@ -256,7 +299,8 @@ def _clean(item: Evidence, today: str) -> dict | None:
         payload["valid_until"] = valid_until
     return {
         "source": source, "source_id": source_id, "subject": str(item.subject or "").strip(),
-        "about": about, "text": text, "norm": normalize(text), "category": cat,
+        "about": about, "text": text, "norm": normalize(text, item.subject, about),
+        "category": cat,
         "link": link, "seen_first": first, "seen_last": last,
         "times": max(1, _int(item.times, 1)), "days": max(1, _int(item.days, 1)),
         "source_confirmed": 1 if item.source_confirmed else 0,
@@ -282,6 +326,8 @@ def _connect(write: bool = False) -> Iterator[sqlite3.Connection]:
         db.execute("PRAGMA journal_mode = WAL")
         db.execute("PRAGMA foreign_keys = ON")
         db.executescript(SCHEMA)
+        if db.execute("PRAGMA user_version").fetchone()[0] < NORM_VERSION:
+            _migrate_norms(db)
         db.execute("BEGIN IMMEDIATE" if write else "BEGIN")
         try:
             yield db
@@ -291,6 +337,26 @@ def _connect(write: bool = False) -> Iterator[sqlite3.Connection]:
         db.execute("COMMIT")
     finally:
         db.close()
+
+
+def _migrate_norms(db: sqlite3.Connection) -> None:
+    """Once per ledger file: recompute the matching keys of owner beliefs (the owner's
+    leading mention became the ``owner`` token)."""
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        if db.execute("PRAGMA user_version").fetchone()[0] < NORM_VERSION:
+            for row in db.execute("SELECT id, subject, about, text, owner_text FROM beliefs "
+                                  "WHERE about = 'owner'").fetchall():
+                owner_norm = (normalize(row["owner_text"], row["subject"], row["about"])
+                              if row["owner_text"] else None)
+                db.execute("UPDATE beliefs SET norm = ?, owner_norm = ? WHERE id = ?",
+                           (normalize(row["text"], row["subject"], row["about"]), owner_norm,
+                            row["id"]))
+            db.execute(f"PRAGMA user_version = {NORM_VERSION}")
+    except BaseException:
+        db.execute("ROLLBACK")
+        raise
+    db.execute("COMMIT")
 
 
 def _event(db: sqlite3.Connection, belief_id: int, kind: str, detail: str, stamp: str) -> None:
@@ -533,7 +599,8 @@ def _attach(db: sqlite3.Connection, owner: str, ev: dict, stamp: str
                         (belief_id, row["id"])).fetchone()[0]
     decided = belief["status"] == "rejected" or belief["confirmed_by"] == "owner"
     target = None
-    if normalize(row["text"]) != ev["norm"]:  # the source changed what it says
+    # the source changed what it says
+    if normalize(row["text"], row["subject"], row["about"]) != ev["norm"]:
         target = _match(db, owner, ev["norm"], exclude=belief_id)
         if others or decided or target is not None:
             # a different claim now: move it to the belief it matches, or a new one
@@ -715,7 +782,8 @@ def correct(owner: str | None, belief_id: int, text: str, *,
         raise ValueError("a correction needs text")
 
     def apply(db, row, stamp, _today):
-        _set(db, row["id"], stamp, owner_text=text, owner_norm=normalize(text),
+        _set(db, row["id"], stamp, owner_text=text,
+             owner_norm=normalize(text, row["subject"], row["about"]),
              status="confirmed", confirmed_by="owner")
         _event(db, row["id"], "corrected", "by owner", stamp)
     return _owner_action(owner, belief_id, now, apply)

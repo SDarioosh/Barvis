@@ -284,6 +284,9 @@ _fork_facts_housekeeping(HOUSEKEEPING_DEFAULTS)
 # Fork: seed the Today insight task (src/today_insight.py)
 from src.today_insight import register_housekeeping as _fork_today_housekeeping  # noqa: E402
 _fork_today_housekeeping(HOUSEKEEPING_DEFAULTS)
+# Fork: seed the Notes Evidence task (src/notes_evidence.py)
+from src.notes_evidence import register_housekeeping as _fork_notes_housekeeping  # noqa: E402
+_fork_notes_housekeeping(HOUSEKEEPING_DEFAULTS)
 
 RETIRED_HOUSEKEEPING_ACTIONS = frozenset({
     "tidy_calendar",
@@ -2850,3 +2853,6 @@ TaskScheduler._SILENT_ACTIONS = TaskScheduler._SILENT_ACTIONS | {"module_sync_fa
 # Fork: the Today insight posts nothing to chat and queues for the model (src/today_insight.py)
 TaskScheduler._SILENT_ACTIONS = TaskScheduler._SILENT_ACTIONS | {"today_insight"}
 TaskScheduler._MODEL_BACKED_ACTIONS = TaskScheduler._MODEL_BACKED_ACTIONS | {"today_insight"}
+# Fork: notes evidence posts nothing to chat and queues for the model (src/notes_evidence.py)
+TaskScheduler._SILENT_ACTIONS = TaskScheduler._SILENT_ACTIONS | {"notes_evidence"}
+TaskScheduler._MODEL_BACKED_ACTIONS = TaskScheduler._MODEL_BACKED_ACTIONS | {"notes_evidence"}

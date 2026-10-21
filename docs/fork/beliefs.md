@@ -3,8 +3,10 @@
 Stages 1.1 (evidence intake), 1.3 (the [review page](#review-page-13)), 1.4 (forgetting
 propagates) and 1.5 (expiry and decay) of
 [personal-context.md](personal-context.md#phase-1-one-intake-a-review-page-and-forgetting).
-Code: `src/evidence_intake.py` (the ledger) and `src/module_facts.py` (its first source);
-tests `tests/test_evidence_intake.py` and `tests/test_module_facts.py`.
+Code: `src/evidence_intake.py` (the ledger), `src/module_facts.py` (its first source) and
+`src/notes_evidence.py` (the owner's notes, [Sources](#sources)); tests
+`tests/test_evidence_intake.py`, `tests/test_module_facts.py` and
+`tests/test_notes_evidence.py`.
 
 Phase 0 copied odysseus-sound's confirmed facts straight into Odysseus memory. Now a
 **belief ledger** sits between the sources and memory:
@@ -76,7 +78,7 @@ counts = ledger.submit(owner, [
         source_id="note-42:3",       # the source's own stable id for this observation
         subject="Jenn", about="person",   # owner | person | other
         text="Jenn lives in Lisbon",
-        link="/notes#note-42",       # required: evidence without a link is skipped
+        link="/#open=notes&note=note-42",  # required: evidence without a link is skipped
         seen_first="2026-10-01", seen_last="2026-10-14",  # ISO dates or datetimes
         times=2, days=2,             # the source's totals for this observation
         source_confirmed=False,      # True only if the source has its own confirmation
@@ -93,6 +95,15 @@ ledger.reconcile_source(owner, "notes", present_ids={"note-42:3", ...})
   to; else under a belief of the same owner whose text (or the owner's correction) has the
   same **normalized** text (lowercase, whitespace collapsed, trailing punctuation
   dropped); else a new `tentative` belief.
+- For facts about the owner (`about="owner"`) the key also folds the owner's leading
+  mention: `the owner`, `owner`, `me`, `i`, `i'm`, `i am` or the evidence's own
+  `subject` (e.g. the owner's name, as the module sends it) becomes `owner`, a following
+  `am`/`have` becomes `is`/`has`, and `my`, `the owner's` and `<name>'s` become
+  `owner's`. So "The owner is allergic to peanuts." (a note), "Me is allergic to
+  peanuts." (a conversation, subject `Me`) and "I am allergic to peanuts" are one belief.
+  Facts about people and things keep the plain key. An owner correction is keyed with the
+  belief's `about` and `subject`. Ledgers written before this are re-keyed once when
+  opened (`PRAGMA user_version` 1).
 - Re-submitting the same item changes nothing (`unchanged`); new totals or dates update
   the evidence; the belief's `first_seen`/`last_seen` are the min/max over its evidence.
 - When a source changes the text behind an id: if that evidence is the belief's only one
@@ -241,6 +252,56 @@ Then `reconcile_source(owner, "odysseus-sound", ids)`, `apply_decay` and one
 0 stale; memory: 11 kept, 1 added, 0 updated, 0 removed`; a pass with no change is not
 logged in Activity.
 
+## Sources
+
+| Source | `source` | Task | Setting | Default |
+|---|---|---|---|---|
+| odysseus-sound facts | `odysseus-sound` | Module Facts (hourly) | `MODULE_FACTS_SYNC` | on |
+| The owner's notes | `notes` | Notes Evidence (daily, 03:00) | `EVIDENCE_NOTES` | off |
+
+### Notes (1.2)
+
+Code: `src/notes_evidence.py`; test `tests/test_notes_evidence.py`. The built-in task
+**Notes Evidence** (daily, silent, queued with the other model-backed tasks) reads the
+owner's notes and asks the local model, one call per note, for the durable facts each one
+states.
+
+- **Read:** the owner's notes of type `note` (plain notes; not checklists, to-dos or
+  goals) that aren't archived.
+- **Skipped:** notes labelled `odysseus-sound` (filed from voice notes, so their facts
+  already come through the module), calendar reminders (source and label `calendar`),
+  and notes whose title and text together are shorter than 40 characters.
+- **Only changed notes go to the model.** The state file
+  `<DATA_DIR>/notes_evidence_<owner>.json` keeps, per note, a hash of its title and text
+  (and of the prompt version) and the evidence ids it produced. A note whose hash is
+  unchanged isn't sent again; pinning or recolouring a note doesn't count as a change.
+  When the model's answer isn't usable JSON (after one retry) the note keeps its
+  previous facts and is tried again on the next run.
+- **The model** (background workload, thinking off, waits for chat to go quiet) gets
+  the note as data, never as instructions, and answers `{"facts": [{"subject", "about"
+  (owner, person, other), "fact"}]}`: facts that stay true for months, each one sentence
+  that names its subject (`The owner …` for the owner); none from instructions, to-do or
+  shopping lists, code or text quoted from someone else; at most 8 per note. Rows
+  without a subject or fact are dropped; a fact is cut at 300 characters.
+- **Evidence:** `source="notes"`, `source_id="<note id>:<index>"`, link
+  `/#open=notes&note=<note id>` (the hash `static/js/forkEntityHash.js` opens on load),
+  `seen_first = seen_last` = the date of the note's last edit, `times = days = 1`,
+  `source_confirmed = False`.
+- **Never source-confirmed.** A note is one sighting written by the owner, with no
+  repetition to count. A fact that is also said in a conversation confirms by rule (b)
+  (two sources); anything else stays tentative until the owner confirms it on the review
+  page.
+- **Gone:** after each pass `reconcile_source(owner, "notes", ids)` with the ids of every
+  note still read (re-extracted or unchanged), so facts a changed note no longer states,
+  and the facts of notes deleted, archived, relabelled or shortened, are marked gone.
+- Result line, counts only: `notes: 2 read, 3 skipped, 14 unchanged, 5 facts; ledger:
+  3 new, 1 confirmed, 1 gone, 1 stale` (`, 1 failed` when an answer wasn't usable); a
+  pass that read nothing and changed nothing is not logged in Activity.
+- **Off by default** (`EVIDENCE_NOTES=off`; `on` enables it): notes hold drafts, plans
+  and other people's words, so the source stays off until it has been checked on real
+  notes and the owner reviews tentative beliefs on the review page (plan 1.3 before 1.2).
+  Turning it off stops the task; evidence already submitted stays in the ledger.
+
 ## Settings
 
 | Variable | Default | Meaning |
@@ -250,6 +311,7 @@ logged in Activity.
 | `BELIEF_CONFIRM_DAYS` | 2 | rule (c): distinct days across sources |
 | `BELIEF_STALE_DAYS` | 180 | decay: days without a sighting before a belief confirmed by its source or the rule goes stale |
 | `MODULE_FACTS_SYNC` | on | `off` stops the facts job (memories already mirrored stay) |
+| `EVIDENCE_NOTES` | off | `on` lets the Notes Evidence task submit facts from the owner's plain notes |
 
 Values below 1 count as 1; a value that isn't a number falls back to the default.
 
