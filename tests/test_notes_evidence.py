@@ -299,6 +299,8 @@ def test_fact_in_a_note_and_a_conversation_confirms_by_two_sources(db):
                        now=T0))
 
     async def module(tool, args):
+        if tool == "list_people":
+            return json.dumps({"people": [{"id": 3, "name": "Jenn", "aliases": []}]})
         assert tool == "list_facts"
         return json.dumps({"facts": [{
             "id": 7, "subject": "Jenn", "about": "person", "fact": "Jenn lives in Lisbon",
