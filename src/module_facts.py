@@ -15,10 +15,12 @@ full reconcile of this owner's copies against the module's list.
 
 A copy is an ordinary memory entry with ``source: "odysseus-sound"``, ``owner``,
 ``module_fact_id``, ``link`` (the signed transcript link), ``subject``, ``about``,
-``times_said``, ``days``, ``first_said``, ``last_said`` and ``synced_at``; its text is
-the module's fact text, never rewritten. Category: ``about`` owner -> ``preference``
-when the text has a preference word ("likes", "prefers", "hates" ...), else ``fact``;
-person -> ``contact``; other -> ``fact``.
+``times_said``, ``days``, ``first_said``, ``last_said`` and ``synced_at``. Its text is
+the module's fact text, never rewritten, followed by `` (source: <link>)``: chat context
+injects only a memory's text, so the link must be in it for answers to cite the
+transcript (the module contract). Category, from the bare fact text: ``about`` owner ->
+``preference`` when it has a preference word ("likes", "prefers", "hates" ...), else
+``fact``; person -> ``contact``; other -> ``fact``.
 
 Upstream's "Memory Tidy" task (``action_consolidate_memory``) may merge, rewrite or
 delete copies like any other memory. That is harmless: the next run restores a
@@ -160,11 +162,17 @@ def category(row: dict) -> str:
     return "fact"
 
 
+def memory_text(row: dict) -> str:
+    """The copy's text: the fact, then its transcript link exactly as the module gave it."""
+    link = str(row.get("link") or "").strip()
+    return f"{row['fact']} (source: {link})" if link else row["fact"]
+
+
 def copy_fields(row: dict) -> dict[str, Any]:
     """The memory fields a copy of ``row`` carries (besides id, owner, source ...)."""
     return {
-        "text": row["fact"],
-        "category": category(row),
+        "text": memory_text(row),
+        "category": category(row),  # the bare fact: URL words don't count
         "subject": str(row.get("subject") or ""),
         "about": str(row.get("about") or ""),
         "times_said": _int(row.get("times_said")),

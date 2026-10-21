@@ -71,7 +71,8 @@ async def test_first_run_adds_one_memory_per_fact(data):
     got = copies(data)
     assert set(got) == {1, 2, 3}
     one = got[1]
-    assert one["text"] == "Prefers oat milk in coffee"
+    assert one["text"] == ("Prefers oat milk in coffee "
+                           "(source: http://h:8000/view/c1?sig=abc#t=10)")
     assert one["source"] == "odysseus-sound" and one["owner"] == "alice"
     assert one["link"] == "http://h:8000/view/c1?sig=abc#t=10"
     assert (one["subject"], one["about"], one["times_said"], one["days"]) == ("Me", "owner", 2, 2)
@@ -106,12 +107,42 @@ async def test_changed_fact_is_updated_in_place(data):
     assert stats == {"kept": 2, "added": 0, "updated": 1, "retired": 0}
     new = copies(data)[1]
     assert new["id"] == old["id"] and new["uses"] == 1
-    assert new["text"] == "Prefers soy milk in coffee"
+    assert new["text"] == "Prefers soy milk in coffee (source: http://h:8000/view/c1?sig=abc#t=10)"
     assert (new["times_said"], new["last_said"]) == (3, "2026-10-20")
     assert new["synced_at"] == "2026-10-21T10:00:00+00:00"
     # metadata alone also counts as a change
     module.facts[1] = {**module.facts[1], "link": "http://h:8000/view/c9?sig=def#t=5"}
     assert (await mf.sync("alice", module, now=T1))["updated"] == 1
+
+
+@pytest.mark.asyncio
+async def test_memory_text_carries_the_link_and_old_bare_copies_are_upgraded(data):
+    module = FakeModule(BASE)
+    await mf.sync("alice", module, now=T0)
+    for fid, row in zip((1, 2, 3), BASE):
+        got = copies(data)[fid]
+        assert got["text"] == f"{row['fact']} (source: {row['link']})"
+        assert got["link"] == row["link"]  # the separate field stays
+    # a copy written before the link was in the text
+    mm = MemoryManager(str(data))
+    entries = mm.load_all_for_update()
+    old = next(m for m in entries if m.get("module_fact_id") == 2)
+    old["text"] = "Lives in Lisbon with her dog Pixel"
+    mm.save(entries)
+    stats = await mf.sync("alice", module, now=T1)
+    assert stats == {"kept": 2, "added": 0, "updated": 1, "retired": 0}
+    got = copies(data)[2]
+    assert got["id"] == old["id"]
+    assert got["text"] == ("Lives in Lisbon with her dog Pixel "
+                           "(source: http://h:8000/view/c2?sig=abc#t=20)")
+    # no link from the module: the bare fact
+    assert mf.memory_text({"fact": "Likes jazz", "link": ""}) == "Likes jazz"
+
+
+def test_category_ignores_words_in_the_link():
+    row = {**fact(5, "Works night shifts"), "link": "http://h:8000/view/likes-love?sig=want#t=1"}
+    assert mf.copy_fields(row)["category"] == "fact"
+    assert "likes-love" in mf.copy_fields(row)["text"]
 
 
 @pytest.mark.asyncio
@@ -141,7 +172,8 @@ async def test_own_memories_are_untouched_and_deleted_copy_comes_back(data):
     stats = await mf.sync("alice", module, now=T1)
     assert stats == {"kept": 1, "added": 1, "updated": 1, "retired": 0}
     got = copies(data)
-    assert got[3]["text"] == "The office moves to Building C in November"
+    assert got[3]["text"] == ("The office moves to Building C in November "
+                              "(source: http://h:8000/view/c3?sig=abc#t=30)")
     assert got[3]["category"] == "fact"
     assert any(m["id"] == mine["id"] and m["text"] == "I like hiking"
                for m in memories(data))
