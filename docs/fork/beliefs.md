@@ -406,6 +406,117 @@ Inference never overrides the owner (`kind_by = owner`) and never turns a person
 project. `subject_summary` gives the insight and chat one paragraph per project (used by
 2.3, retrieval).
 
+## Retrieval (2.3)
+
+One ranker over the ledger, used by the Today insight, chat and the review page. Code:
+`src/belief_search.py`, `routes/belief_search_routes.py`; test
+`tests/test_belief_search.py`.
+
+```python
+from src import belief_search
+hits = belief_search.search_beliefs(owner, "where does Tom live", k=10,
+                                    status=("confirmed",), subject_id=None,
+                                    attribute=None, kinds=None)
+# each hit: the belief dict (as list_beliefs returns it) + "score" (0..1) + "why"
+```
+
+**Ranking.** The score adds four parts; each weight is larger than the sum of the ones
+after it, so the order of the parts is also the order of importance:
+
+| Part | Weight | When |
+|---|---|---|
+| subject | 0.55 | the query names the belief's subject: its name or an alias (case-insensitive, whole words, `'s` allowed), or a person's first name when no other subject has it; "I", "me", "my", "myself", "mine" mean the owner's subject when the query names no one else |
+| attribute | 0.25 | the query uses a word of the belief's `attribute` (synonym map below); an unstructured belief whose text has such a word gets 60 % of it |
+| semantic | 0.12 | cosine similarity of the query to `"<subject>: <shown text>"`, scaled from `MIN_SIMILARITY` (0.5, adds nothing below) to 1; only with a local embedding lane |
+| keyword | 0.08 | token Jaccard of the query and the same text (lowercase words, stop words dropped): the fallback and tie-breaker |
+
+Only beliefs that score above 0 are returned. Ties: `last_seen` (newest first), then id;
+the same call always gives the same order. `why` names the parts that scored, in that
+order ("subject match, attribute, keyword"), plus "; no embeddings" when no lane was used.
+`status` is one status, several, `"all"` or None; `subject_id`, `attribute` and `kinds`
+(subject kinds) narrow the pool. `search_details(...)` returns the same hits with
+`semantic` (a lane was used), `embedded` and `pending` (see below).
+
+**Synonym map** (`SYNONYMS`, query word → attribute):
+
+| Words | Attribute |
+|---|---|
+| allergy, allergies, allergic | `allergy` |
+| live, lives, living, home, address, based | `lives_in` |
+| work, works, working, job, employer, employed, company | `works_at` |
+| role, title, position | `role` |
+| birthday, birthdays, born | `birthday` |
+| diet, vegetarian, vegan, pescatarian, eat, eats, alcohol | `diet` |
+| like, likes, love, loves, favourite, favorite, enjoy, enjoys | `likes` |
+| dislike, dislikes, hate, hates | `dislikes` |
+| wife, husband, partner, sister, brother, mother, father, son, daughter, friend, colleague, boss, manager, married | `relationship` |
+| own, owns | `owns` |
+| pet, pets, dog, dogs, cat, cats | `pet` |
+| plan, plans, planning | `plans` |
+| decided, decision, decisions | `decision` |
+| phone, email, number, handle | `contact_info` |
+| health, medication, condition | `health` |
+| status, progress | `project_status` |
+| deadline, due | `deadline` |
+
+**Embeddings.** Only the hub's own lane, never a remote API: `belief_search.embedder()`
+takes the memory index Odysseus loaded at start-up (`MemoryVectorStore`, whose lanes come
+from `embedding_lanes.build_embedding_lanes`) and uses its first healthy lane that is
+local (FastEmbed, or a configured endpoint on loopback, a private or Tailscale address,
+a container name or a `.local` host). No index, an unhealthy one, or only a remote lane:
+no semantic part. A lane that fails during a search is logged and the search answers
+from the other parts.
+
+**Vector cache.** `belief_vectors` in `beliefs.db`: `belief_id` (primary key, deleted with
+the belief), `text_hash` (of the embedded text), `model` (lane name and fingerprint),
+`vector` (float32 BLOB), `updated_at`. A search embeds, lazily and in batches of 50, the
+beliefs of its pool whose vector is missing or whose text or model changed, at most
+`EMBED_PER_CALL` (200) per call, lowest ids first; the others are counted as `pending`
+and done on the next call, so a request never waits on more than 200. A second search
+over unchanged beliefs embeds only the query. `reindex(owner)` drops the owner's vectors
+(and those of deleted beliefs) and recomputes all of them (tentative, confirmed, stale)
+without the cap.
+
+**Prompt block.** `context_for(owner, query, k=8, max_chars=1200)`: the top confirmed
+hits as
+
+```
+What I know (confirmed). Use your tools for anything else, and cite the link next to each fact you use:
+- Priya Nair: Priya Nair lives in Porto (http://…/view/…?sig=…#t=20)
+- Sam Rivera (you): I am allergic to penicillin (http://…)
+```
+
+Lines that don't fit `max_chars` are skipped; "" when nothing matches.
+
+**Where it is used.**
+
+- *Today insight*: `select_memory` gets the query `memory_query(candidates)` (the day's
+  candidate titles, list names and locations, one per line) and puts the ranker's top
+  40 confirmed beliefs first (texts without links), then the other memory entries most
+  used first, up to 40. With an empty ledger or no hit, the old selection (most used
+  first). The input hash still uses the sorted texts, so a reorder alone doesn't rerun
+  the model.
+- *Chat*: the existing memory-context hook (`build_context_preface` →
+  `today_insight.context_block`, label "saved insight: today and beliefs") adds
+  `belief_search.chat_block(owner, message)` as untrusted context when
+  `wants_beliefs(message, owner)`: "what do you know about / tell me about / who is
+  <known subject>", or an attribute question about a known subject or the owner ("where
+  does Tom live", "am I allergic to anything", "when is Mom's birthday?", "does Jonas
+  have any allergies", "what's the status of Project Heron"). Known subjects: the
+  owner's subjects with a confirmed belief. Never on slash turns or slash-invoked skills,
+  never with words about what was said or happened (said, told, asked, mentioned,
+  promised, recommended, latest, a meeting, a conversation, a voice note, a month or
+  weekday, last week …): those questions must reach the module's tools, so none of
+  odysseus-sound's 21 bakeoff questions gets the block (tested). "What is <person>
+  allergic to?" is such a bakeoff question and is left to the module; the yes/no form
+  ("Is Priya allergic to nuts?") and "allergies" get the block. Without a ledger file the
+  gate returns at once and creates nothing.
+- *Review page*: `GET /api/beliefs/search?q=&k=&status=` (admin session like the other
+  belief routes; API tokens refused; scoped to the logged-in owner) answers `{"query",
+  "results", "semantic", "pending"}`. `k` 1–50 (default 10); `status` one status, a
+  comma list or `all` (default `confirmed`; 400 for an unknown one). Mounted before the
+  review page's router so `search` isn't read as a belief id.
+
 ## Memory mirroring
 
 `sync_memory(owner)` keeps exactly one Odysseus memory per confirmed belief:

@@ -308,9 +308,7 @@ def _memory_text(text: Any) -> str:
     return _SOURCE_SUFFIX.sub("", text).strip()
 
 
-def select_memory(entries: Iterable[dict], limit: int = MAX_MEMORY) -> list[str]:
-    """Texts of preference/contact/fact entries and odysseus-sound facts, most used first
-    (source links stripped)."""
+def _by_use(entries: Iterable[dict], limit: int) -> tuple[list[str], list[dict]]:
     picked = []
     for m in entries or []:
         if not isinstance(m, dict):
@@ -329,8 +327,54 @@ def select_memory(entries: Iterable[dict], limit: int = MAX_MEMORY) -> list[str]
             return 0.0
 
     picked.sort(key=lambda m: (num(m.get("uses")), num(m.get("timestamp"))), reverse=True)
-    texts = (_memory_text(m["text"])[:300] for m in picked)
-    return [t for t in texts if t][:limit]
+    rows = [(_memory_text(m["text"])[:300], m) for m in picked]
+    rows = [(t, m) for t, m in rows if t]
+    return [t for t, _ in rows][:limit], [m for _, m in rows]
+
+
+def memory_query(candidates: Iterable[dict]) -> str:
+    """The query the belief ranker gets for the day: candidate titles, list names and
+    locations (people and projects are usually named there), one per line."""
+    parts: list[str] = []
+    for c in candidates or []:
+        for key in ("title", "list", "location"):
+            value = re.sub(r"\s+", " ", str(c.get(key) or "")).strip()
+            if value and value not in parts:
+                parts.append(value)
+    return "\n".join(parts)
+
+
+def select_memory(entries: Iterable[dict], limit: int = MAX_MEMORY, *,
+                  owner: str | None = None, query: str | None = None) -> list[str]:
+    """Memory texts for the insight prompt (source links stripped).
+
+    With ``query`` (``memory_query`` of the day's candidates): the confirmed beliefs the
+    ledger's ranker (``src/belief_search.py``) puts first for it, then the other
+    preference/contact/fact entries and odysseus-sound facts, most used first, up to
+    ``limit``. Without a query, or when the ledger has nothing for it: most used first."""
+    fallback, rows = _by_use(entries, limit)
+    if query is None:
+        return fallback
+    try:
+        from src import belief_search
+
+        hits = belief_search.search_beliefs(owner, query, k=limit)
+    except Exception as e:  # noqa: BLE001 -- the insight is written without it
+        logger.info("today insight: belief ranking unavailable: %s", e)
+        hits = []
+    if not hits:
+        return fallback
+    ids = {h["id"] for h in hits}
+    out: list[str] = []
+    for text in (_memory_text(h.get("shown_text") or h.get("text"))[:300] for h in hits):
+        if text and text not in out:
+            out.append(text)
+    for m in rows:
+        text = _memory_text(m["text"])[:300]
+        if m.get("belief_id") in ids or text in out:
+            continue
+        out.append(text)
+    return out[:limit]
 
 
 def input_hash(candidates: list[dict], memory: list[str], digest: str | None,
@@ -395,11 +439,11 @@ def _load_events(owner: str | None, now_local: datetime) -> list[dict]:
         db.close()
 
 
-def _load_memory(owner: str | None) -> list[str]:
+def _load_memory(owner: str | None, query: str | None = None) -> list[str]:
     from src.constants import DATA_DIR
     from src.memory import MemoryManager
 
-    return select_memory(MemoryManager(DATA_DIR).load(owner))
+    return select_memory(MemoryManager(DATA_DIR).load(owner), owner=owner, query=query)
 
 
 def _digest_text(result: str) -> str | None:
@@ -472,7 +516,7 @@ async def gather(owner: str | None, *, now: datetime | None = None,
     todos = todo_candidates(_load_notes(owner), today, tz)
     events = event_candidates(_load_events(owner, now_local), now_local)
     candidates = order_candidates(todos, events)
-    memory = _load_memory(owner)
+    memory = _load_memory(owner, memory_query(candidates))
     caller = _module_caller() if call is True else (call or None)
     digest, action_items = await _module_inputs(owner, today, caller)
     return {"now": now_local, "today": today, "candidates": candidates, "memory": memory,
@@ -794,10 +838,25 @@ def wants_insight(message: Any) -> bool:
 
 def context_block(owner: str | None, now: datetime | None = None,
                   limit: int = CONTEXT_LIMIT, message: Any = None) -> str:
-    """Today's insight as a short text for the chat memory context ("" when none, or when
-    ``message`` is given and isn't about today's plan, see ``wants_insight``)."""
-    if message is not None and not wants_insight(message):
-        return ""
+    """Chat memory context from the fork: today's insight as a short text (at most
+    ``limit``; with ``message``, only when it is about today's plan, see
+    ``wants_insight``) and, when ``message`` asks what the hub knows about someone, the
+    "What I know (confirmed)" block of the belief ledger (``belief_search.chat_block``,
+    at most 1200 characters). "" when neither applies."""
+    parts = []
+    if message is None or wants_insight(message):
+        parts.append(_insight_block(owner, now, limit))
+    if message is not None:
+        try:
+            from src import belief_search
+
+            parts.append(belief_search.chat_block(owner, message))
+        except Exception as e:  # noqa: BLE001 -- chat must never fail on this
+            logger.debug("today insight: belief block unavailable: %s", e)
+    return "\n\n".join(p for p in parts if p)
+
+
+def _insight_block(owner: str | None, now: datetime | None, limit: int) -> str:
     try:
         if not insight_path(owner, "2000-01-01").parent.is_dir():
             return ""  # never written for this owner: skip the timezone lookup
