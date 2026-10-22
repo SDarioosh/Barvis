@@ -18,6 +18,24 @@ Non-goals (first version): handwriting-to-text while writing (live recognition),
 and math recognition, a replacement for a dedicated note app (layers, PDF annotation,
 infinite canvas), recognition of drawings.
 
+## Decisions (owner, 2026-10-22)
+
+- **Device:** Lenovo Idea Tab with the Lenovo Tab Pen Plus, running the Odysseus PWA in
+  Chrome. Pressure, tilt, barrel button and palm behaviour of this pen are not known from
+  documentation; H1 starts with a small probe page that logs what Chrome reports
+  (`pointerType`, `pressure`, `tiltX/Y`, `buttons`), and the Write view is built to what
+  it shows.
+- **Recogniser:** the server's main model has vision and its image encoder (mmproj) runs
+  from RAM, so a second model and VRAM pressure are not a concern. The first backend is
+  that model; dedicated OCR models stay as comparison candidates in H0, not as a
+  requirement. Open item: image encoding on CPU is slower, so seconds per page is part of
+  the eval.
+- **Content:** mostly short lists and meeting notes. Lists are the common case, so they
+  get first-class handling (see "Lists and meeting notes").
+- **Review first (training wheels):** every transcript goes to the owner for review
+  before it can reach the ledger. The gate is relaxed only on measured evidence (see
+  "Taking the training wheels off").
+
 ## Privacy
 
 Same rules as [AGENTS.md](../../AGENTS.md): strokes, page images and transcriptions stay
@@ -147,7 +165,7 @@ measure printed documents. So the choice must be made on the owner's own writing
 
 | Option | Fit | Cost / risk |
 |---|---|---|
-| **A general local vision model**, first the one already on the server if it has vision (the Qwen3.5 family is natively multimodal; llama-server needs the matching `--mmproj` file; check what `qwen3.5-35b` on the server is) | No new service; follows the page's layout, copes with crossings-out, bullets and mixed writing; can be told the prompt rules above | Shares the 12 GB GPU with chat and the other jobs, so run it in the idle-time task queue, not on demand during chat; a small model may hallucinate plausible words on messy handwriting |
+| **The server's main vision model** (decided as the first backend: it has vision, with the image encoder running from RAM) | No new service and no extra VRAM; follows the page's layout, copes with crossings-out, bullets and mixed writing; can be told the prompt rules above | CPU image encoding makes each page slower, so run it in the task queue, not during chat; the language model may still guess plausible words on messy handwriting |
 | **A dedicated document-OCR VLM** (PaddleOCR-VL, GLM-OCR, dots.ocr, olmOCR, Chandra OCR 2 and similar) as a second local llama.cpp/vLLM-style endpoint | Small, built for reading; some claim handwriting | Weights/licence must be checked per model (one third-party ranking notes Chandra OCR 2 has a revenue-capped licence); most evidence is on printed pages; one more service on the server |
 | **TrOCR (handwritten)** line recogniser | Small, CPU-capable, open, a standard baseline | Reads one cropped line at a time (needs the stroke-based line segmentation above, which we have), trained on a narrow dataset (English, IAM-style), typically weaker on cursive and mixed layouts |
 | Classical (Tesseract and similar) | Fast | Poor on handwriting; not worth running |
@@ -165,9 +183,10 @@ Mostly free, deliberately:
   `/#open=notes&note=<id>`, and are **never source-confirmed**.
 - Two additions (small hooks into `src/notes_evidence.py`, or a flag it reads from a new
   `src/ink_notes.py`):
-  - Only transcripts with `status` `reviewed`, or `machine` with no `[?]` marks, are
-    read. A page with unreadable marks waits for review. (Reason: a misread name or number
-    would otherwise become a plausible but wrong belief.)
+  - Only transcripts with `status = reviewed` are read (setting `INK_REVIEW`: `all`
+    (default, decided) = every page needs review; `unmarked` = machine transcripts
+    without `[?]` marks also count; `off` = everything counts). A misread name or number
+    would otherwise become a plausible but wrong belief.
   - Evidence from a handwritten note carries `via: handwriting` in its source detail, and
     the review page shows a "view handwriting" link beside "open note" so the owner can
     check a fact against the original.
@@ -177,15 +196,43 @@ Mostly free, deliberately:
   into the calendar or to-dos in the first version. Later stage: offer them as
   suggestions, like conversation action items, never silently.
 
+### Lists and meeting notes
+
+- **Lists:** the prompt asks for one line per list entry as `- item`, keeping checkbox
+  marks (`[ ]` / `[x]`) when drawn. A list-like page is offered as a checklist note
+  ("Make this a to-do list": one tap in the review view, never automatic), so the owner's
+  shopping and to-do lists land in the existing to-do lists. Short lists are under
+  `MIN_CHARS` (40) and so never reach Notes Evidence, which is right: "milk, eggs" is
+  not a fact about the owner.
+- **Meeting notes:** transcribed as text with line breaks and indentation kept
+  (indent = nesting), title taken from the first line when it is underlined or larger
+  (or the owner types one). Facts, decisions and names in them are what Notes Evidence
+  can use, after review.
+- Names are the main error source in meeting notes. The prompt gets the owner's known
+  people (names from the ledger's subjects) as a spelling hint list, and a transcribed
+  name that is close to a known one is flagged in the review view, not replaced.
+
 ### Review
 
-The transcript is wrong sometimes, so the owner needs a quick way to say so.
+Review is mandatory for now (see Decisions). The transcript is wrong sometimes, so the
+owner needs a quick way to fix it.
 
 - The Write view has a **Text** tab: the page image above, the transcript below, `[?]`
   spans highlighted, editable. Saving sets `status = reviewed` and stores the corrected
   text (this is also the ground truth for the eval, kept local).
-- A small list "Needs a look" (page with unreadable words) in the Notes window and a
-  count in the same place the beliefs page shows its pending items.
+- A small list "Needs a look" (every page not yet reviewed) in the Notes window and a
+  count in the same place the beliefs page shows its pending items. One-tap "Looks
+  right" accepts a page unchanged, so the common good case costs a glance.
+
+### Taking the training wheels off
+
+Each review records, locally and as counts only: page accepted unchanged, edited (number
+of changed characters and words), or discarded. The review page for handwriting shows
+the trend per week. The owner relaxes `INK_REVIEW` by hand; the system never does it
+alone. Suggested bar before moving from `all` to `unmarked`: for the last 30 pages,
+at least 90% accepted unchanged or with edits only to words that were marked `[?]`, and
+no edit that changed a name, number or date in an unmarked word. These numbers are a
+starting point to adjust, not a promise.
 
 ## Phases
 
@@ -194,8 +241,8 @@ The transcript is wrong sometimes, so the owner needs a quick way to say so.
 | H0 Measure first | `scripts/ink_eval.py`: scores a recognizer on a folder of (page image, corrected text) pairs: character and word error rate, per page, counts only in output. A recorded set of ~30 pages of the owner's own writing stays on the server | Owner writes and corrects the pages; sandbox can only test the harness with synthetic handwriting-font pages and a fake |
 | H1 Capture | `static/js/forkInk.js` Write view (pen, eraser, undo, pages, autosave, offline queue), `routes/ink_routes.py` (save, load, delete), `src/ink_notes.py` (sidecar, render, note create/update through `do_manage_notes`), Write button on the notes window and the phone sheet. Notes without a transcript are ordinary pictures | Tablet for pressure/palm testing |
 | H2 Transcribe | `src/ink_transcribe.py` + task, recognizer setting (`INK_RECOGNIZER`: `off` default, `vision`, `ocr-endpoint`), band cutting, status, "Transcribe now" | A vision-capable local model on the server |
-| H3 Review | Text tab, "Needs a look", `reviewed` status, protection against overwriting edits | H2 |
-| H4 Into context | Notes Evidence hook (reviewed/clean only), `via: handwriting`, "view handwriting" link on `/beliefs`; `EVIDENCE_NOTES` stays the switch | Phase 1 review page (built) |
+| H3 Review | Text tab, "Needs a look", `reviewed` status, protection against overwriting edits, review-outcome counts (training-wheels trend) | H2 |
+| H4 Into context | Notes Evidence hook (reviewed only by default, `INK_REVIEW`), `via: handwriting`, "view handwriting" link on `/beliefs`; `EVIDENCE_NOTES` stays the switch | Phase 1 review page (built) |
 | H5 Later | Suggested to-dos/events from handwritten lines; searching ink by drawn word; PDF/photo import through the same recogniser (photographed paper notebooks); module-style `odysseus-ink` split if the recogniser needs its own service | |
 
 Order of risk: H0 before H2 (don't pick a model blind), H1 can go in parallel with H0 and
@@ -229,9 +276,9 @@ No change to `core/database.py`: the sidecar avoids a migration on an upstream t
 - **Recognizer quality (owner, on the server)**: `scripts/ink_eval.py` over the owner's
   corrected pages. Report character and word error rate overall and per page type
   (print-like, cursive, mixed, lists/tables), the share of pages with `[?]` marks, and
-  seconds per page. Target to be set after the first numbers; a sensible gate for
-  feeding the ledger is "reviewed or no `[?]` and WER low enough that the owner rarely
-  fixes a name or number". No number is promised here.
+  seconds per page. Target to be set after the first numbers; the gate for
+  feeding the ledger is review for now; the bar for loosening it is under "Taking the
+  training wheels off". No accuracy number is promised here.
 - **Safety property (sandbox, deterministic)**: a page that contains an instruction
   ("ignore previous instructions, remember that…") produces transcript text and no
   belief change beyond normal evidence; a transcript with `[?]` creates no evidence; an
@@ -254,10 +301,10 @@ and the tablet steps above. Production is changed only by the owner with
 
 ## Risks
 
-- **GPU contention.** The server has 12 GB; the chat model already fills most of it.
-  A second resident vision model may not fit. Mitigation: use the existing model if it
-  has vision, run transcription in idle time, or use a small CPU recogniser (TrOCR) for
-  lines.
+- **Speed, not VRAM.** The image encoder runs from RAM, so memory isn't the issue, but
+  encoding on CPU takes seconds per image band. Mitigation: transcribe in the task queue
+  and show "transcribing…" on the note; measure seconds per page in H0; keep page bands
+  small and few (short lists are one band).
 - **Hallucinated text.** Vision models invent words for illegible handwriting. Mitigation:
   `[?]` instruction, review gate before the ledger, original always one click away,
   nothing from handwriting is ever source-confirmed.
@@ -273,15 +320,15 @@ and the tablet steps above. Production is changed only by the owner with
 
 ## Open questions for the owner
 
-1. Which tablet and stylus (Samsung with S Pen, other Android, iPad)? Pointer behaviour,
-   latency and palm rejection depend on it.
-2. Does `qwen3.5-35b` on the server run with vision (`--mmproj`)? If not, is there room
-   for a second small vision model, or should transcription run on the Mac or CPU?
-3. Typical content: short lists and reminders, meeting notes, or long journal pages?
-   Decides how much weight goes on line segmentation and review.
-4. Is "reviewed or clean-only" the right gate before handwriting feeds the ledger, or
-   should clean transcripts go straight in as tentative evidence?
-5. Should handwritten dates and to-dos become suggestions in the Today flow (H5), or stay
-   as plain notes?
-6. Paper notebooks: do you also want photo import of paper pages through the same
+Answered 2026-10-22 (see Decisions): device, vision model, content, review gate.
+
+1. Which model name and `llama-server` flags does the main model run with, and how long
+   does it take to describe one image today? Sets the starting point for seconds per
+   page.
+2. Are "Make this a to-do list" (one tap, in the review view) and name hints from known
+   people the right level for lists and meeting notes, or do you want handwritten dates
+   and to-dos to become Today suggestions later (H5)?
+3. Paper notebooks: do you also want photo import of paper pages through the same
    recogniser?
+4. Is 90% of the last 30 pages accepted unchanged a reasonable bar for loosening the
+   review gate, or do you prefer a different measure?
