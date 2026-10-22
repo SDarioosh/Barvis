@@ -331,6 +331,106 @@ This relies on the link format in [../modules.md](../modules.md): a `/view/<id>`
 with a `sig` parameter.
 Audio isn't kept after transcription, so cards quote lines instead of playing them.
 
+## Recording calls from the computer
+
+`/modules/sound/record` (**Record a call** on the Conversations page, admin only) records
+a Zoom, Meet or Teams call on any computer with a Chromium browser (Chrome, Brave, Edge)
+and sends it to the module, which transcribes, diarizes and summarizes it like any other
+conversation (device `computer`, kind `conversation`).
+
+- **What it captures.** The browser asks what to share. A meeting in a tab: pick the tab
+  and turn on *Also share tab audio* (Windows, Mac, Linux). The Zoom desktop app: pick
+  its window or the entire screen and turn on *Also share system audio* (Windows; macOS
+  14.2+ with Chrome 141+; Linux depends on the desktop, untested). Plus the microphone
+  (a checkbox, remembered). Video is required by the browser but never recorded.
+- **How it sends.** The page mixes call audio and microphone into one track and records a
+  self-contained 30 s WebM/Opus file at a time (about 120 KB; the next file starts before
+  the previous one closes, so no audio is lost between them). Pieces upload one by one,
+  in order, through `POST /api/modules/sound/record/chunk`; Odysseus checks them and
+  forwards them to the upload routes of the module's MCP HTTP server
+  (`POST /ingest/chunk`, then `POST /sessions/{id}/end` on Stop; see
+  [Uploads through the MCP server](#uploads-through-the-mcp-server)). Failed uploads retry
+  with backoff while the tab is open; a piece the module rejects is skipped and shown.
+  When the module ends a session (`CONVO_SILENCE_STOP_SECONDS` of silence or
+  `CONVO_MAX_SESSION_SECONDS`), the page continues in a new session; one within
+  `CONVO_CONVERSATION_GAP_SECONDS` joins the same conversation.
+- **Security.** The browser never sees a module token: Odysseus uses the token of its
+  `convo` MCP server. The upload routes are admin only and need an
+  `X-Odysseus-Recorder: 1` header, so a plain cross-site form can't post audio. Capture
+  needs a secure page: Odysseus over `https://` (a Tailscale certificate) or on
+  `localhost`.
+- **Settings:** none. It uses the URL and `?access_token=` of the MCP server named
+  `convo` (`SOUND_MODULE_SERVER`) in Settings → MCP. Without that server, or with a
+  module older than MCP 0.8.0, the page says what to fix ("update odysseus-sound").
+  Optional: `SOUND_MODULE_CALL_DEVICE` (default `computer`).
+- Code: `src/call_recorder.py`, routes in `routes/sound_module_routes.py`,
+  `static/call-recorder.html`, `static/js/callRecorder.js`; test
+  `tests/test_call_recorder.py`.
+- Limits: you press Start for each call (a web page can't notice a meeting starting);
+  the tab must stay open and the computer awake (the page asks for a screen wake lock);
+  call audio and microphone arrive mixed, so the module's diarization tells the speakers
+  apart; without headphones the microphone also hears the other people.
+
+## Uploads through the MCP server
+
+Since MCP version 0.8.0 the module's MCP HTTP server (`convo-server mcp --http`) has plain
+HTTP routes next to `/mcp`, behind the same token. They are **not MCP tools**: the model
+never sees them. The module forwards each one to its own ingest API with its ingest
+token, so there is one ingest code path and the ingest token (which also signs
+transcript links) never leaves the module.
+
+| Route on the MCP server | Forwarded to |
+|---|---|
+| `POST /ingest/chunk` | `POST /v1/ingest/chunk` (same multipart fields and answer) |
+| `POST /sessions/{id}/end` | `POST /v1/sessions/{id}/end` |
+| `GET /health`, `GET /conversations`, `GET /conversations/{id}`, `GET /conversations/{id}/transcript`, `GET /action-items`, `PATCH /action-items/{id}`, `GET /digests/{date}`, `POST /digests/{date}` | the same `/v1` routes (the phone relay's T5 sync) |
+
+So the MCP token can add recordings. Odysseus finds the module from the `convo` server's
+URL (`/mcp` stripped) and its `access_token` (`src/call_recorder.py`); Odysseus' HTTP MCP
+settings have no header field, so the query token is the only place it is. A module that
+answers 404 on these routes is older than 0.8.0: Odysseus says "update odysseus-sound".
+
+## Pairing a phone
+
+`/modules/sound/pair` (**Pair a phone** on the Conversations page, admin only) sets up
+the module's Android relay with one QR code instead of two server URLs, two tokens and a
+calendar id. The relay then uploads the watch's recordings and syncs the T5 through
+Odysseus only.
+
+- **The QR code** (rendered by Odysseus with the `qrcode` package; no CDN) holds
+  `odysseus-pair:v1?url=<Odysseus URL>&code=<pairing code>`. The URL defaults to the
+  page's address and can be edited: the phone needs the Tailscale address. The page also
+  shows the link to copy, for pasting in the app.
+- **No token in the QR.** The code is random (about 120 bits), single use and valid for
+  10 minutes. Odysseus keeps only its SHA-256, in memory (a restart forgets codes still
+  waiting). The relay redeems it at `POST /api/pair/redeem` {code} (no session; at most
+  10 tries per address and 60 overall per 10 minutes; an unknown, used or expired code
+  gets the same answer). Only then does Odysseus create the phone's API token, named
+  "Phone relay <date time>", owned by the admin who made the code, and answers it once
+  with the URL and scopes. The page polls and shows "Paired".
+- **Scopes** (only what the relay calls): `sound:ingest` (uploads), `sound:read` (the
+  T5's conversations, transcripts, action items, digest), `sound:write` (the T5 marks
+  action items done, asks for a digest), `calendar:read`, `calendar:write` (the T5 adds
+  and deletes events), `todos:read`, `todos:write` (the T5 ticks checklist items),
+  `insight:read` (the Today insight). Each phone's token is in Settings → API tokens;
+  revoke it there to unpair the phone.
+- **Token routes for the relay** (`routes/sound_relay_routes.py`; a 401/403 means the
+  phone's token, a 502 means Odysseus or the module):
+
+| Route | Scope | Goes to |
+|---|---|---|
+| `POST /api/codex/sound/chunk` | `sound:ingest` | `/ingest/chunk` (checked first: id rule for `session_id` and `device`, `kind` conversation or note, codec `ogg` or `opus`, ≤ 5 MB, timestamp not over a day ahead or 60 days old) |
+| `POST /api/codex/sound/sessions/{id}/end` | `sound:ingest` | `/sessions/{id}/end` |
+| `GET /api/codex/sound/health` | `sound:ingest` or `sound:read` | `/health` (the relay's Test connection) |
+| `GET /api/codex/sound/conversations`, `…/conversations/{id}`, `…/conversations/{id}/transcript`, `…/action-items`, `…/digests/{date}` | `sound:read` | the module routes of the same names |
+| `PATCH /api/codex/sound/action-items/{id}`, `POST /api/codex/sound/digests/{date}` | `sound:write` | the same |
+| `GET /api/codex/calendars` | `calendar:read` | the token owner's calendars (`name`, `href`, `source`), for the relay's calendar list |
+
+- The direct mode (module URL plus ingest token) stays in the relay as a fallback.
+- Code: `src/phone_pairing.py`, `routes/sound_relay_routes.py`,
+  `static/phone-pairing.html`, `static/js/phonePairing.js`; test
+  `tests/test_sound_relay.py`. Relay side: odysseus-sound's `android-relay` README.
+
 ## Today insight
 
 The hub's daily Today insight reads `get_daily_digest` (today) and `list_action_items`

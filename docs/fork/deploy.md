@@ -194,6 +194,23 @@ except u.HTTPError as e: print('reachable, HTTP', e.code)
 except Exception as e: print('NOT reachable:', e)"
 ```
 
+### Call recording and phone pairing
+
+**Record a call** and **Pair a phone** ([modules/odysseus-sound.md](modules/odysseus-sound.md#uploads-through-the-mcp-server))
+need no settings: they use the `convo` MCP server Odysseus already has (Settings → MCP,
+`http://host.docker.internal:8001/mcp?access_token=…`). They need odysseus-sound with MCP
+0.8.0 or newer (`scripts/fork_deploy.sh deploy` updates both); with an older module the
+pages say "update odysseus-sound". The module's MCP server forwards uploads to its ingest
+API on `CONVO_HOST:CONVO_PORT` on the same machine, so the container never needs to
+reach port 8000.
+
+- Capture needs a secure page: open Odysseus over `https://` (for example
+  `tailscale serve` with a Tailscale certificate) or on `localhost`. Over plain
+  `http://<tailscale-ip>:7000` the browser refuses and the page says so.
+- The phone must reach Odysseus at the address in the QR code (its Tailscale address).
+- The `SOUND_MODULE_API_URL` and `SOUND_MODULE_INGEST_TOKEN` settings of an earlier draft
+  are gone; if you added them to `.env` or `docker-compose.override.yml`, remove them.
+
 ## One-time setup (done 2026-10-18)
 
 How an upstream Odysseus Compose install becomes fork production. Kept for a rebuild.

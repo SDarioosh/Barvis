@@ -57,9 +57,11 @@ Fork code so far: `src/mcp_trust.py`, `src/mcp_stdio_owner.py`, `src/mcp_session
 `src/skill_invocation.py`, `src/offered_reads.py`, `src/module_action_items.py`,
 `src/sound_module_view.py`, `src/web_turn_scope.py`, `src/module_turn_scope.py`,
 `src/checklist_auto_archive.py`, `src/module_facts.py`, `src/evidence_intake.py`, `src/today_insight.py`,
+`src/call_recorder.py`, `src/phone_pairing.py`, `routes/sound_relay_routes.py`,
 `src/notes_evidence.py`, `src/belief_structure.py`, `src/belief_search.py`,
 `routes/sound_module_routes.py`, `routes/today_insight_routes.py`, `routes/beliefs_routes.py`, `routes/belief_search_routes.py`, `static/sound-module.html`,
 `static/today.html`, `static/js/today.js`, `static/beliefs.html`, `static/js/beliefs.js`,
+`static/call-recorder.html`, `static/js/callRecorder.js`, `static/phone-pairing.html`, `static/js/phonePairing.js`,
 `static/js/soundModule.js`, `static/js/forkChatAsk.js`, `static/js/forkEntityHash.js`,
 `static/js/forkModuleWindows.js`, `static/js/forkModuleShortcuts.js`, `static/css/fork-modules.css`,
 `scripts/modules_setup.py`, `scripts/belief_eval.py`, `scripts/belief_eval_scale.py`, `scripts/unfile_voice_note_todos.py`,
@@ -71,7 +73,8 @@ their tests (`tests/test_mcp_trust.py`,
 `tests/test_module_turn_scope.py`, `tests/test_calendar_reminder_wall_time.py`,
 `tests/test_checklist_auto_archive.py`, `tests/test_module_facts.py`, `tests/test_evidence_intake.py`,
 `tests/test_today_insight.py`, `tests/test_beliefs_routes.py`, `tests/test_notes_evidence.py`,
-`tests/test_belief_eval.py`, `tests/test_subjects.py`, `tests/test_belief_structure.py`, `tests/test_belief_search.py`, `tests/test_belief_eval_scale.py`, `tests/test_ledger_perf.py`, `tests/test_fork_module_windows.py`), and the hooks listed in [FORK.md](FORK.md).
+`tests/test_belief_eval.py`, `tests/test_subjects.py`, `tests/test_belief_structure.py`, `tests/test_belief_search.py`, `tests/test_belief_eval_scale.py`, `tests/test_ledger_perf.py`, `tests/test_fork_module_windows.py`,
+`tests/test_call_recorder.py`, `tests/test_sound_relay.py`), and the hooks listed in [FORK.md](FORK.md).
 
 ## Fork rules (merge-friendly)
 

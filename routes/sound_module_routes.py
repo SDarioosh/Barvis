@@ -23,12 +23,19 @@ redirects there); its script calls:
   filed one per voice-note item (``unfile_auto_todos``; a dry run unless ``apply``;
   ``scripts/unfile_voice_note_todos.py`` calls it)
 
+``GET /modules/sound/record`` serves ``static/call-recorder.html`` ("Record a call"); its
+script calls ``GET /api/modules/sound/record/config``, ``POST /api/modules/sound/record/chunk``
+(multipart: audio, session_id, sequence, timestamp, codec) and
+``POST /api/modules/sound/record/{session_id}/end``. Those forward to the upload routes
+of the module's MCP HTTP server (the connected ``convo`` server's URL and token), not its
+MCP tools (``src/call_recorder.py``).
+
 Action items are read live from the module, the source of truth; Done/Dismiss call its
 ``update_action_item``. Filing into the Odysseus calendar and to-dos (and the record of
 what went where) is ``src/module_action_items.py``; the last three routes call its
 ``file_item`` / ``move_item`` / ``unfile_item`` and answer with the item as it is now.
 
-All of them go through the module's MCP tools (``src/sound_module_view.py``); the module's
+All the others go through the module's MCP tools (``src/sound_module_view.py``); the module's
 database is never touched. Admin only: the data is the owner's recordings, and the MCP
 server is admin-configured. Naming a speaker from a card is the user's explicit action,
 so it doesn't go through the chat approval card.
@@ -39,13 +46,23 @@ from __future__ import annotations
 import inspect
 import logging
 import os
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    Request,
+    UploadFile,
+)
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
 from core.middleware import require_admin
+from src import call_recorder as recorder
 from src import sound_module_view as view
 from src.auth_helpers import effective_user
 
@@ -330,4 +347,55 @@ def setup_sound_module_routes() -> APIRouter:
         message = await view.set_action_item(_caller(), item_id, body.status)
         return {"ok": message.startswith("Action item"), "message": message}
 
+    # ------------------------------------------------ record a call (src/call_recorder.py)
+    @router.get("/modules/sound/record")
+    async def record_page(request: Request):
+        from src.app_helpers import serve_html_with_nonce
+        from src.constants import BASE_DIR
+
+        return serve_html_with_nonce(request, os.path.join(BASE_DIR, "static/call-recorder.html"))
+
+    @router.get("/api/modules/sound/record/config", dependencies=[Depends(require_admin)])
+    async def record_config() -> dict[str, Any]:
+        return {**recorder.status(), "device": recorder.device(),
+                "max_bytes": recorder.MAX_CHUNK_BYTES}
+
+    @router.post("/api/modules/sound/record/chunk", dependencies=[Depends(require_admin)])
+    async def record_chunk(
+        audio: Annotated[UploadFile, File()],
+        session_id: Annotated[str, Form()],
+        sequence: Annotated[int, Form()],
+        timestamp: Annotated[str, Form()],
+        codec: Annotated[str, Form()] = "webm",
+        x_odysseus_recorder: Annotated[str | None, Header()] = None,
+    ) -> dict[str, Any]:
+        _recorder_header(x_odysseus_recorder)
+        data = await audio.read(recorder.MAX_CHUNK_BYTES + 1)
+        try:
+            out = await recorder.forward_chunk(recorder.resolve(), data=data,
+                                               session_id=session_id, sequence=sequence,
+                                               timestamp=timestamp, codec=codec,
+                                               device_name=recorder.device())
+            return {"ok": out["ok"], "stop": out["stop"], "reason": out["reason"]}
+        except recorder.RecorderError as exc:
+            raise HTTPException(exc.status, exc.message) from None
+
+    @router.post("/api/modules/sound/record/{session_id}/end",
+                 dependencies=[Depends(require_admin)])
+    async def record_end(session_id: str,
+                         x_odysseus_recorder: Annotated[str | None, Header()] = None
+                         ) -> dict[str, Any]:
+        _recorder_header(x_odysseus_recorder)
+        try:
+            return await recorder.end_session(recorder.resolve(), session_id)
+        except recorder.RecorderError as exc:
+            raise HTTPException(exc.status, exc.message) from None
+
     return router
+
+
+def _recorder_header(value: str | None) -> None:
+    # A custom header makes these uploads preflighted, so another site can't post audio
+    # into the owner's recordings with a plain form (the session cookie is also SameSite).
+    if value != "1":
+        raise HTTPException(400, "missing X-Odysseus-Recorder header")

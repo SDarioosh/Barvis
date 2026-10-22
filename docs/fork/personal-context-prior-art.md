@@ -190,12 +190,28 @@ its evidence lands on the review page instead of straight in memory.
 - REST API on `localhost:3030` (`/search?q=…&content_type=all&limit=…`, frames, audio,
   health, raw SQL) and its own MCP server (`screenpipe-mcp`).
 
-**What it does that we must switch off:**
+**What it sends to the company, and how to stop it** (read from the source at
+`screenpipe/screenpipe@6661b7d`, 2026-10-21; check again on every upgrade):
 
-- Product analytics (PostHog) and crash reports (Sentry) are **on by default**: turn them
-  off in Settings → Privacy → Analytics, and check that no traffic leaves the machine.
-- Cloud transcription (Deepgram), cloud AI and sync: leave them off; pick local Whisper
-  and a local model only.
+| Outbound traffic | Default | How to stop it |
+|---|---|---|
+| Usage analytics (PostHog) and crash reports (Sentry) from the engine | **on** | `--disable-telemetry` and env `SCREENPIPE_DISABLE_TELEMETRY=1` (both; the env var also covers `screenpipe-mcp` and the SDK) |
+| Update check (`registry.npmjs.org`) at every engine start | **on** | env `SCREENPIPE_NO_UPDATE_CHECK=1` |
+| CLI nudges and survey links | on (printed only) | env `SCREENPIPE_NO_REMINDERS=1` |
+| Desktop app: PostHog all through the UI, feature flags, announcements, account and trial checks, auto-updater | **on** | **don't use the desktop app**; run the engine headless |
+| Workflow-event classifier: sends recent screen text to `api.screenpipe.com` | off (needs a subscription) | leave `enableWorkflowEvents` off |
+| Cloud sync (`screenpi.pe/api/sync`), team/enterprise upload | off | never sign in, never pass `--enable-sync` |
+| Cloud transcription (Deepgram, Screenpipe cloud) | off; default is local Whisper or Parakeet | set the audio engine explicitly to a local one, or disable audio |
+| Built-in AI agents and chat (default to Screenpipe's or a cloud API) | off unless used | don't use them; the module reads the REST API only |
+| Connectors (Google Calendar, Jira, Airtable…) | off | don't connect any |
+| Model downloads (Hugging Face) | on first use | allowed (model weights); download once, then block |
+
+Then enforce it, so a new version can't quietly add a call: a per-app firewall on the Mac
+(LuLu, free and open source, or Little Snitch) that allows the Screenpipe binaries only
+`localhost`, after the models are downloaded. Verify with `nettop -p <pid>` or
+`lsof -i -P | grep screenpipe` while it records: only `127.0.0.1:3030`. Pin the version
+and upgrade on purpose, rereading this table each time.
+
 - License: the Screenpipe Commercial License allows personal use. Run it as its own
   program; never copy its code into the module or the hub.
 
@@ -217,8 +233,11 @@ its evidence lands on the review page instead of straight in memory.
 - Evidence later: a daily job turns the day into a short summary and candidate facts
   ("worked on the T5 firmware for 3 h"), submitted through the 1.1 intake as `experience`
   evidence with links. Raw screen text never goes into hub memory.
-- Audio: odysseus-sound already owns conversations. Turn Screenpipe's audio capture off at
-  first; decide later whether computer audio (calls) should become a module source.
+- Audio: odysseus-sound owns conversations, including Zoom and other calls on the
+  computer, recorded with the hub's **Record a call** page into the module's normal ingest
+  path ([modules/odysseus-sound.md](modules/odysseus-sound.md#recording-calls-from-the-computer)).
+  Run Screenpipe with audio capture off, so a meeting isn't recorded and transcribed
+  twice.
 
 **Privacy rules for this module** (on top of AGENTS.md):
 
@@ -235,7 +254,6 @@ its evidence lands on the review page instead of straight in memory.
 
 - Which machines: the Mac only, or the Ubuntu server's desktop too?
 - Retention for frames and for text summaries.
-- Should calls recorded on the computer feed odysseus-sound, or stay in this module?
 - The app and site exclusion list.
 
 ## Keep this file current
