@@ -353,7 +353,33 @@ def test_marked_rows_survive_a_rewrite_of_the_insight(store):
     assert [r["ref"] for r in out["focus"]] == ["todo:n1:1", "event:e1"]
     assert out["focus"][0]["title"] == "Book flights"
     rows = io.dismissed_rows(rewritten, io.load("alice", DAY), "alice")
-    assert rows == [{"ref": "todo:n1:0", "why": "", "title": "Send the Q4 deck", "section": "focus"}]
+    assert rows == [{"ref": "todo:n1:0", "why": "", "title": "Send the Q4 deck", "section": "focus",
+                     "not_task": False}]
+
+
+def test_not_a_task_on_an_open_loop(store):
+    loop = {"ref": "loop:7", "kind": "loop", "bucket": "undated", "title": "Move the truck",
+            "weight": 0}
+    insight = _insight(coming_up=[("loop:7", "Move the truck")], focus=[("event:e1", "Dentist")])
+    ti.save("alice", insight)
+    io.observe("alice", insight, _inputs(rows=[{"id": "7", "status": "open"}], extra=[loop]),
+               now=NOW)
+    item = io.record("alice", "loop:7", "dismissed", not_task=True, now=NOW)
+    assert item["outcome"] == "dismissed" and item["not_task"] is True
+    assert io.dismissed_rows(insight, io.load("alice", DAY)) == [
+        {"ref": "loop:7", "why": "because", "title": "Move the truck", "section": "coming_up",
+         "not_task": True}]
+    # the module dismissed it: the next pass sees it gone, the mark stays
+    io.observe("alice", insight, _inputs(rows=[{"id": "8", "status": "open"}]), now=LATER)
+    assert _item("loop:7")["outcome"] == "dismissed" and _item("loop:7")["not_task"] is True
+    # undo drops the flag
+    item = io.record("alice", "loop:7", "clear", now=LATER)
+    assert item["outcome"] == "open" and "not_task" not in item
+    # only a dismissed open loop can be "not a task"
+    with pytest.raises(ValueError):
+        io.record("alice", "event:e1", "dismissed", not_task=True, now=NOW)
+    with pytest.raises(ValueError):
+        io.record("alice", "loop:7", "promoted", not_task=True, now=NOW)
 
 
 # ------------------------------------------------------------------ finalize
@@ -522,6 +548,10 @@ def test_outcome_route_and_the_page_answer(running):
     r = client.post("/api/insight/today/outcome", json={"ref": "event:e1", "outcome": "clear"})
     assert r.json()["item"]["outcome"] == "open"
     assert client.get("/api/insight/today").json()["dismissed"] == []
+    assert body["dismissed"][0]["not_task"] is False
+    r = client.post("/api/insight/today/outcome",
+                    json={"ref": "event:e1", "outcome": "dismissed", "not_task": True})
+    assert r.status_code == 400
 
 
 def test_token_route_applies_the_owner_order_without_outcomes(running):
@@ -598,3 +628,25 @@ def test_the_page_only_links_to_web_pages_and_site_paths():
     got = _node(_page_functions("safeLink") +
                 f"console.log(JSON.stringify({json.dumps(hrefs)}.map(safeLink)));")
     assert got == ["https://sound.local/view/1", "/beliefs", None, None, None, None, None]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node binary not on PATH")
+def test_not_a_task_dismisses_the_module_item():
+    src = _JS.read_text(encoding="utf-8")
+    fn = re.search(r"^async function setLoopStatus\(.*?^}$", src, re.S | re.M).group(0)
+    got = _node("""
+    const posted = [];
+    async function postJSON(path, body) {
+      posted.push([path, body]);
+      return path.endsWith('/9') ? { ok: false, message: 'No action item #9.' } : { ok: true };
+    }
+    """ + fn + """
+    const errors = [];
+    for (const ref of ['loop:7', 'loop:9', 'todo:n1:0']) {
+      try { await setLoopStatus(ref, 'dismissed'); } catch (e) { errors.push(e.message); }
+    }
+    console.log(JSON.stringify({ posted, errors }));
+    """)
+    assert got["posted"] == [["/api/modules/sound/action-items/7", {"status": "dismissed"}],
+                             ["/api/modules/sound/action-items/9", {"status": "dismissed"}]]
+    assert got["errors"] == ["No action item #9.", "not an open loop"]

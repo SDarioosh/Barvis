@@ -353,13 +353,20 @@ def open_loop_ids(owner: str | None, today: Date) -> set[str]:
 
 
 # ------------------------------------------------------------------- owner actions
-def record(owner: str | None, ref: str, outcome: str, *, now: datetime | None = None) -> dict:
+def record(owner: str | None, ref: str, outcome: str, *, not_task: bool = False,
+           now: datetime | None = None) -> dict:
     """The owner's action on today's insight: ``done``, ``open`` (un-tick), ``dismissed``,
     ``promoted`` or ``clear`` (undo a mark). Returns the item. LookupError when there is no
     insight today or the ref isn't in it; ValueError for an unknown action, or ``done``/
-    ``open`` on an event or a plan (they are never done)."""
+    ``open`` on an event or a plan (they are never done).
+
+    ``not_task`` with ``dismissed`` on an open loop: "Not a task", the module item was
+    never a to-do (the page dismisses it in the module first). Kept on the item as
+    ``not_task`` so the log shows which extractions were wrong; ``clear`` drops it."""
     if outcome not in ACTIONS:
         raise ValueError(f"outcome must be one of {', '.join(ACTIONS)}")
+    if not_task and (outcome != "dismissed" or not ref.startswith("loop:")):
+        raise ValueError("only an open loop can be marked not a task")
     ti = _ti()
     day = ti.today_str(owner, now)
     insight = ti.load(owner, day)
@@ -395,6 +402,10 @@ def record(owner: str | None, ref: str, outcome: str, *, now: datetime | None = 
             pass  # a done item stays done; a mark on it changes nothing
         else:
             _set(item, outcome, "today", now)
+        if outcome == "dismissed" and not_task and item.get("outcome") == "dismissed":
+            item["not_task"] = True
+        elif outcome == "clear":
+            item.pop("not_task", None)
         save(owner, data)
         return dict(item)
 
@@ -557,13 +568,16 @@ def ordered(owner: str | None, insight: dict, outcome: dict | None = None) -> di
 def dismissed_rows(insight: dict, outcome: dict | None,
                    owner: str | None = None) -> list[dict]:
     """The rows the owner marked "not today", each with its ``section``: those in the
-    insight, then (with ``owner``) those a rewrite left out (``title`` may be None)."""
+    insight, then (with ``owner``) those a rewrite left out (``title`` may be None).
+    ``not_task`` is true for an open loop marked "Not a task"."""
     items = _items_of(outcome)
     out = [{**row, "section": section} for section, _, row in _rows(insight)
            if items.get(row["ref"], {}).get("outcome") == "dismissed"]
     if owner is not None:
         for ref, row in _missing_rows(owner, insight, outcome, "dismissed").items():
             out.append({**row, "section": items[ref].get("section")})
+    for row in out:
+        row["not_task"] = bool(items.get(row["ref"], {}).get("not_task"))
     return out
 
 
