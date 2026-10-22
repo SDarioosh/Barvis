@@ -153,7 +153,12 @@ def _because(row: dict) -> str:
         if row.get("moved"):
             bits.append(f"rescheduled {row['moved']}")
         return f"you {', '.join(bits) or 'kept all'} of {shown}"
-    return f"you finished {row.get('done', 0)} of {shown}"
+    text = f"you finished {row.get('done', 0)} of {shown}"
+    for key, word in (("promoted", "moved up"), ("dismissed", "skipped"),
+                      ("moved", "rescheduled")):
+        if row.get(key):
+            text += f", {word} {row[key]}"
+    return text
 
 
 def _contribution_text(row: dict) -> str:

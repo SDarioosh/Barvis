@@ -40,7 +40,7 @@ function table(data, onReset) {
   const rows = (data && data.rows) || [];
   if (!rows.length) return el('div', { className: 'bs-empty' }, EMPTY);
   const head = el('tr', {}, ...['Kind', 'Weight', 'Shown', 'Done', 'Moved up', 'Skipped', '']
-    .map((h) => el('th', { scope: 'col' }, h)));
+    .map((h, i) => el('th', { scope: 'col', className: i >= 1 && i <= 5 ? 'tw-num' : null }, h)));
   const body = rows.map((r) => el('tr', {},
     el('td', { className: 'tw-label', title: r.key }, r.label || r.key,
        r.reset_at ? el('span', { className: 'bs-meta' }, ` reset ${r.reset_at}`) : null),
@@ -50,7 +50,7 @@ function table(data, onReset) {
     el('td', { className: 'tw-num' }, r.promoted),
     el('td', { className: 'tw-num' }, r.dismissed),
     el('td', {}, el('button', {
-      type: 'button', className: 'bs-small', title: `Forget what Today learnt for ${r.label}`,
+      type: 'button', className: 'bs-btn', title: `Forget what Today learnt for ${r.label}`,
       onclick: () => onReset(r.key),
     }, 'Reset'))));
   return el('table', { className: 'tw-table' }, el('thead', {}, head), el('tbody', {}, ...body));

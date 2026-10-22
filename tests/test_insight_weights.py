@@ -381,7 +381,7 @@ def test_why_route(store, page):
     assert [(x["key"], x["weight"], x["label"]) for x in body["contributions"]] == [
         ("note_type:checklist", 0, "Checklist notes"), ("list:n1", 2, "Work")]
     assert body["text"] == (f"Overdue since {yday:%b} {yday.day}; 1st in the rule order; "
-                            "your Work list counts +2 (you finished 7 of 9). "
+                            "your Work list counts +2 (you finished 7 of 9, moved up 1). "
                             "The model put it first.")
     ev = c.get("/api/insight/today/why", params={"ref": "event:e1"}).json()
     tm = today + timedelta(days=1)
@@ -429,3 +429,10 @@ def test_token_route_scope(store, monkeypatch):
     assert r.json() == {"version": 1, "date": _real_today().isoformat(), "weights": {}}
     _write_weights(store, {"list:n1": 2}, day=_real_today())
     assert client.get("/api/codex/insight/weights").json()["weights"] == {"list:n1": 2}
+
+
+def test_why_text_names_the_skips_behind_a_negative_weight():
+    from routes.insight_weights_routes import _because
+
+    row = {"key": "list:n1", "shown": 28, "done": 0, "dismissed": 28}
+    assert _because(row) == "you finished 0 of 28, skipped 28"

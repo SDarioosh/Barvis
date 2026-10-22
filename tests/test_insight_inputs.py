@@ -218,3 +218,12 @@ def test_gather_moves_loops_out_of_the_context(store, monkeypatch):
     inputs = asyncio.run(ti.gather("alice", now=NOW, call=call))
     assert [c["ref"] for c in inputs["extra"]] == ["loop:1"]
     assert inputs["action_items"] == ["Water the plants to Alice"]
+
+
+def test_a_title_is_not_a_first_name(store):
+    rows = [_row(1, title="Send Dr. Patel the forms", text="", with_=("Dr. Patel",)),
+            _row(2, title="Book Dr. Weiss", text="", with_=("Dr. Patel",)),  # another doctor
+            _row(3, title="Call Patel back", text="", with_=("Dr. Patel",))]
+    cands = ii.loop_candidates("alice", TODAY, rows, filed=set())
+    assert {c["ref"]: c["person"] for c in cands} == {"loop:1": "Dr. Patel",
+                                                     "loop:3": "Dr. Patel"}
