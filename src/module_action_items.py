@@ -51,7 +51,9 @@ to-do of its own; the named-list rules above apply. A dated task or a reminder k
 to-do of its own, titled with the short ``title`` (the module's, else the start of the
 text), its one checklist line the full text. ``unfile_auto_todos`` (route
 ``POST /api/modules/sound/unfile-todos``, script ``scripts/unfile_voice_note_todos.py``)
-removes the single to-dos filed from voice notes before this.
+removes the single undated to-dos filed per non-explicit voice-note item before this
+(never a dated to-do or a reminder; entries record ``filed_mode``). A "Voice notes" list
+emptied by Undo or a move is archived (``_archive_if_empty``).
 Notes: an item of kind ``note`` (the owner said "create a note ..." in a voice note)
 becomes an Odysseus note (type ``note``) titled with its ``note_title``, its text and the
 source line as content. With a ``list_name`` ("add to my hardware notes ..." ->
@@ -801,7 +803,25 @@ async def _change_line(owner: str, ref: str, line: str, *, done: bool | None = N
                                             "checklist_items": items}), owner=owner or None)
     if res.get("error"):
         raise RuntimeError(f"to-dos: {res['error']}")
+    if remove and not items and list_key(note.title) == list_key(VOICE_LIST):
+        await _archive_if_empty(owner, ref)
     return True
+
+
+async def _archive_if_empty(owner: str, ref: str) -> None:
+    """The "Voice notes" list whose last line was taken off is archived (unless pinned);
+    the next undated task starts a new one. Finished lists wait for
+    src/checklist_auto_archive.py; an empty one would stay forever."""
+    from src.checklist_auto_archive import is_empty
+    from src.tools.notes import do_manage_notes
+
+    note = _note(owner, ref)
+    if note is None or not is_empty(note):
+        return
+    res = await do_manage_notes(json.dumps({"action": "update", "id": ref, "archived": True}),
+                                owner=owner or None)
+    if res.get("error"):
+        raise RuntimeError(f"to-dos: {res['error']}")
 
 
 def _note(owner: str, ref: str):
@@ -1093,6 +1113,7 @@ async def _sync_json(owner: str, call: CallTool, rows: list[dict], *,
         target = default_target(row)
         try:
             filed[key] = await _file_one(owner, row, target, now_utc=now_utc)
+            filed[key]["filed_mode"] = file_mode()  # the clean-up leaves these alone
         except Exception as e:  # keep it unseen, try again next pass (a few times)
             attempts[key] = attempts.get(key, 0) + 1
             logger.warning("filing odysseus-sound item #%s failed (%s/%s): %s", key,
@@ -1195,6 +1216,7 @@ async def _refile(owner: str, state: dict, item: dict, target: str) -> dict:
         old.update(undone=True, module="dismissed", hub="dismissed")
         save_state(owner, state)
     entry = await _file_one(owner, item, target, rev=(old.get("rev", 0) + 1) if old else 0)
+    entry["filed_mode"] = "page"  # the owner's tap (Add / Move): never cleaned up
     filed[key] = entry
     state["seen"] = sorted(set(state.get("seen", [])) | {item["id"]})
     save_state(owner, state)
@@ -1218,15 +1240,40 @@ async def unfile_item(owner: str, item_id: int, call: CallTool) -> dict:
         return {"ok": True, "target": entry["target"], "ref": entry["ref"]}
 
 
+def _cleanup_entry(entry: dict, row: dict | None, include_all: bool) -> str | None:
+    """How a filed entry came to be one of the to-dos filed one per voice-note item, or
+    None. Never a list line or a reminder, nor an item that is explicit now; entries filed
+    in ``explicit`` mode or from the page only with ``include_all``."""
+    if (entry.get("undone") or entry.get("target") != "todo" or "line" in entry
+            or "block" in entry or not entry.get("ref") or row is None
+            or row.get("conversation_kind") != "note" or entry.get("kind") == "reminder"
+            or is_explicit(row)):
+        return None
+    mode = entry.get("filed_mode")
+    if mode in {"explicit", "page"} and not include_all:
+        return None
+    return {None: "filed before explicit filing", "auto": "filed in auto mode"}.get(
+        mode, f"filed in {mode} mode (all)")
+
+
+def _single_undated_todo(note) -> bool:
+    """A filed to-do of its own still in Odysseus: one line, no due date, no reminder."""
+    return (note is not None and not note.archived and note.label == LABEL
+            and note.note_type == "todo" and len(_note_items(note)) <= 1
+            and not note.due_date and (note.repeat or "none") == "none")
+
+
 async def unfile_auto_todos(owner: str, call: CallTool, *, apply: bool = False,
-                            only: set[int] | None = None) -> dict:
-    """Clean-up for to-dos filed one per voice-note item (before the "Voice notes" list
-    and ``explicit`` filing): the filed to-dos of their own (label ``odysseus-sound``,
-    one checklist line) of voice-note items, still in Odysseus. With ``apply`` each is
-    deleted and its item, when still open, dismissed in the module; the item stays
-    recorded as filed (undone), so it is never filed again. ``only``: just these item
-    ids. Returns ``{"apply", "todos": [{"id", "title", "text", "status", "ref"}],
-    "removed"}``."""
+                            only: set[int] | None = None, include_all: bool = False) -> dict:
+    """Clean-up for the to-dos filed one per voice-note item before ``explicit`` filing
+    and the "Voice notes" list: filed to-dos of their own (label ``odysseus-sound``, one
+    checklist line, no due date, no reminder) of voice-note items that are not explicit
+    now. Entries filed in ``explicit`` mode or from the page are left out unless
+    ``include_all``. With ``apply`` each is deleted and its item, when still open,
+    dismissed in the module; the item stays recorded as filed (undone), so it is never
+    filed again. ``only``: just these item ids. Returns ``{"apply", "todos": [{"id",
+    "title", "text", "status", "ref", "why"}], "removed"}``; ``why`` lists the reasons
+    it qualifies."""
     from src.tools.notes import do_manage_notes
 
     rows = parse_items_json(await call("list_action_items",
@@ -1238,23 +1285,24 @@ async def unfile_auto_todos(owner: str, call: CallTool, *, apply: bool = False,
         state = load_state(owner)
         found = []
         for key, entry in sorted(state.get("filed", {}).items(), key=lambda kv: int(kv[0])):
+            if only is not None and int(key) not in only:
+                continue
             row = by_id.get(int(key))
-            if (entry.get("undone") or entry.get("target") != "todo" or "line" in entry
-                    or row is None or row.get("conversation_kind") != "note"
-                    or (only is not None and int(key) not in only)):
+            how = _cleanup_entry(entry, row, include_all)
+            if how is None:
                 continue
             note = _note(owner, entry["ref"])
-            if (note is None or note.label != LABEL or note.note_type != "todo"
-                    or len(_note_items(note)) > 1):
-                continue
-            found.append((int(key), entry, row, note))
+            if _single_undated_todo(note):
+                why = [how, "not explicit now", "a to-do of its own",
+                       "no due date or reminder"]
+                found.append((int(key), entry, row, note, why))
         out = {"apply": bool(apply), "removed": 0, "todos": [
             {"id": i, "title": note.title or "", "text": str(row.get("text") or ""),
-             "status": str(row.get("status") or "open"), "ref": entry["ref"]}
-            for i, entry, row, note in found]}
+             "status": str(row.get("status") or "open"), "ref": entry["ref"], "why": why}
+            for i, entry, row, note, why in found]}
         if not apply:
             return out
-        for item_id, entry, row, _ in found:
+        for item_id, entry, row, _, _ in found:
             res = await do_manage_notes(json.dumps({"action": "delete", "id": entry["ref"]}),
                                         owner=owner or None)
             if res.get("error"):

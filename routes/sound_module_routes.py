@@ -19,7 +19,7 @@ redirects there); its script calls:
   list_name?}: Move to calendar / to-dos / a to-do list, Change time
 * ``GET  /api/modules/sound/todo-lists``: the owner's to-do list titles (the list picker)
 * ``POST /api/modules/sound/action-items/{id}/undo``: remove the Odysseus entry, dismiss
-* ``POST /api/modules/sound/unfile-todos`` {apply?, ids?}: the one-off clean-up of to-dos
+* ``POST /api/modules/sound/unfile-todos`` {apply?, ids?, all?}: the one-off clean-up of to-dos
   filed one per voice-note item (``unfile_auto_todos``; a dry run unless ``apply``;
   ``scripts/unfile_voice_note_todos.py`` calls it)
 
@@ -73,6 +73,7 @@ class MoveItem(BaseModel):
 class UnfileTodos(BaseModel):
     apply: bool = False
     ids: list[int] | None = Field(default=None, max_length=500)
+    all: bool = False  # also entries filed in explicit mode or from the page
 
 
 class NameSpeaker(BaseModel):
@@ -319,7 +320,8 @@ def setup_sound_module_routes() -> APIRouter:
             raise HTTPException(503, "This Odysseus can't clean up filed to-dos.")
         only = set(body.ids) if body.ids is not None else None
         result = await _filing_call("clean up", fn(_owner(request), _caller(),
-                                                   apply=body.apply, only=only))
+                                                   apply=body.apply, only=only,
+                                                   include_all=body.all))
         return {"ok": True, **result}
 
     @router.post("/api/modules/sound/action-items/{item_id}",

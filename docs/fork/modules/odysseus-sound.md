@@ -196,7 +196,8 @@ Where a filed item goes:
   `odysseus-sound`, made if missing, not pinned), instead of a to-do of its own. It
   follows the named-list rules above: status per line both ways, Undo takes the line
   only, and once every line is ticked the list is archived 10 minutes later, so the next
-  undated task starts a new "Voice notes" list. Tapping **Add to to-dos** on such a
+  undated task starts a new "Voice notes" list. When its last line is taken off (Undo,
+  moved elsewhere) the empty list is archived at once, unless it is pinned. Tapping **Add to to-dos** on such a
   suggestion puts it there too.
 - **Notes.** Voice notes only, and only on an explicit command ("create a note",
   "make a note", "note that", "add to my … notes"); a plain statement makes no note.
@@ -226,12 +227,17 @@ Where a filed item goes:
   item became a to-do of its own, titled with the whole sentence). Undo on
   `/modules/sound` removes one. For all of them, run
   `python scripts/unfile_voice_note_todos.py --url <hub> --password-file <admin password file>`:
-  it lists the single to-dos (label `odysseus-sound`, one line, filed from a voice note,
-  still in Odysseus); add `--apply` to delete them and dismiss their open items (done
-  items stay done), or `--apply --only 12,14` for some. It calls the admin route
-  `POST /api/modules/sound/unfile-todos` (`{"apply": false, "ids": [...]}`), which runs
-  in the hub because the hub holds the module's MCP connection. Removed items are never
-  filed again.
+  it lists the to-dos it would remove, each with why it qualifies: a to-do of its own
+  (label `odysseus-sound`, one line, not a list line) of a voice-note item that is not
+  explicit now, with no due date and no reminder, still in Odysseus, and filed before
+  explicit filing (or in `auto` mode). Dated to-dos and reminders never qualify, so a
+  reminder filed today or an old item the owner since gave a date stays. To-dos filed in
+  `explicit` mode or from the page (Add / Move, recorded as `filed_mode`) are left out
+  unless `--all`. Add `--apply` to delete them and dismiss their open items (done items
+  stay done), or `--apply --only 12,14` for some. It calls the admin route
+  `POST /api/modules/sound/unfile-todos` (`{"apply": false, "ids": [...], "all": false}`),
+  which runs in the hub because the hub holds the module's MCP connection. Removed items
+  are never filed again.
 
 The built-in task **Module Action Items** (`src/module_action_items.py`, every 5 min)
 does all of this. It reads `list_action_items` with `format="json"` (fields in the module's
