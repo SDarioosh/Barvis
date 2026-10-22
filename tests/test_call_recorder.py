@@ -1,4 +1,4 @@
-"""Fork: "Record a call" uploads forwarded to odysseus-sound's ingest API (src/call_recorder.py)."""
+"""Fork: "Record a call" uploads forwarded to odysseus-sound's MCP HTTP server (src/call_recorder.py)."""
 import asyncio
 from datetime import UTC, datetime
 
@@ -12,7 +12,9 @@ from routes.sound_module_routes import setup_sound_module_routes
 from src import call_recorder as rec
 
 NOW = datetime(2026, 10, 22, 15, 0, tzinfo=UTC)
-CFG = rec.Config(url="http://module:8000", token="t" * 32, device="computer")
+TOKEN = "t" * 32
+CFG = rec.Link(base="http://module:8001", token=TOKEN)
+ROWS = [("srv1", "convo", f"http://module:8001/mcp?access_token={TOKEN}", True)]
 
 
 def run(coro):
@@ -43,23 +45,59 @@ def chunk(**kw):
     return args
 
 
-def test_config_needs_url_and_token(monkeypatch):
-    for env in (rec.URL_ENV, rec.TOKEN_ENV, rec.DEVICE_ENV):
-        monkeypatch.delenv(env, raising=False)
-    assert rec.config() is None
-    monkeypatch.setenv(rec.URL_ENV, "http://127.0.0.1:8000/")
-    assert rec.config() is None
-    monkeypatch.setenv(rec.TOKEN_ENV, "secret-token-1234")
-    assert rec.config() == rec.Config("http://127.0.0.1:8000", "secret-token-1234", "computer")
-    monkeypatch.setenv(rec.DEVICE_ENV, "bad device!")
-    assert rec.config().device == "computer"
-    monkeypatch.setenv(rec.DEVICE_ENV, "mac")
-    assert rec.config().device == "mac"
-    monkeypatch.setenv(rec.URL_ENV, "module:8000")  # no scheme
-    assert rec.config() is None
+@pytest.mark.parametrize("url, link", [
+    (f"http://module:8001/mcp?access_token={TOKEN}", ("http://module:8001", TOKEN)),
+    (f"http://host.docker.internal:8001/mcp/?access_token={TOKEN}&x=1",
+     ("http://host.docker.internal:8001", TOKEN)),
+    (f"https://h.ts.net/sound/mcp?access_token={TOKEN}", ("https://h.ts.net/sound", TOKEN)),
+    ("http://module:8001/mcp", None),  # no token
+    ("http://module:8001/mcp?access_token=", None),
+    (f"module:8001/mcp?access_token={TOKEN}", None),  # no scheme
+    ("", None),
+])
+def test_link_from_url(url, link):
+    got = rec.link_from_url(url)
+    assert (None if got is None else (got.base, got.token)) == link
+
+
+def test_link_repr_hides_the_token():
+    assert TOKEN not in repr(CFG) and TOKEN not in str(CFG)
+
+
+def test_resolve_finds_the_convo_server(monkeypatch):
+    monkeypatch.delenv(rec.SERVER_ENV, raising=False)
+    monkeypatch.delenv(rec.LEGACY_SERVER_ENV, raising=False)
+    monkeypatch.setattr(rec, "_server_rows", lambda: [
+        ("other", "github", "http://x/mcp?access_token=zzz", True), *ROWS])
+    assert rec.resolve() == CFG
+    assert rec.status() == {"configured": True, "problem": None}
+    monkeypatch.setenv(rec.SERVER_ENV, "SRV1")  # by id, any case
+    assert rec.resolve() == CFG
+
+
+@pytest.mark.parametrize("rows, words", [
+    ([], "No MCP server named 'convo'"),
+    ([("srv1", "convo", f"http://m/mcp?access_token={TOKEN}", False)], "turned off"),
+    ([("srv1", "convo", "http://m/mcp", True)], "access_token"),
+    ([("srv1", "convo", None, True)], "access_token"),
+])
+def test_resolve_says_what_to_fix(monkeypatch, rows, words):
+    monkeypatch.delenv(rec.SERVER_ENV, raising=False)
+    monkeypatch.setattr(rec, "_server_rows", lambda: rows)
     with pytest.raises(rec.RecorderError) as e:
-        rec.require_config()
-    assert e.value.status == 503
+        rec.resolve()
+    assert e.value.status == 503 and words in e.value.message
+    assert rec.status()["configured"] is False and words in rec.status()["problem"]
+    assert TOKEN not in e.value.message
+
+
+def test_device_setting(monkeypatch):
+    monkeypatch.delenv(rec.DEVICE_ENV, raising=False)
+    assert rec.device() == "computer"
+    monkeypatch.setenv(rec.DEVICE_ENV, "bad device!")
+    assert rec.device() == "computer"
+    monkeypatch.setenv(rec.DEVICE_ENV, "mac")
+    assert rec.device() == "mac"
 
 
 def test_check_chunk_accepts_a_piece_and_normalizes_the_time():
@@ -89,14 +127,19 @@ def test_check_chunk_rejects(bad, status):
     assert e.value.status == status
 
 
-def test_forward_chunk_posts_to_the_ingest_api(monkeypatch):
+def fwd(**kw):
+    return {"device_name": "computer", **chunk(**kw)}
+
+
+def test_forward_chunk_posts_to_the_mcp_upload_route(monkeypatch):
     monkeypatch.setattr(rec, "datetime", _FixedDatetime)
     module = Module(body={"ok": True, "stop": True, "reason": "silence", "session_id": "x"})
-    out = run(rec.forward_chunk(CFG, **chunk(sequence=7), transport=module.transport))
-    assert out == {"ok": True, "stop": True, "reason": "silence"}
+    out = run(rec.forward_chunk(CFG, **fwd(sequence=7), transport=module.transport))
+    assert (out["ok"], out["stop"], out["reason"]) == (True, True, "silence")
     (req,) = module.requests
-    assert str(req.url) == "http://module:8000/v1/ingest/chunk"
-    assert req.headers["authorization"] == "Bearer " + "t" * 32
+    assert (req.url.scheme, req.url.host, req.url.port, req.url.path) == (
+        "http", "module", 8001, "/ingest/chunk")
+    assert dict(req.url.params) == {"access_token": TOKEN}
     body = req.read()
     for field, value in [("device", "computer"), ("session_id", "call-20261022T145930-ab12cd"),
                          ("sequence", "7"), ("timestamp", "2026-10-22T14:59:30+00:00"),
@@ -106,50 +149,98 @@ def test_forward_chunk_posts_to_the_ingest_api(monkeypatch):
 
 
 @pytest.mark.parametrize("status, detail, expect", [
-    (401, "invalid or missing bearer token", 502),  # our token is wrong: not the user's fault
+    (401, "unauthorized", 502),  # Odysseus's MCP token is wrong: not the user's fault
     (422, "could not decode audio: x", 422),
     (400, "sequence must be >= 0", 400),
+    (413, "chunk too large", 413),
     (500, "", 502),
+    (502, "odysseus-sound's ingest API is not reachable at http://127.0.0.1:8000", 502),
 ])
 def test_forward_chunk_module_errors(monkeypatch, status, detail, expect):
     monkeypatch.setattr(rec, "datetime", _FixedDatetime)
     module = Module(status=status, body={"detail": detail})
     with pytest.raises(rec.RecorderError) as e:
-        run(rec.forward_chunk(CFG, **chunk(), transport=module.transport))
+        run(rec.forward_chunk(CFG, **fwd(), transport=module.transport))
     assert e.value.status == expect
-    if expect in (400, 422):
-        assert e.value.message == detail
-    assert "t" * 32 not in e.value.message  # the token never reaches the page
+    if expect != 502 or detail:
+        assert e.value.message == detail or status == 401
+    assert TOKEN not in e.value.message  # the token never reaches the page
 
 
-def test_forward_chunk_unreachable(monkeypatch):
+def test_old_module_says_update(monkeypatch):
+    monkeypatch.setattr(rec, "datetime", _FixedDatetime)
+
+    def old(request):  # a module before MCP 0.5.0: Starlette's plain 404
+        return httpx.Response(404, text="Not Found")
+
+    with pytest.raises(rec.RecorderError) as e:
+        run(rec.forward_chunk(CFG, **fwd(), transport=httpx.MockTransport(old)))
+    assert e.value.status == 502 and "update odysseus-sound" in e.value.message
+    with pytest.raises(rec.RecorderError) as e:
+        run(rec.end_session(CFG, "call-1", transport=httpx.MockTransport(old)))
+    assert "update odysseus-sound" in e.value.message
+
+
+def test_forward_chunk_unreachable(monkeypatch, caplog):
     monkeypatch.setattr(rec, "datetime", _FixedDatetime)
 
     def down(request):
-        raise httpx.ConnectError("refused", request=request)
+        raise httpx.ConnectError(f"refused {request.url}", request=request)
 
     with pytest.raises(rec.RecorderError) as e:
-        run(rec.forward_chunk(CFG, **chunk(), transport=httpx.MockTransport(down)))
+        run(rec.forward_chunk(CFG, **fwd(), transport=httpx.MockTransport(down)))
     assert (e.value.status, e.value.message) == (502, "odysseus-sound is not reachable")
+    assert TOKEN not in caplog.text
 
 
 def test_bad_piece_is_never_sent():
     module = Module()
-    with pytest.raises(rec.RecorderError):
-        run(rec.forward_chunk(CFG, **chunk(codec="exe"), transport=module.transport))
+    for bad in (fwd(codec="exe"), fwd(device_name="bad device"), {**fwd(), "kind": "x"}):
+        with pytest.raises(rec.RecorderError):
+            run(rec.forward_chunk(CFG, **bad, transport=module.transport))
     assert module.requests == []
+
+
+def test_relay_source_accepts_the_watch_chunks():
+    sid, ts, codec = rec.check_chunk(**chunk(codec="ogg", timestamp="2026-10-10T08:00:00Z"),
+                                     source=rec.RELAY, now=NOW)  # 12 days queued
+    assert codec == "ogg" and ts == "2026-10-10T08:00:00+00:00"
+    assert rec.check_chunk(**chunk(codec="opus", timestamp=str(int(NOW.timestamp()))),
+                           source=rec.RELAY, now=NOW)[2] == "opus"
+    for bad in ({"codec": "webm"}, {"timestamp": "2026-06-01T00:00:00Z"}):
+        with pytest.raises(rec.RecorderError):
+            rec.check_chunk(**chunk(**bad), source=rec.RELAY, now=NOW)
 
 
 def test_end_session():
     module = Module(body={"ok": True, "stop": True})
     assert run(rec.end_session(CFG, "call-1", transport=module.transport)) == {
         "ok": True, "found": True}
-    assert str(module.requests[0].url) == "http://module:8000/v1/sessions/call-1/end"
+    assert module.requests[0].url.path == "/sessions/call-1/end"
     missing = Module(status=404, body={"detail": "session not found"})
     assert run(rec.end_session(CFG, "call-2", transport=missing.transport)) == {
         "ok": True, "found": False}
     with pytest.raises(rec.RecorderError):
         run(rec.end_session(CFG, "a/b", transport=module.transport))
+
+
+def test_forward_reads():
+    module = Module(body={"conversations": []})
+    status, body = run(rec.forward(CFG, "GET", "/conversations",
+                                   params={"since": 5, "until": None},
+                                   transport=module.transport))
+    assert (status, body) == (200, {"conversations": []})
+    assert dict(module.requests[0].url.params) == {"since": "5", "access_token": TOKEN}
+    gone = Module(status=404, body={"detail": "conversation not found"})
+    assert run(rec.forward(CFG, "GET", "/conversations/x", transport=gone.transport)) == (
+        404, {"detail": "conversation not found"})
+    with pytest.raises(rec.RecorderError) as e:
+        run(rec.forward(CFG, "GET", "/x", transport=httpx.MockTransport(
+            lambda r: httpx.Response(404, text="Not Found"))))
+    assert "update odysseus-sound" in e.value.message
+    with pytest.raises(rec.RecorderError) as e:
+        run(rec.forward(CFG, "GET", "/x", transport=Module(status=401, body={}).transport))
+    assert e.value.status == 502
 
 
 class _FixedDatetime(datetime):
@@ -161,9 +252,9 @@ class _FixedDatetime(datetime):
 # ------------------------------------------------------------------ routes
 @pytest.fixture
 def client(monkeypatch):
-    monkeypatch.setenv(rec.URL_ENV, "http://module:8000")
-    monkeypatch.setenv(rec.TOKEN_ENV, "t" * 32)
+    monkeypatch.delenv(rec.SERVER_ENV, raising=False)
     monkeypatch.delenv(rec.DEVICE_ENV, raising=False)
+    monkeypatch.setattr(rec, "_server_rows", lambda: ROWS)
     monkeypatch.setattr(rec, "datetime", _FixedDatetime)
     module = Module()
     real_client = rec._client
@@ -186,10 +277,11 @@ def post_chunk(client, headers=None, **form):
 
 def test_routes_forward_and_end(client):
     assert client.get("/api/modules/sound/record/config").json() == {
-        "configured": True, "device": "computer", "max_bytes": rec.MAX_CHUNK_BYTES}
+        "configured": True, "problem": None, "device": "computer",
+        "max_bytes": rec.MAX_CHUNK_BYTES}
     r = post_chunk(client)
     assert r.status_code == 200 and r.json() == {"ok": True, "stop": False, "reason": None}
-    assert str(client.module.requests[-1].url) == "http://module:8000/v1/ingest/chunk"
+    assert client.module.requests[-1].url.path == "/ingest/chunk"
     r = client.post("/api/modules/sound/record/call-1/end", headers={"X-Odysseus-Recorder": "1"})
     assert r.json() == {"ok": True, "found": True}
 
@@ -207,10 +299,12 @@ def test_routes_pass_errors_through(client):
 
 
 def test_routes_not_configured(client, monkeypatch):
-    monkeypatch.delenv(rec.TOKEN_ENV)
-    assert client.get("/api/modules/sound/record/config").json()["configured"] is False
+    monkeypatch.setattr(rec, "_server_rows", lambda: [])
+    cfg = client.get("/api/modules/sound/record/config").json()
+    assert cfg["configured"] is False and "No MCP server named 'convo'" in cfg["problem"]
     r = post_chunk(client)
-    assert r.status_code == 503 and rec.TOKEN_ENV in r.json()["detail"]
+    assert r.status_code == 503 and "Settings → MCP" in r.json()["detail"]
+    assert client.module.requests == []
 
 
 def test_record_page_is_served(client):

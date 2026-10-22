@@ -23,8 +23,9 @@ redirects there); its script calls:
 ``GET /modules/sound/record`` serves ``static/call-recorder.html`` ("Record a call"); its
 script calls ``GET /api/modules/sound/record/config``, ``POST /api/modules/sound/record/chunk``
 (multipart: audio, session_id, sequence, timestamp, codec) and
-``POST /api/modules/sound/record/{session_id}/end``. Those forward to the module's
-documented ingest API, not its MCP tools (``src/call_recorder.py``).
+``POST /api/modules/sound/record/{session_id}/end``. Those forward to the upload routes
+of the module's MCP HTTP server (the connected ``convo`` server's URL and token), not its
+MCP tools (``src/call_recorder.py``).
 
 Action items are read live from the module, the source of truth; Done/Dismiss call its
 ``update_action_item``. Filing into the Odysseus calendar and to-dos (and the record of
@@ -333,8 +334,7 @@ def setup_sound_module_routes() -> APIRouter:
 
     @router.get("/api/modules/sound/record/config", dependencies=[Depends(require_admin)])
     async def record_config() -> dict[str, Any]:
-        cfg = recorder.config()
-        return {"configured": cfg is not None, "device": cfg.device if cfg else None,
+        return {**recorder.status(), "device": recorder.device(),
                 "max_bytes": recorder.MAX_CHUNK_BYTES}
 
     @router.post("/api/modules/sound/record/chunk", dependencies=[Depends(require_admin)])
@@ -349,9 +349,11 @@ def setup_sound_module_routes() -> APIRouter:
         _recorder_header(x_odysseus_recorder)
         data = await audio.read(recorder.MAX_CHUNK_BYTES + 1)
         try:
-            return await recorder.forward_chunk(recorder.require_config(), data=data,
-                                                session_id=session_id, sequence=sequence,
-                                                timestamp=timestamp, codec=codec)
+            out = await recorder.forward_chunk(recorder.resolve(), data=data,
+                                               session_id=session_id, sequence=sequence,
+                                               timestamp=timestamp, codec=codec,
+                                               device_name=recorder.device())
+            return {"ok": out["ok"], "stop": out["stop"], "reason": out["reason"]}
         except recorder.RecorderError as exc:
             raise HTTPException(exc.status, exc.message) from None
 
@@ -362,7 +364,7 @@ def setup_sound_module_routes() -> APIRouter:
                          ) -> dict[str, Any]:
         _recorder_header(x_odysseus_recorder)
         try:
-            return await recorder.end_session(recorder.require_config(), session_id)
+            return await recorder.end_session(recorder.resolve(), session_id)
         except recorder.RecorderError as exc:
             raise HTTPException(exc.status, exc.message) from None
 

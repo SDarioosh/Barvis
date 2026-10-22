@@ -341,8 +341,7 @@ async function init() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
     if (!data.configured) {
-      notice('Call recording isn\'t set up yet: Odysseus needs SOUND_MODULE_API_URL and ' +
-             'SOUND_MODULE_INGEST_TOKEN (see docs/fork/deploy.md).');
+      notice(`Call recording isn't available: ${data.problem || 'odysseus-sound is not connected.'}`);
     } else {
       ready = true;
     }
