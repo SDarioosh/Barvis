@@ -182,3 +182,14 @@ html.fm-page body { background: var(--bg); color: var(--fg); margin: 0; display:
                   color: var(--red); display: inline-flex; align-items: center; gap: 6px; }
 .fm-page-top a { color: var(--fg); opacity: 0.7; text-decoration: none; display: inline-flex; }
 .fm-page-top a:hover { opacity: 1; }
+
+/* Today: outcome actions (Phase 3) */
+.fm-root .ti-actions { gap: 6px; margin-top: 4px; flex-wrap: wrap; }
+.fm-root .ti-actions .ti-act { height: 24px; padding: 0 8px; font-size: 11px; }
+.fm-root .ti-why { margin-top: 4px; font-size: 12px; line-height: 1.45; }
+.fm-root .ti-dismissed > summary { cursor: pointer; list-style: revert; }
+.fm-root .ti-dismissed .bs-title { opacity: 0.7; }
+@media (pointer: coarse) {
+  .fm-root .ti-actions .ti-act { height: 32px; padding: 0 10px; font-size: 12px; }
+}
+/* end Today: outcome actions (Phase 3) */
