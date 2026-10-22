@@ -3,7 +3,7 @@
 fork-specific status. Upstream's own plans are in [../../ROADMAP.md](../../ROADMAP.md);
 don't edit that file.
 
-_Last updated: 2026-10-21_
+_Last updated: 2026-10-22_
 
 ## Status
 
@@ -69,6 +69,11 @@ _Last updated: 2026-10-21_
 8. **Upstream:** offer the general fixes from PR #1 and the skill MCP toolsets from
    SDarioosh/Barvis#9 upstream
    ([upstream-sync.md](upstream-sync.md#sending-fixes-upstream)); weekly syncs.
+
+9. **Handwritten notes** (scoped, not built). Write with a stylus on a tablet in the
+   PWA, keep the strokes, transcribe with a local vision model and feed the text to the
+   belief ledger through Notes Evidence. Plan, model options and open questions:
+   [handwritten-notes.md](handwritten-notes.md).
 
 ## Personal context system
 
