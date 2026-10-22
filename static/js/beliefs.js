@@ -30,14 +30,14 @@ const CONFIRMED_BY = {
   rule: 'Confirmed by the rule',
 };
 
-const SOURCE_NAMES = { 'odysseus-sound': 'Conversations', notes: 'Notes' };
+const SOURCE_NAMES = { 'odysseus-sound': 'Conversations', notes: 'Notes', routines: 'Calendar' };
 
 // The ledger's attribute vocabulary (evidence_intake.ATTRIBUTES), in its order.
 const ATTRIBUTES = [
   ['lives_in', 'Lives in'], ['works_at', 'Works at'], ['role', 'Role'],
   ['birthday', 'Birthday'], ['allergy', 'Allergy'], ['diet', 'Diet'], ['likes', 'Likes'],
   ['dislikes', 'Dislikes'], ['relationship', 'Relationship'], ['owns', 'Owns'],
-  ['pet', 'Pet'], ['plans', 'Plans'], ['decision', 'Decision'],
+  ['pet', 'Pet'], ['plans', 'Plans'], ['decision', 'Decision'], ['routine', 'Routine'],
   ['contact_info', 'Contact info'], ['health', 'Health'],
   ['project_status', 'Project status'], ['deadline', 'Deadline'], ['other', 'Other'],
 ];
