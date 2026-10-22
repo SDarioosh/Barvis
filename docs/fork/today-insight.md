@@ -108,6 +108,7 @@ it. `votes` are 👍/👎 from the page, kept when the insight is rewritten late
 | Route | Auth | Answer |
 |---|---|---|
 | `GET /api/codex/insight/today` | API token with scope **`insight:read`** (or a browser session) | today's JSON without `input_hash` and `votes`; 404 `{"error": "no insight yet"}`; 403 without the scope |
+| `GET /api/codex/insight/weights` | API token with scope **`insight:read`** | the T5 weight table (see [Weights](#weights)); 200 with `"weights": {}` when none; 403 without the scope |
 | `GET /api/insight/today` | admin session (as `/modules/sound`) | the same plus `votes`, `refreshing` (a Refresh is running) and `refresh_error` (why the last one wrote nothing); 404 `{"error", "refreshing", "refresh_error"}` when none |
 | `POST /api/insight/today/vote` | admin session | body `{"vote": "up" \| "down"}`; answers `{"ok": true, "votes": [...]}` |
 | `POST /api/insight/refresh` | admin session | starts writing it now in the background, even when the inputs didn't change, and answers 202 `{"status": "started" \| "running", "generated": <current insight's generated or null>}` at once (a model call outlasts the 45 s request timeout) |
@@ -198,7 +199,29 @@ hook.
 
 ### Rule order
 
-<!-- stream B: the published rule table (tiers, weights within a tier) -->
+The candidates the model sees (at most 30 to-dos and events) are sorted in code by
+`(tier, -weight, date, time, input order)` (`order_candidates` in `src/today_insight.py`).
+This order is published: the T5 PDA's rule-based fallback (no insight for today) follows
+the same rules ([odysseus-sound `docs/t5-pda-plan.md`](https://github.com/SDarioosh/barvis-sound/blob/main/docs/t5-pda-plan.md) §5).
+
+| tier | items | within the tier |
+|---|---|---|
+| 0 | overdue and due today (to-dos and events) | higher weight first, then date, time, input order |
+| 1 | due in the next 7 days | higher weight first, then date, time, input order |
+| 2 | items of pinned notes (undated or due later than a week) | higher weight first, then input order |
+| 3 | undated | higher weight first, then input order |
+| 4 | due later than a week | higher weight first, then date, time, input order |
+
+- The tier comes from the bucket only. A weight (an integer in [-6, 6], below) never
+  moves an item to another tier, so overdue and due-today items always come first and a
+  weight never pushes them out of the 30-candidate cap.
+- `date` is `YYYY-MM-DD`, `time` `HH:MM` (empty for to-dos and all-day events, which sort
+  first on their day); both are compared as text. Tiers 2 and 3 ignore them.
+- Input order: to-dos (notes pinned first, then most recently updated; items in list
+  order), then events in the calendar's order.
+- Refs the owner marked "not today" on `/today` today are left out.
+- Weights only change the order the model sees; code doesn't re-sort the model's picks,
+  except for the owner's own "↑ first" and "not today".
 
 ### Outcome log
 
@@ -266,7 +289,101 @@ open their conversation; plans link to `/beliefs`.
 
 ### Weights
 
-<!-- stream B -->
+Code: `src/insight_weights.py`, routes `routes/insight_weights_routes.py`, UI
+`static/js/todayWeights.js`. Test: `tests/test_insight_weights.py`.
+
+**Keys.** A weight belongs to a key; a candidate's weight is the sum of the weights of
+its keys, clamped to [-6, 6]. Each key's weight is in [-3, 3].
+
+| key | applies to | shown as |
+|---|---|---|
+| `note_type:<checklist\|todo\|goal>` | to-do items of that note type | "Checklist notes", "To-do notes", "Goal notes" |
+| `list:<note id>` | to-do items of that note | the note's title, resolved live ("a list that no longer exists" once it is gone) |
+| `event_type:<work\|personal\|health\|travel\|meal\|social\|admin\|other>` | events | "Work events" … |
+| `importance:<low\|normal\|high\|critical>` | events | "High-importance events" … |
+
+An event without an event type has no `event_type:` key. Open loops and plans (`loop:`,
+`belief:`) have no keys (weight 0).
+
+**Learning.** Per key, from the outcome files ([Outcome log](#outcome-log)) of the last
+`WINDOW_DAYS = 28` days before today (today − 28 … yesterday) that are **final**; days
+not finalized yet don't count, and neither does today. After a reset only days after the
+reset day count for that key. Each shown item of a day counts once; `gone` counts for
+nothing and isn't shown (a stray `open` on a final day counts as `ignored`).
+
+- to-do keys: `score = done + 2*promoted - 2*dismissed - moved - ignored/2`
+- event keys: `score = 2*promoted - 2*dismissed - moved` (`done` and `ignored`: a passed
+  event is no signal)
+- `rate = score / shown`; `base` = the same rate over all to-do items (to-do keys) or
+  all events (event keys) of the window, resets not applied; 0 when there are none.
+- `weight = clamp(round_half_away(3 * (rate - base)), -3, 3)` when `shown >= MIN_SHOWN`
+  (6), else 0. Computed with exact fractions; halves round away from zero (2.5 → 3,
+  −2.5 → −3).
+
+Example: the Work list was shown 9 times (7 done, 1 moved up, 1 ignored): score 8.5,
+rate 0.944; with a to-do base of 0.222 its weight is round(3 × 0.722) = round(2.17) = 2.
+
+**When.** `current(owner, today)` recomputes when `weights.json`'s `date` isn't today, so
+at most once a day: at the first Today Insight run after local midnight, after letting
+the outcome log finalize earlier days (its `finalize_pending`). The weights stay the
+same during the day; the insight's input hash covers them. A missing or broken file is
+recomputed.
+
+**File** `<DATA_DIR>/today_insight/<owner>/weights.json` (written atomically):
+
+```json
+{"version": 1, "date": "2026-10-22", "computed": "2026-10-22T00:00:05Z",
+ "window_days": 28, "min_shown": 6,
+ "base": {"todo": 0.2222, "event": 0.0},
+ "keys": {"list:n1": {"weight": 2, "shown": 9, "done": 7, "promoted": 1, "dismissed": 0,
+                      "moved": 0, "ignored": 1, "reset_at": null}},
+ "resets": {"list:n2": "2026-10-20"}}
+```
+
+`keys` has every key seen in the window plus every key with a reset; `base` is rounded to
+4 places for reading (the weights use the exact value). A reset older than the window is
+dropped from `resets` (every window day is after it anyway).
+
+**Reset.** `reset(owner, key)` (or every key: the stored keys, the reset ones and every
+key in the outcome files of the window, final or not) records today as the key's reset
+day and recomputes at once: the key's weight is 0 from now on, outcomes up to and
+including today no longer count for it, and it learns again from tomorrow's outcomes.
+
+**Routes.**
+
+| Route | Auth | Answer |
+|---|---|---|
+| `GET /api/insight/weights` | admin session | `{"date", "min_shown", "window_days", "rows": [{"key", "label", "weight", "shown", "done", "promoted", "dismissed", "moved", "ignored", "reset_at"}]}`, largest \|weight\| first |
+| `POST /api/insight/weights/reset` | admin session | body `{"key": "list:n1"}`, or `{}` for every key; answers `{"ok": true, …}` with the rows as above; 400 for a malformed key |
+| `GET /api/insight/today/why?ref=<ref>` | admin session | `{"ref", "title", "section", "position", "tier", "rule_position", "weight", "contributions", "picked_by", "text"}`, rebuilt in code (no model call); 404 when there is no insight today or the ref is neither in it nor a candidate |
+| `GET /api/codex/insight/weights` | API token with scope `insight:read` | the T5 table below; 200 with `"weights": {}` when there are none (never 404) |
+
+For the why answer: `position` is 1-based in the section the page shows it in (owner
+marks applied), `tier` one of "overdue or due today", "due in the next 7 days", "on a
+pinned note", "undated", "due later than a week"; `rule_position` is 1-based in today's
+rule order (null for open loops, plans and items no longer among the candidates);
+`contributions` lists every key of the item with its weight, counts, `reset_at` and
+`label`; `picked_by` is `owner` when today's outcome file marks the ref `promoted`, else
+`model`. `text` example: "Overdue since Oct 20; 1st in the rule order; your Work list
+counts +2 (you finished 7 of 9). The model put it first."
+
+On `/today`, **How Today ranks** (collapsed) shows the rows with Reset per row and Reset
+all; with no rows it says "No weights yet: Today learns from what you tick, move up or
+skip."
+
+**The T5 table.** The T5 tells to-dos apart only by note id (all its to-dos are
+checklists), so `t5_table` merges, per to-do note of the owner (not archived, types
+`checklist`/`todo`/`goal`), the note's `list:<id>` weight and its `note_type:<type>`
+weight into one number:
+
+```json
+{"version": 1, "date": "2026-10-22", "weights": {"list:n1": 2, "list:n7": -1}}
+```
+
+- `weights["list:<note id>"] = clamp(list weight + note_type weight, -6, 6)`, integers.
+- Only non-zero entries, at most 32: largest |weight| first, ties by key (text order).
+- The relays put it into the feed as the top-level key `weights`; the T5 applies it only
+  in its rule-based fallback, to to-dos, by note id, within the tiers above.
 
 ### Push
 

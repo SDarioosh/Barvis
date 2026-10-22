@@ -193,3 +193,16 @@ html.fm-page body { background: var(--bg); color: var(--fg); margin: 0; display:
   .fm-root .ti-actions .ti-act { height: 32px; padding: 0 10px; font-size: 12px; }
 }
 /* end Today: outcome actions (Phase 3) */
+/* Today: weights (Phase 3) -- static/js/todayWeights.js */
+.fm-root .tw-panel { margin-top: 16px; }
+.fm-root .tw-panel > summary { cursor: pointer; list-style-position: inside; margin: 0 0 6px; }
+.fm-root .tw-rules { margin: 0 0 8px; line-height: 1.45; }
+.fm-root .tw-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.fm-root .tw-table th { text-align: left; font-weight: 600; font-size: 11px;
+                        color: color-mix(in srgb, var(--fg) 65%, transparent); padding: 4px 6px; }
+.fm-root .tw-table td { padding: 4px 6px; border-top: 1px solid color-mix(in srgb, var(--border) 40%, transparent); }
+.fm-root .tw-table .tw-num { text-align: right; font-variant-numeric: tabular-nums; }
+.fm-root .tw-label { overflow-wrap: anywhere; }
+.fm-root .tw-scroll { overflow-x: auto; }
+.fm-root .tw-why { margin-top: 4px; font-size: 12px; }
+/* end Today: weights (Phase 3) */
