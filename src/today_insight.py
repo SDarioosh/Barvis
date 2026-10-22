@@ -533,6 +533,8 @@ SYSTEM_PROMPT = (
     '"coming_up": [{"ref": "...", "why": "..."}], '
     '"also": [{"ref": "...", "why": "..."}]}\n'
     "Rules:\n"
+    "- headline: about the day as a whole. Don't state the current time of day (it is "
+    "read all day); times of events are fine.\n"
     "- ref is a candidate's label from CANDIDATES (T1, T2, ... for to-dos; E1, E2, ... for "
     "events), written exactly like that, e.g. {\"ref\": \"T1\"}. Each label at most once "
     "across all sections. Nothing else is a ref (not dates, not ids).\n"
@@ -576,8 +578,8 @@ def _candidate_line(c: dict, label: str) -> str:
 
 def build_messages(inputs: dict) -> list[dict]:
     now = inputs["now"]
-    blocks = [f"Today is {now.strftime('%A')} {inputs['today'].isoformat()}, "
-              f"now {now.strftime('%H:%M')}.",
+    # Date only: the headline is read all day, so a "now" time in it goes stale
+    blocks = [f"Today is {now.strftime('%A')} {inputs['today'].isoformat()}.",
               "CANDIDATES (label [bucket, date] title; to-do items T…, calendar events E…):\n"
               + "\n".join(_candidate_line(c, label) for label, c in
                           zip(labels(inputs["candidates"]), inputs["candidates"]))]
