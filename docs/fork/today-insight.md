@@ -213,6 +213,11 @@ the same rules ([odysseus-sound `docs/t5-pda-plan.md`](https://github.com/SDario
 | 3 | undated | higher weight first, then input order |
 | 4 | due later than a week | higher weight first, then date, time, input order |
 
+Where the T5 differs by its own layout: its DO FIRST lists the to-dos of tier 0 first and
+then today's events in time order (with or without an insight), so there a due-today event
+never sits between weighted to-dos; it shows no tier 4; and it caps each section at 5.
+`scripts/insight_eval.py` (case `t5_day`) checks that both agree on everything else.
+
 - The tier comes from the bucket only. A weight (an integer in [-6, 6], below) never
   moves an item to another tier, so overdue and due-today items always come first and a
   weight never pushes them out of the 30-candidate cap.
