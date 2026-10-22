@@ -266,7 +266,7 @@ inputs are older than the owner's tick.
 | `done` | a to-do's line is ticked (on any surface: notes, chat, T5, phone), or an open loop's action item is among odysseus-sound's done items. Events and plans are never done. |
 | `moved` | a to-do's note got a later due date, or an event now starts on a later day than when it was shown. |
 | `gone` | the note or line was deleted, the event was cancelled or isn't in the calendar window any more, or the loop's action item is in neither the open nor the done items. |
-| `dismissed`, `promoted` | the owner's "Not today" and "↑ first" (`via: "today"`). The pass never overwrites them, except `promoted` → `done`. Marking a `done` item changes nothing (the route answers 200 with the item as it is). |
+| `dismissed`, `promoted` | the owner's "Not today" and "↑ first" (`via: "today"`). The pass never overwrites them, except `promoted` → `done`. Marking a `done` item changes nothing (the route answers 200 with the item as it is). An open loop dismissed with **Not a task** also has `not_task: true` (cleared by Undo), so the log shows which extractions were wrong. |
 | `ignored` | still `open` when the day was finalized (`via: "final"`). |
 
 To-do lines are matched by the ref's index when the line's text is the shown title, else
@@ -307,13 +307,21 @@ left out keeps its place. Dismissed refs are also left out of the next candidate
 | Route | Auth | Answer |
 |---|---|---|
 | `POST /api/insight/today/outcome` | admin session | body `{"ref", "outcome": "done" \| "open" \| "dismissed" \| "promoted" \| "clear"}` (`open` un-ticks a `done`, `clear` undoes a mark); `{"ok": true, "item": {...}}`; 404 without an insight today or when the ref wasn't shown; 400 for `done`/`open` on an event or a plan |
-| `GET /api/insight/today` | admin session | in the owner's order, plus `outcomes` (`{ref: outcome}`) and `dismissed` (the hidden rows, each with its `section`) |
+| `GET /api/insight/today` | admin session | in the owner's order, plus `outcomes` (`{ref: outcome}`) and `dismissed` (the hidden rows, each with its `section` and `not_task`) |
 | `GET /api/codex/insight/today` | `insight:read` | in the owner's order, without outcomes |
 
 On the page each row has **↑ first** (again: undo), **Not today** and **Why first?** (the
 why route, rendered by `todayWeights.js`). A tick also posts `done` (un-tick: `open`).
 Hidden rows sit under "Not today (n)" with **Undo**. Open loops show "with <person>" and
 open their conversation; plans link to `/beliefs`.
+
+Open loops also have **Not a task**, for an action item that was never a to-do (a quick
+errand the summary model picked up, like "I'll move my truck"). The page sets the item to
+`dismissed` in odysseus-sound (`POST /api/modules/sound/action-items/{id}`, the module's
+`update_action_item`), so it isn't an open loop again on later days, then posts
+`dismissed` with `not_task: true` to hide it today. Its row under "Not today" says "Not a
+task"; Undo reopens the module item and clears the mark. The outcome route answers 400 for
+`not_task` on anything but a dismissed open loop.
 
 ### Weights
 

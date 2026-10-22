@@ -4,7 +4,8 @@
 // the standalone page (static/today.html). Data: routes/today_insight_routes.py. To-dos
 // are ticked with the notes API's own toggle route
 // (POST /api/notes/<id>/items/<index>/toggle), like the notes page.
-// Phase 3 (src/insight_outcomes.py): each row has "↑ first", "Not today" and "Why first?";
+// Phase 3 (src/insight_outcomes.py): each row has "↑ first", "Not today" and "Why first?"
+// (open loops also "Not a task");
 // ticks, marks and undo are posted to POST /api/insight/today/outcome. The server already
 // puts promoted rows first and leaves dismissed ones out (listed under `dismissed`).
 
@@ -87,8 +88,19 @@ function parseRef(ref) {
 // The day's outcomes ({ref: outcome}) from the last load.
 let outcomes = {};
 
-function postOutcome(ref, outcome) {
-  return postJSON('/api/insight/today/outcome', { ref, outcome });
+function postOutcome(ref, outcome, extra = {}) {
+  return postJSON('/api/insight/today/outcome', { ref, outcome, ...extra });
+}
+
+// "Not a task" on an open loop: the module item was never a to-do (a quick errand the
+// summary model picked up). It is dismissed in odysseus-sound, so it doesn't come back
+// (routes/sound_module_routes.py -> update_action_item), and hidden today with
+// not_task in the outcome log. Undo reopens it.
+async function setLoopStatus(ref, status) {
+  const id = /^loop:(\d+)$/.exec(ref || '');
+  if (!id) throw new Error('not an open loop');
+  const res = await postJSON(`/api/modules/sound/action-items/${id[1]}`, { status });
+  if (!res.ok) throw new Error(res.message || 'the module said no');
 }
 
 function safeLink(href) {
@@ -214,11 +226,12 @@ function rowActions(row) {
   const promoted = outcomes[row.ref] === 'promoted';
   const msg = el('span', { className: 'bs-meta bs-msg' });
   const why = el('div', { className: 'ti-why', hidden: true });
-  const mark = async (outcome) => {
+  const mark = async (outcome, notTask = false) => {
     msg.textContent = '';
     msg.classList.remove('error');
     try {
-      await postOutcome(row.ref, outcome);
+      if (notTask) await setLoopStatus(row.ref, 'dismissed');
+      await postOutcome(row.ref, outcome, notTask ? { not_task: true } : {});
       await load();
     } catch (e) {
       msg.textContent = `Couldn't save: ${e.message}`;
@@ -248,6 +261,11 @@ function rowActions(row) {
                      onclick: () => mark(promoted ? 'clear' : 'promoted') }, '↑ first'),
       el('button', { type: 'button', className: 'bs-btn ti-act', title: 'Hide this for today',
                      onclick: () => mark('dismissed') }, 'Not today'),
+      parseRef(row.ref).kind === 'loop'
+        ? el('button', { type: 'button', className: 'bs-btn ti-act',
+                         title: 'This was never a to-do: remove it for good',
+                         onclick: () => mark('dismissed', true) }, 'Not a task')
+        : null,
       el('button', { type: 'button', className: 'bs-btn ti-act', title: 'Why is this here?',
                      onclick: showWhy }, 'Why first?'),
       msg),
@@ -277,6 +295,7 @@ function dismissedBlock(rows) {
     const msg = el('span', { className: 'bs-meta bs-msg' });
     const undo = async () => {
       try {
+        if (row.not_task) await setLoopStatus(row.ref, 'open');
         await postOutcome(row.ref, 'clear');
         await load();
       } catch (e) {
@@ -286,6 +305,7 @@ function dismissedBlock(rows) {
     };
     return el('li', { className: 'ti-item' }, el('div', { className: 'bs-body' },
       el('span', { className: 'bs-title' }, row.title || 'An item hidden today'),
+      row.not_task ? el('div', { className: 'bs-meta' }, 'Not a task') : null,
       el('div', { className: 'bs-row ti-actions' },
         el('button', { type: 'button', className: 'bs-btn ti-act', onclick: undo,
                        title: 'Show it again today' }, 'Undo'), msg)));
