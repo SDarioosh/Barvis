@@ -4,9 +4,12 @@
 Before ``MODULE_FILE_ITEMS=explicit`` and the "Voice notes" list, the Module Action Items
 task filed every voice-note item as a to-do of its own, titled with the whole sentence,
 also items that were no task ("Stop prioritizing side projects ..."). This lists those
-to-dos: label ``odysseus-sound``, one checklist line, filed from a voice note and still
-in Odysseus. With ``--apply`` it deletes them and dismisses their items in odysseus-sound
-(``update_action_item``; items already done stay done). They are never filed again.
+to-dos: label ``odysseus-sound``, one checklist line, no due date and no reminder, filed
+from a voice note whose item isn't explicit now, and still in Odysseus, each with why it
+qualifies. To-dos filed in ``explicit`` mode or from the page are left out unless
+``--all``; dated to-dos and reminders never qualify. With ``--apply`` it deletes them
+and dismisses their items in odysseus-sound (``update_action_item``; items already done
+stay done). They are never filed again.
 
 It runs in the hub, which holds the module's MCP connection: the script calls the admin
 route ``POST /api/modules/sound/unfile-todos`` (src/module_action_items.py,
@@ -17,7 +20,7 @@ their item ids with ``--only``. A single one can also be undone on ``/modules/so
 Usage:
     python scripts/unfile_voice_note_todos.py --url http://127.0.0.1:7010 \\
         --user admin --password-file ~/.config/odysseus-fork/admin.txt [--dry-run]
-    ... --apply [--only 12,14]
+    ... --apply [--only 12,14] [--all]
 
 Without ``--password-file`` no login is made (an instance with auth off).
 """
@@ -43,6 +46,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     mode.add_argument("--apply", action="store_true",
                       help="delete the to-dos and dismiss their items")
     ap.add_argument("--only", default="", help="comma-separated item ids to limit it to")
+    ap.add_argument("--all", action="store_true",
+                    help="also to-dos filed in explicit mode or from the page")
     args = ap.parse_args(argv)
     try:
         args.only = [int(i) for i in args.only.split(",") if i.strip()] or None
@@ -55,7 +60,8 @@ def report(result: dict) -> str:
     todos = result.get("todos") or []
     if not todos:
         return "No to-dos filed one per voice-note item are left."
-    lines = [f"- #{t['id']} [{t['status']}] {t['title']}" for t in todos]
+    lines = [f"- #{t['id']} [{t['status']}] {t['title']}"
+             + (f" ({'; '.join(t['why'])})" if t.get("why") else "") for t in todos]
     if result.get("apply"):
         head = f"Removed {result.get('removed', 0)} of {len(todos)} to-dos:"
     else:
@@ -71,6 +77,8 @@ def run(c: httpx.Client, args: argparse.Namespace) -> int:
     body: dict = {"apply": bool(args.apply)}
     if args.only:
         body["ids"] = args.only
+    if args.all:
+        body["all"] = True
     r = c.post(ROUTE, json=body)
     if r.status_code >= 400:
         detail = r.json().get("detail") if "json" in r.headers.get("content-type", "") else r.text

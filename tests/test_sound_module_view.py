@@ -584,8 +584,8 @@ def test_unfile_todos_route(client, monkeypatch):
 
     calls = []
 
-    async def unfile_auto_todos(owner, call, *, apply=False, only=None):
-        calls.append((owner, apply, only))
+    async def unfile_auto_todos(owner, call, *, apply=False, only=None, include_all=False):
+        calls.append((owner, apply, only, include_all))
         return {"apply": apply, "removed": 1 if apply else 0,
                 "todos": [{"id": 12, "title": "Call Mom", "text": "Call Mom",
                            "status": "open", "ref": "note-1"}]}
@@ -593,9 +593,10 @@ def test_unfile_todos_route(client, monkeypatch):
     monkeypatch.setattr(mai, "unfile_auto_todos", unfile_auto_todos)
     r = client.post("/api/modules/sound/unfile-todos", json={})
     assert r.status_code == 200 and r.json()["todos"][0]["id"] == 12
-    assert r.json()["removed"] == 0 and calls[-1] == ("", False, None)
-    r = client.post("/api/modules/sound/unfile-todos", json={"apply": True, "ids": [12]})
-    assert r.json()["removed"] == 1 and calls[-1] == ("", True, {12})
+    assert r.json()["removed"] == 0 and calls[-1] == ("", False, None, False)
+    r = client.post("/api/modules/sound/unfile-todos",
+                    json={"apply": True, "ids": [12], "all": True})
+    assert r.json()["removed"] == 1 and calls[-1] == ("", True, {12}, True)
     client.manager._connections = {}
     assert client.post("/api/modules/sound/unfile-todos", json={}).status_code == 503
 
@@ -613,11 +614,13 @@ def test_unfile_script_reports_through_the_route():
             {"id": 12, "title": "Call Mom", "text": "Call Mom", "status": "open",
              "ref": "n"}]})
 
-    args = script.parse_args(["--apply", "--only", "12"])
+    args = script.parse_args(["--apply", "--only", "12", "--all"])
     with httpx.Client(base_url="http://hub", transport=httpx.MockTransport(handler)) as c:
         assert script.run(c, args) == 0
-    assert seen == [("/api/modules/sound/unfile-todos", b'{"apply":true,"ids":[12]}')]
+    assert seen == [("/api/modules/sound/unfile-todos", b'{"apply":true,"ids":[12],"all":true}')]
     assert script.report({"apply": False, "todos": [
-        {"id": 12, "title": "Call Mom", "status": "open"}]}).splitlines() == [
-        "1 to-dos would be removed (run again with --apply):", "- #12 [open] Call Mom"]
+        {"id": 12, "title": "Call Mom", "status": "open",
+         "why": ["filed before explicit filing", "not explicit now"]}]}).splitlines() == [
+        "1 to-dos would be removed (run again with --apply):",
+        "- #12 [open] Call Mom (filed before explicit filing; not explicit now)"]
     assert script.parse_args([]).apply is False
