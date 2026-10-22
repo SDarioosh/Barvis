@@ -4,6 +4,9 @@ How Odysseus becomes a personal context system: it takes in as much of the owner
 data as the owner feeds it, learns about them over time, and uses that knowledge to help
 (first: a daily "Today" insight). This document is the roll-out plan. Status of what is
 built lives in [roadmap.md](roadmap.md); the module contract in [modules.md](modules.md).
+What to borrow from other open-source memory projects, per stage, and the planned
+Screenpipe module: [personal-context-prior-art.md](personal-context-prior-art.md). Read it
+before starting a stage.
 
 _Written 2026-10-21. Decisions are marked **decided**; everything else is a proposal for
 the owner._

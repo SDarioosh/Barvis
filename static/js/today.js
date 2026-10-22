@@ -1,9 +1,12 @@
-// Fork: the Today page — the stored daily insight (src/today_insight.py) with
+// Fork: the Today view — the stored daily insight (src/today_insight.py) with
 // tickable to-dos, events that open the calendar on their day, 👍/👎 and Refresh.
-// Data: routes/today_insight_routes.py. To-dos are ticked with the notes API's
-// own toggle route (POST /api/notes/<id>/items/<index>/toggle), like the notes page.
+// Mounted by the Today window in the main app (static/js/forkModuleWindows.js) and by
+// the standalone page (static/today.html). Data: routes/today_insight_routes.py. To-dos
+// are ticked with the notes API's own toggle route
+// (POST /api/notes/<id>/items/<index>/toggle), like the notes page.
 
-const $ = (sel) => document.querySelector(sel);
+let root = null; // one mount per document
+const $ = (sel) => root.querySelector(sel);
 
 const SECTIONS = [
   ['focus', 'Do first'],
@@ -59,7 +62,7 @@ function postJSON(path, body) {
 }
 
 function status(text, error = false) {
-  $('#ti-main').replaceChildren(el('div', { className: error ? 'bs-status error' : 'bs-status' }, text));
+  $('.ti-main').replaceChildren(el('div', { className: error ? 'bs-status error' : 'bs-status' }, text));
 }
 
 // ref -> {kind, noteId, index} or {kind, uid}
@@ -105,7 +108,7 @@ function itemIndex(note, ref, title) {
 }
 
 function todoRow(row, ref) {
-  const li = el('li', { className: 'bs-item' });
+  const li = el('li', { className: 'ti-item' });
   const box = el('input', { type: 'checkbox', className: 'bs-tick', 'aria-label': `Done: ${row.title}`,
                             disabled: true });
   const msg = el('div', { className: 'bs-meta bs-msg' });
@@ -150,7 +153,7 @@ function todoRow(row, ref) {
 }
 
 function eventRow(row, ref) {
-  return el('li', { className: 'bs-item' },
+  return el('li', { className: 'ti-item' },
     el('span', { className: 'bs-kind', 'aria-hidden': 'true', html: EVENT_ICON }),
     el('div', { className: 'bs-body' },
       el('a', { className: 'bs-title', href: eventHref(ref.uid), title: 'Open in the calendar' },
@@ -162,7 +165,7 @@ function itemRow(row) {
   const ref = parseRef(row.ref);
   if (ref.kind === 'todo') return todoRow(row, ref);
   if (ref.kind === 'event') return eventRow(row, ref);
-  return el('li', { className: 'bs-item' }, el('div', { className: 'bs-body' },
+  return el('li', { className: 'ti-item' }, el('div', { className: 'bs-body' },
     el('span', { className: 'bs-title' }, row.title || row.ref),
     row.why ? el('div', { className: 'bs-why' }, row.why) : null));
 }
@@ -204,7 +207,7 @@ function generatedLabel(iso) {
 
 function render(insight) {
   notes.clear();
-  const main = $('#ti-main');
+  const main = $('.ti-main');
   const parts = [el('div', { className: 'bs-card' },
     el('p', { className: 'bs-headline' }, insight.headline || 'Nothing to add for today.'),
     el('div', { className: 'bs-meta' }, [insight.date, generatedLabel(insight.generated)]
@@ -233,7 +236,7 @@ const POLL_MS = 4000;
 const POLL_LIMIT_MS = 15 * 60 * 1000;
 
 function note(text, error = false) {
-  const n = $('#ti-note');
+  const n = $('.ti-note');
   n.textContent = text || '';
   n.className = error ? 'bs-status error' : 'bs-status';
   n.hidden = !text;
@@ -252,7 +255,7 @@ async function fetchToday() {
 // Refresh runs in the background (a model call outlasts a request); poll until the
 // insight's `generated` changes or the server says it stopped.
 async function refresh() {
-  const btn = $('#ti-refresh');
+  const btn = $('.ti-refresh');
   btn.disabled = true;
   btn.textContent = 'Writing…';
   note('Writing a new insight. The local model can take a few minutes.');
@@ -273,7 +276,7 @@ async function refresh() {
         return;
       }
     }
-    note('Still writing; reload the page later.');
+    note('Still writing; press Refresh again later to see it.');
   } catch (e) {
     note(`Couldn't write the insight: ${e.message}`, true);
   } finally {
@@ -282,5 +285,18 @@ async function refresh() {
   }
 }
 
-$('#ti-refresh').addEventListener('click', refresh);
-load();
+/** Builds the view into `el` and loads it. Returns { refresh } (reloads the stored insight). */
+export function mountToday(target) {
+  if (root) throw new Error('the Today view is already mounted');
+  root = target;
+  root.classList.add('fm-root');
+  const button = el('button', { type: 'button', className: 'bs-btn ti-refresh',
+                                title: 'Write a new insight now' }, 'Refresh');
+  root.replaceChildren(
+    el('div', { className: 'bs-row', style: 'justify-content:flex-end;margin:0 0 8px' }, button),
+    el('div', { className: 'bs-status ti-note', hidden: true }),
+    el('div', { className: 'ti-main' }, el('div', { className: 'bs-status' }, 'Loading…')));
+  button.addEventListener('click', refresh);
+  load();
+  return { refresh: load };
+}
