@@ -124,8 +124,47 @@ def test_done_refound_by_title_after_lines_moved(store):
     moved = [_work(("Book flights", True), ("Water the plants", False))]
     io.observe("alice", _insight(focus=[("todo:n1:1", "Water the plants")]),
                _inputs(moved), now=LATER)
-    assert _item("todo:n1:1")["outcome"] == "done"
-    assert _item("todo:n1:1")["section"] == "focus"
+    # todo:n1:1 names another line now: Book flights' record keeps following its line
+    assert _item("todo:n1:1#1")["outcome"] == "done"
+    assert _item("todo:n1:1#1")["section"] == "focus"
+    assert _item("todo:n1:1")["outcome"] == "open"
+
+
+def test_one_record_per_line_when_a_line_is_inserted_above(store):
+    from src import insight_weights as iw
+
+    io.observe("alice", _insight(focus=[("todo:n1:0", "Pay rent")]),
+               _inputs([_work(("Pay rent", False))]), now=NOW)
+    # the owner adds "Call bank" at the top; the next insight shows both
+    notes = [_work(("Call bank", False), ("Pay rent", False))]
+    rewritten = _insight(focus=[("todo:n1:0", "Call bank"), ("todo:n1:1", "Pay rent")])
+    ti.save("alice", rewritten)
+    io.observe("alice", rewritten, _inputs(notes), now=LATER)
+    data = io.load("alice", DAY)
+    assert sorted(data["items"]) == ["todo:n1:0", "todo:n1:1"]
+    assert data["items"]["todo:n1:1"]["first_shown"] == "2026-10-21T07:00:00Z"  # Pay rent's
+    assert data["items"]["todo:n1:0"]["first_shown"] == "2026-10-21T09:00:00Z"
+    # Call bank ticked on the page, then seen by the pass: not overwritten
+    io.record("alice", "todo:n1:0", "done", now=LATER)
+    ticked = [_work(("Call bank", True), ("Pay rent", False))]
+    io.observe("alice", rewritten, _inputs(ticked), now=LATER + timedelta(minutes=15))
+    assert _item("todo:n1:0")["outcome"] == "done" and _item("todo:n1:1")["outcome"] == "open"
+    io.finalize("alice", DAY, now=LATER + timedelta(hours=1))
+    weights = iw.compute("alice", date(2026, 10, 22), now=NOW + timedelta(days=1))
+    row = weights["keys"]["list:n1"]
+    assert (row["shown"], row["done"], row["ignored"]) == (2, 1, 1)
+
+
+def test_a_tick_on_a_rewritten_insight_before_the_pass(store):
+    io.observe("alice", _insight(focus=[("todo:n1:0", "Pay rent")]),
+               _inputs([_work(("Pay rent", False))]), now=NOW)
+    rewritten = _insight(focus=[("todo:n1:0", "Call bank")])
+    ti.save("alice", rewritten)  # the page shows it before the pass observes it
+    assert io.record("alice", "todo:n1:0", "done", now=LATER)["first_shown"] == \
+        "2026-10-21T09:00:00Z"
+    assert _item("todo:n1:0#1")["outcome"] == "open"  # Pay rent, untouched
+    with pytest.raises(LookupError):
+        io.record("alice", "todo:n1:0#1", "done", now=LATER)
 
 
 def test_moved_when_due_date_moves_later(store):

@@ -269,11 +269,24 @@ gathered (`via: "observed"`):
 
 To-do lines are matched by the ref's index when the line's text is the shown title, else
 re-found by title, as the page does; texts are compared on their first 200 characters
-(whitespace collapsed, case ignored), where candidate titles are cut. Titles come from the insight rows and are kept in
-memory only; after a restart a line the insight no longer shows is matched by index. Notes
+(whitespace collapsed, case ignored), where candidate titles are cut. Titles come from the
+insight rows and are kept in memory only; after a restart a line the insight no longer
+shows is matched by index. Notes
 the pass didn't load (an archived, finished checklist) are looked up by id. Open loops are
 left as they are when the module is unreachable. A passed event stays `open` and becomes
 `ignored` at the end of the day (weights don't count that for events).
+
+**One record per line.** A to-do ref (`todo:<note>:<index>`) is an index, so after the
+owner adds, removes or moves lines the same ref can name another line. When an insight
+row's title for a ref differs from the title its record was shown with, the ref names a
+new line: the old record moves to a spare key `<ref>#<n>` (for example `todo:n1:0#1`)
+and keeps following its own line by title, and the ref gets a fresh record. When the old
+line is shown again under another ref, its record moves to that ref instead of a second
+record being started (also when a ref the insight no longer shows still holds it). So
+each line is counted once by the weights and the trends, and a tick on the page
+(`record`, which applies the same rule first) lands on the line the page showed. Spare
+keys are never shown and can't be marked; after a restart (titles lost) a spare key is
+left as it is until the day is finalized.
 
 **Finalize**: the first pass after local midnight finalizes every earlier day that isn't
 final (`final: true`, `finalized`); a final day doesn't change any more.

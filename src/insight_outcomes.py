@@ -33,12 +33,14 @@ OWNER_MARKS = ("dismissed", "promoted")
 ACTIONS = ("done", "open", "dismissed", "promoted", "clear")
 SECTIONS = ("focus", "coming_up", "also")
 _DAY = re.compile(r"^(\d{4}-\d{2}-\d{2})\.outcome\.json$")
+_TODO = re.compile(r"^todo:(.+):(\d+)(?:#\d+)?$")  # ``#n``: a spare key (``_retire_renamed``)
 TITLE_CHARS = 200  # candidate titles are a line's first 200 characters
 
 _GUARD = threading.Lock()
 _LOCKS: dict[str, threading.RLock] = {}
-# Titles of shown items, in memory only (never on disk): the 15-min pass re-finds a ticked
-# line by its title when the lines moved, even after the insight was rewritten without it.
+# Titles of shown items, in memory only (never on disk): per key the line its record
+# follows. The 15-min pass re-finds a ticked line by its title when the lines moved, even
+# after the insight was rewritten without it.
 _TITLES: dict[tuple[str, str], dict[str, str]] = {}
 
 
@@ -115,7 +117,7 @@ def _new_item(ref: str, section: str, position: int, candidate: dict | None,
     item = {"kind": kind, "section": section, "position": position,
             "first_shown": _iso(now), "bucket": c.get("bucket"), "date": c.get("date")}
     if kind == "todo":
-        m = re.match(r"^todo:(.+):(\d+)$", ref)
+        m = _TODO.match(ref)
         item["note_id"] = c.get("note_id") or (m.group(1) if m else None)
         item["note_type"] = c.get("note_type")
     elif kind == "event":
@@ -140,6 +142,40 @@ def _line_key(s: Any) -> str:
 
 def _same(a: Any, b: Any) -> bool:
     return _line_key(a) == _line_key(b)
+
+
+def _retire_renamed(items: dict, titles: dict, insight: dict) -> None:
+    """A to-do ref (``todo:<note>:<index>``) whose row title differs from the title its
+    record was shown with names another line now (a line was added, removed or moved
+    above it). Its record keeps following its own line by title under a spare key
+    ``<ref>#<n>`` (never shown, so the page can't act on it), and the ref is free for a
+    fresh record of the new line."""
+    for _, _, row in _rows(insight):
+        ref, title = row["ref"], row.get("title")
+        if (ref in items and ref.startswith("todo:") and title and ref in titles
+                and not _same(titles[ref], title)):
+            n = 1
+            while f"{ref}#{n}" in items:
+                n += 1
+            items[f"{ref}#{n}"] = items.pop(ref)
+            titles[f"{ref}#{n}"] = titles.pop(ref)
+
+
+def _adopt(items: dict, titles: dict, ref: str, title: Any, shown: set[str]) -> bool:
+    """Move the record of the same line (same note, same title) kept under a key the
+    insight doesn't show (an older ref or a spare key) to ``ref``, the line's ref now, so
+    one line has one record. True when one was moved."""
+    m = _TODO.match(ref)
+    if not m or not title or "#" in ref:
+        return False
+    for key in list(items):
+        if (key != ref and key not in shown and items[key].get("kind") == "todo"
+                and str(items[key].get("note_id") or "") == m.group(1)
+                and key in titles and _same(titles[key], title)):
+            items[ref] = items.pop(key)
+            titles.pop(key, None)
+            return True
+    return False
 
 
 def _vote_counts(insight: dict) -> dict[str, int]:
@@ -177,11 +213,11 @@ def _todo_outcome(ref: str, item: dict, note: dict | None, title: str | None,
     """``done``, ``open``, ``moved`` or ``gone`` from the note as it is now: the line at
     the ref's index when its text is the title, else the line with that title (as
     ``/today`` finds it); without a known title, the line at the index."""
-    m = re.match(r"^todo:.+:(\d+)$", ref)
+    m = _TODO.match(ref)
     if note is None or m is None:
         return "gone"
     items = note.get("items") or []
-    index = int(m.group(1))
+    index = int(m.group(2))
     at = None
     if index < len(items) and (title is None or _same(items[index][0], title)):
         at = index
@@ -233,12 +269,14 @@ def observe(owner: str | None, insight: dict, inputs: dict, *,
         data = load(owner, day) or blank(day)
         items = data["items"]
         titles = _TITLES.setdefault((_ti()._slug(owner), day), {})
+        _retire_renamed(items, titles, insight)
+        shown = {row["ref"] for _, _, row in _rows(insight)}
         for section, position, row in _rows(insight):
             ref = row["ref"]
-            if ref not in items:
+            if ref not in items and not _adopt(items, titles, ref, row.get("title"), shown):
                 items[ref] = _new_item(ref, section, position, by_ref.get(ref), now)
             if row.get("title"):
-                titles.setdefault(ref, str(row["title"]))  # the item first shown
+                titles[ref] = str(row["title"])  # the line the ref names now
         for ref in items:
             if ref not in titles and by_ref.get(ref, {}).get("title"):
                 titles[ref] = str(by_ref[ref]["title"])
@@ -267,6 +305,8 @@ def _observe_items(owner: str | None, items: dict, titles: dict, inputs: dict,
             continue  # owner mark; ignored only after finalize
         kind = item.get("kind")
         if kind == "todo":
+            if "#" in ref and ref not in titles:
+                continue  # a spare key without its title (after a restart): can't tell
             seen = _todo_outcome(ref, item, notes.get(item.get("note_id")), titles.get(ref), tz)
         elif kind == "event":
             seen = _event_outcome(ref, item, occurrences, tz)
@@ -299,13 +339,21 @@ def record(owner: str | None, ref: str, outcome: str, *, now: datetime | None = 
         raise LookupError("no insight yet")
     shown = {row["ref"]: (section, position) for section, position, row in
              reversed(list(_rows(insight)))}
+    if "#" in ref:
+        raise LookupError("not in today's insight")  # a spare key is never shown
     with _lock(owner):
         data = load(owner, day) or blank(day)
         items = data["items"]
-        if ref not in items:
+        titles = _TITLES.setdefault((ti._slug(owner), day), {})
+        _retire_renamed(items, titles, insight)  # the insight may be newer than the pass
+        title = next((row.get("title") for _, _, row in _rows(insight) if row["ref"] == ref),
+                     None)
+        if ref not in items and not _adopt(items, titles, ref, title, set(shown)):
             if ref not in shown:
                 raise LookupError("not in today's insight")
             items[ref] = _new_item(ref, *shown[ref], None, now)
+        if title:
+            titles[ref] = str(title)
         item = items[ref]
         if outcome in ("done", "open") and item.get("kind") not in ("todo", "loop"):
             raise ValueError("only to-dos and open loops can be done")
@@ -433,7 +481,8 @@ def _missing_rows(owner: str | None, insight: dict, outcome: dict | None,
                   mark: str) -> dict[str, dict]:
     items = _items_of(outcome)
     shown = {row["ref"] for _, _, row in _rows(insight)}
-    refs = [r for r, it in items.items() if it.get("outcome") == mark and r not in shown]
+    refs = [r for r, it in items.items()
+            if it.get("outcome") == mark and r not in shown and "#" not in r]
     if not refs:
         return {}
     titles = _resolve_titles(owner, str(insight.get("date") or ""), refs)
