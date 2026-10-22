@@ -27,6 +27,7 @@ def store(tmp_path, monkeypatch):
     monkeypatch.setattr(ti, "_RUN_LOCKS", {})
     monkeypatch.setattr(io, "_TITLES", {})
     monkeypatch.setattr(io, "_LOCKS", {})
+    monkeypatch.setattr(io, "_FINAL", {})
     archived = {}
     monkeypatch.setattr(io, "_load_notes_by_id",
                         lambda owner, ids: {i: archived[i] for i in ids if i in archived})
@@ -370,6 +371,25 @@ def test_the_first_pass_after_midnight_finalizes_yesterday(store):
     assert io.finalize_pending("alice", date(2026, 10, 22)) == 0
     assert [d["date"] for d in io.days("alice", date(2026, 10, 20), date(2026, 10, 21))] == \
         ["2026-10-20", DAY]
+
+
+def test_finalize_pending_reads_the_window_once(store, monkeypatch):
+    today = date(2026, 10, 21)
+    for back in (1, 2, 28, 29, 40):
+        day = (today - timedelta(days=back)).isoformat()
+        io.save("alice", {**io.blank(day), "items": {
+            "todo:n1:0": {"kind": "todo", "outcome": "open", "at": None, "via": None}}})
+    io._TITLES[(ti._slug("alice"), "2026-10-20")] = {"todo:n1:0": "Pay rent"}
+    reads = []
+    real_load = io.load
+    monkeypatch.setattr(io, "load", lambda owner, day: reads.append(day) or real_load(owner, day))
+    assert io.finalize_pending("alice", today, now=NOW) == 3  # yesterday … 28 days back
+    assert io.load("alice", "2026-09-22")["final"] is False  # 29 days back: left alone
+    assert io.load("alice", "2026-09-11")["final"] is False
+    assert (ti._slug("alice"), "2026-10-20") not in io._TITLES  # evicted with its day
+    reads.clear()
+    assert io.finalize_pending("alice", today, now=NOW) == 0
+    assert reads == []  # final days aren't parsed again
 
 
 def test_push_helpers(store):

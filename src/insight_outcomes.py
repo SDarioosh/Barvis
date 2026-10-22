@@ -21,7 +21,7 @@ import logging
 import re
 import threading
 from datetime import date as Date
-from datetime import datetime, timezone, tzinfo
+from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
@@ -35,6 +35,7 @@ SECTIONS = ("focus", "coming_up", "also")
 _DAY = re.compile(r"^(\d{4}-\d{2}-\d{2})\.outcome\.json$")
 _TODO = re.compile(r"^todo:(.+):(\d+)(?:#\d+)?$")  # ``#n``: a spare key (``_retire_renamed``)
 TITLE_CHARS = 200  # candidate titles are a line's first 200 characters
+FINALIZE_DAYS = 28  # finalize_pending looks this far back (the weights' window)
 
 _GUARD = threading.Lock()
 _LOCKS: dict[str, threading.RLock] = {}
@@ -42,6 +43,8 @@ _LOCKS: dict[str, threading.RLock] = {}
 # follows. The 15-min pass re-finds a ticked line by its title when the lines moved, even
 # after the insight was rewritten without it.
 _TITLES: dict[tuple[str, str], dict[str, str]] = {}
+# Days known to be final, per outcome folder, so finalize_pending doesn't read them again.
+_FINAL: dict[str, set[str]] = {}
 
 
 def _ti():
@@ -395,19 +398,29 @@ def record(owner: str | None, ref: str, outcome: str, *, now: datetime | None = 
 
 
 # ---------------------------------------------------------------------- finalize
+def _final_days(owner: str | None) -> set[str]:
+    return _FINAL.setdefault(str(outcome_path(owner, "2000-01-01").parent), set())
+
+
+def _closed(owner: str | None, day: str) -> None:
+    """A final day: remembered as such, and its titles leave memory."""
+    _final_days(owner).add(day)
+    _TITLES.pop((_ti()._slug(owner), day), None)
+
+
 def finalize(owner: str | None, day: str, *, now: datetime | None = None) -> dict:
     """Close a day: items still ``open`` become ``ignored``. Idempotent; {} without a file."""
     with _lock(owner):
         data = load(owner, day)
         if data is None:
             return {}
-        if data.get("final"):
-            return data
-        for item in data["items"].values():
-            if item.get("outcome") == "open":
-                _set(item, "ignored", "final", now)
-        data["final"], data["finalized"] = True, _iso(now)
-        save(owner, data)
+        if not data.get("final"):
+            for item in data["items"].values():
+                if item.get("outcome") == "open":
+                    _set(item, "ignored", "final", now)
+            data["final"], data["finalized"] = True, _iso(now)
+            save(owner, data)
+        _closed(owner, day)
         return data
 
 
@@ -421,14 +434,23 @@ def _files(owner: str | None) -> list[tuple[str, Path]]:
 
 
 def finalize_pending(owner: str | None, today: Date, *, now: datetime | None = None) -> int:
-    """Finalize every day before ``today`` that isn't final yet (the first pass after
-    local midnight closes yesterday). Returns how many were finalized."""
+    """Finalize every day of the ``FINALIZE_DAYS`` before ``today`` that isn't final yet
+    (the first pass after local midnight closes yesterday). Older days are left alone (the
+    weights don't read them), and a day known final in this process isn't read again.
+    Returns how many were finalized."""
+    lo, hi = (today - timedelta(days=FINALIZE_DAYS)).isoformat(), today.isoformat()
+    final = _final_days(owner)
+    final.difference_update({d for d in final if d < lo})
     count = 0
     for day, _ in _files(owner):
-        if day >= today.isoformat():
+        if not lo <= day < hi or day in final:
             continue
         data = load(owner, day)
-        if data is not None and not data.get("final"):
+        if data is None:
+            continue
+        if data.get("final"):
+            _closed(owner, day)
+        else:
             finalize(owner, day, now=now)
             count += 1
     return count

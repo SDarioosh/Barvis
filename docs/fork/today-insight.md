@@ -293,8 +293,10 @@ each line is counted once by the weights and the trends, and a tick on the page
 keys are never shown and can't be marked; after a restart (titles lost) a spare key is
 left as it is until the day is finalized.
 
-**Finalize**: the first pass after local midnight finalizes every earlier day that isn't
-final (`final: true`, `finalized`); a final day doesn't change any more.
+**Finalize**: the first pass after local midnight finalizes every earlier day of the last
+28 days (the weights' window) that isn't final (`final: true`, `finalized`); a final day
+doesn't change any more. Older days are left alone, and a day known final isn't read
+again by the same process. A finalized day's titles leave memory.
 
 **Owner order** (`apply_owner_order`): promoted rows come first in Do first (moved there from
 any section, the latest promotion first), dismissed rows are left out. The page, the token
