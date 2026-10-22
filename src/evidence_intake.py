@@ -82,7 +82,7 @@ PROJECT_ATTRIBUTES = ("project_status", "deadline")
 PROJECT_WORDS = re.compile(r"\b(project|launch|release|migration|plan)\b", re.IGNORECASE)
 GENERIC_SUBJECT = "General"  # the subject of evidence that names none
 OWNER_DISPLAY = "Owner"
-_OWNER_NAMES = frozenset({"", "me", "i", "myself", "owner", "the owner"})
+_OWNER_NAMES = frozenset({"", "me", "i", "myself", "owner", "the owner", "user", "the user"})
 MAX_VALUE_CHARS = 120
 EVENTS_KEPT = 50  # per belief: the history stays small
 PREFERENCE_WORDS = frozenset({
@@ -1473,8 +1473,12 @@ def sync_people(owner: str | None, source: str, people: Iterable[Mapping], *,
     maps to, the owner subject for ``is_owner``, else the subject whose name or alias
     matches, else a new ``person``. Names and aliases the subject doesn't have become
     aliases; a matched inferred ``thing`` becomes a ``person``. A person the source no
-    longer lists (e.g. merged there) keeps its mapping. Returns counts ``people``,
-    ``subjects_added``, ``mapped`` (new or moved mappings) and ``aliases_added``."""
+    longer lists (e.g. merged there) keeps its mapping. When the source marks no one as
+    the owner, a person whose name is an owner word (Me, I, Myself, Owner, User …) is the
+    owner: its id maps to the owner subject and its name becomes an owner alias (a stray
+    subject an earlier pass made for it, still empty, is removed). Returns counts
+    ``people``, ``subjects_added``, ``mapped`` (new or moved mappings) and
+    ``aliases_added``."""
     owner = owner or ""
     now = _now(now)
     stamp = _stamp(now)
@@ -1482,9 +1486,9 @@ def sync_people(owner: str | None, source: str, people: Iterable[Mapping], *,
     with _WRITE:
         with _connect(write=True) as db:
             cache = _Subjects(db, owner)
+            people = [p for p in people if isinstance(p, Mapping)]
+            owner_reported = any(_truthy(p.get("is_owner")) for p in people)
             for person in people:
-                if not isinstance(person, Mapping):
-                    continue
                 person_id = str(person.get("id") if person.get("id") is not None else "").strip()
                 name = _clean_name(person.get("name"))
                 if not person_id:
@@ -1498,6 +1502,17 @@ def sync_people(owner: str | None, source: str, people: Iterable[Mapping], *,
                     counts["subjects_added"] += 0 if had_owner else 1
                     _name_owner(cache, subject_id, name, stamp)
                     moved = cache.map(subject_id, source, person_id, name, stamp, move=True)
+                elif name and _is_owner_name(name) and not owner_reported:
+                    # an owner word with no is_owner person: the module's owner by another name
+                    had_owner = cache.owner_id is not None
+                    stray = cache.mapped(source, person_id)
+                    subject_id = cache.owner_subject(name, stamp)
+                    counts["subjects_added"] += 0 if had_owner else 1
+                    counts["aliases_added"] += cache.add_alias(subject_id, name, stamp)
+                    moved = cache.map(subject_id, source, person_id, name, stamp, move=True)
+                    if stray is not None and stray != subject_id:
+                        _drop_empty_owner_word(cache, stray)
+                        cache.by_key[subject_key(name)] = subject_id
                 else:
                     subject_id = cache.mapped(source, person_id)
                     if subject_id is None:
@@ -1521,6 +1536,23 @@ def sync_people(owner: str | None, source: str, people: Iterable[Mapping], *,
         if mirror:
             sync_memory(owner, now=now)
     return counts
+
+
+def _drop_empty_owner_word(cache: _Subjects, subject_id: int) -> None:
+    """Remove a subject an earlier people pass made for the owner under an owner word
+    ("Me"): only when nothing else uses it (no beliefs, source ids, contact, owner's kind)."""
+    row = cache.row(subject_id)
+    db = cache.db
+    if (row is None or row["kind"] == "owner" or row["kind_by"] != "auto"
+            or row["contact_id"] or not _is_owner_name(row["display"])
+            or db.execute("SELECT 1 FROM beliefs WHERE subject_id = ? LIMIT 1",
+                          (subject_id,)).fetchone()
+            or db.execute("SELECT 1 FROM subject_sources WHERE subject_id = ? LIMIT 1",
+                          (subject_id,)).fetchone()):
+        return
+    db.execute("DELETE FROM subjects WHERE id = ?", (subject_id,))
+    for key in [k for k, v in cache.by_key.items() if v == subject_id]:
+        del cache.by_key[key]
 
 
 def _name_owner(cache: _Subjects, subject_id: int, name: str, stamp: str) -> None:
@@ -1549,15 +1581,16 @@ def _truthy(value: Any) -> bool:
 def structure_candidates(owner: str | None, limit: int = 40) -> list[dict]:
     """Confirmed beliefs the Belief Structure task hasn't structured yet, or whose shown
     text changed since (a correction or a source edit clears ``structured_at``), oldest
-    first: ``id``, ``subject`` (the subject's name), ``kind`` (the subject's kind) and
-    ``text`` (what memory shows)."""
+    first: ``id``, ``subject`` (the subject's name), ``kind`` (the subject's kind),
+    ``text`` (what memory shows), ``first_seen`` and ``last_seen`` (when it was said)."""
     owner = owner or ""
     with _connect() as db:
         rows = db.execute(f"{_BELIEF_SELECT} WHERE b.owner = ? AND b.status = 'confirmed' "
                           "AND b.structured_at IS NULL ORDER BY b.id LIMIT ?",
                           (owner, max(1, int(limit)))).fetchall()
     return [{"id": r["id"], "subject": r["subject_display"] or r["subject"] or "",
-             "kind": r["subject_kind"] or "", "text": r["owner_text"] or r["text"]}
+             "kind": r["subject_kind"] or "", "text": r["owner_text"] or r["text"],
+             "first_seen": r["first_seen"] or "", "last_seen": r["last_seen"] or ""}
             for r in rows]
 
 
@@ -1577,7 +1610,9 @@ def apply_structure(owner: str | None, belief_id: int, attribute: Any, value: An
                     expected_text: str | None = None, now: datetime | None = None) -> bool:
     """Write a belief's structure: ``attribute`` (unknown -> ``other``), ``value`` (at most
     120 characters), ``valid_from`` (an ISO date or None) and ``structured_at`` = now;
-    ``valid_to`` becomes ``valid_until`` only when the belief has none yet. Then a
+    ``valid_to`` becomes ``valid_until`` only when the belief has none yet, and never when
+    it is in the past or before the belief was last seen (a guessed end date must not
+    expire a current belief). Then a
     ``project_status`` or ``deadline`` makes the belief's subject a project (when it is an
     inferred thing that no source knows as a person). Returns False (nothing written) when
     the belief is gone, no longer confirmed, or its shown text isn't ``expected_text``."""
@@ -1595,7 +1630,8 @@ def apply_structure(owner: str | None, belief_id: int, attribute: Any, value: An
         fields: dict[str, Any] = {"attribute": attribute, "value": clean_value(value),
                                   "valid_from": _day(valid_from), "structured_at": stamp}
         until = _day(valid_to)
-        if until and not row["valid_until"]:
+        if (until and not row["valid_until"] and until >= now.date().isoformat()
+                and until >= (row["last_seen"] or "")):
             fields["valid_until"] = until
         _set(db, row["id"], stamp, **fields)
         if attribute in PROJECT_ATTRIBUTES and row["subject_id"] is not None:

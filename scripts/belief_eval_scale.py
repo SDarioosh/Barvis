@@ -12,7 +12,7 @@ given, and measures it:
   ``memory.json`` size. Every belief must end in its planned status.
 * **Structure**: ``src.belief_structure.run`` over every confirmed belief with a
   deterministic fake model (it maps each text template to its attribute): how many got
-  structured, how many as planned, and the time per batch of 10.
+  structured, how many as planned, and the time per batch (``BELIEF_STRUCTURE_BATCH``, 5).
 * **Retrieval** (stage 2.3): a fixed set of generated questions with known expected
   belief ids (by subject name, by attribute, by alias, about the owner) asked of
   ``src.belief_search.search_beliefs`` (confirmed only): top-1, top-5 recall and p50/p95
@@ -621,7 +621,7 @@ async def fake_llm(messages: list[dict]) -> str:
     items = []
     for row in rows:
         attribute, value = classify(row["text"])
-        items.append({"id": row["id"], "attribute": attribute, "value": value,
+        items.append({"n": row["n"], "attribute": attribute, "value": value,
                       "valid_from": None, "valid_to": None})
     return json.dumps({"items": items})
 
@@ -1077,7 +1077,7 @@ def report(results: dict, checks: list[Check], out=None) -> int:
     print("\nstructure (fake model)", file=out)
     row("structured / candidates", f"{s['structured']} / {s['candidates']} "
                                    f"({s['other']} other, {s['as_planned']} as planned)")
-    row("time per batch of 10", f"{s['ms_per_batch']:.0f} ms ({s['batches']} batches, "
+    row("time per batch", f"{s['ms_per_batch']:.0f} ms ({s['batches']} batches, "
                                 f"{s['ms'] / 1000:.1f} s)")
     row("hourly runs to structure all (40/run)", str(s["hourly_runs_to_finish"]))
     r = results["retrieval"]

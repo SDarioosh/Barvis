@@ -403,7 +403,8 @@ def test_apply_structure_writes_and_validates(data):
     b = confirmed("Priya is allergic to peanuts")
     assert ei.structure_candidates("alice") == [{
         "id": b["id"], "subject": "Priya Nair", "kind": "person",
-        "text": "Priya is allergic to peanuts"}]
+        "text": "Priya is allergic to peanuts", "first_seen": "2026-10-01",
+        "last_seen": "2026-10-01"}]
     assert ei.apply_structure("alice", b["id"], "Allergy", "peanuts", "2020-01-01",
                               "not a date", expected_text=b["text"], now=T1)
     got = ei.get_belief("alice", b["id"])
@@ -488,3 +489,57 @@ def test_subject_summary_groups_confirmed_beliefs(data):
     assert ei.subject_summary("alice", subjects()["Lena"]["id"]) == ""
     with pytest.raises(ei.SubjectNotFound):
         ei.subject_summary("bob", sid)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("word", ["Me", "the user", "Myself"])
+async def test_an_owner_word_person_is_the_owner_when_no_one_is_marked(data, word):
+    """P2-D1: a module that marks no ``is_owner`` person but lists one named "Me"."""
+    people = [{"id": 2, "name": word, "aliases": [], "is_owner": False},
+              {"id": 3, "name": "Alice", "aliases": [], "is_owner": False}]
+    module = Module([fact(10, "Me likes figs", word, about="owner", person_id=2),
+                     fact(11, "Alice plays chess", "Alice", person_id=3)], people)
+    stats = await mf.sync("alice", module, now=T0)
+    assert stats["people"] == 2
+    kinds = sorted(s["kind"] for s in ei.list_subjects("alice"))
+    assert kinds == ["owner", "person"]
+    (owner,) = ei.list_subjects("alice", kind="owner")
+    assert owner["sources"] == [{"source": "odysseus-sound", "person_id": "2", "name": word}]
+    assert word in owner["aliases"] and owner["counts"]["total"] == 1
+    assert belief("Me likes figs")["subject_id"] == owner["id"]
+
+
+@pytest.mark.asyncio
+async def test_an_owner_word_person_stays_a_person_when_the_owner_is_marked(data):
+    people = [{"id": 1, "name": "Sam Rivera", "aliases": [], "is_owner": True},
+              {"id": 2, "name": "Me", "aliases": [], "is_owner": False}]
+    await mf.sync("alice", Module([], people), now=T0)
+    got = subjects()
+    assert got["Sam Rivera"]["kind"] == "owner" and got["Me"]["kind"] == "person"
+
+
+def test_a_stray_owner_word_subject_from_an_earlier_pass_is_folded_in(data):
+    ei.submit("alice", [ev("notes", "a", "I like figs")], now=T0)
+    stray = ei.list_subjects("alice")[0]["id"]
+    with sqlite3.connect(data / "beliefs.db") as db:  # as the old code left it
+        db.execute("INSERT INTO subjects (id, owner, key, display, kind, created_at, "
+                   "updated_at) VALUES (50, 'alice', 'me', 'Me', 'person', 't', 't')")
+        db.execute("INSERT INTO subject_sources (subject_id, owner, source, "
+                   "source_person_id, name, updated_at) VALUES "
+                   "(50, 'alice', 'odysseus-sound', '2', 'Me', 't')")
+    counts = ei.sync_people("alice", "odysseus-sound",
+                            [{"id": 2, "name": "Me", "is_owner": False}], now=T0)
+    assert counts["mapped"] == 1
+    (owner,) = ei.list_subjects("alice")
+    assert owner["id"] == stray and owner["sources"][0]["person_id"] == "2"
+    assert ei.find_subject("alice", "me")["id"] == stray
+
+
+def test_apply_structure_never_sets_a_past_or_pre_sighting_end(data):
+    b = confirmed("Priya rents the flat until 2026-10-18")  # last seen 2026-10-01
+    assert ei.apply_structure("alice", b["id"], "plans", "flat", None, "2026-09-01", now=T0)
+    assert ei.get_belief("alice", b["id"])["valid_until"] is None  # before last seen
+    assert ei.apply_structure("alice", b["id"], "plans", "flat", None, "2026-10-18", now=T0)
+    assert ei.get_belief("alice", b["id"])["valid_until"] is None  # in the past
+    assert ei.apply_structure("alice", b["id"], "plans", "flat", None, "2026-12-01", now=T0)
+    assert ei.get_belief("alice", b["id"])["valid_until"] == "2026-12-01"
