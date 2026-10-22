@@ -19,6 +19,9 @@ redirects there); its script calls:
   list_name?}: Move to calendar / to-dos / a to-do list, Change time
 * ``GET  /api/modules/sound/todo-lists``: the owner's to-do list titles (the list picker)
 * ``POST /api/modules/sound/action-items/{id}/undo``: remove the Odysseus entry, dismiss
+* ``POST /api/modules/sound/unfile-todos`` {apply?, ids?, all?}: the one-off clean-up of to-dos
+  filed one per voice-note item (``unfile_auto_todos``; a dry run unless ``apply``;
+  ``scripts/unfile_voice_note_todos.py`` calls it)
 
 ``GET /modules/sound/record`` serves ``static/call-recorder.html`` ("Record a call"); its
 script calls ``GET /api/modules/sound/record/config``, ``POST /api/modules/sound/record/chunk``
@@ -82,6 +85,12 @@ class MoveItem(BaseModel):
     due_date: str | None = Field(default=None, max_length=10)  # YYYY-MM-DD or "none"
     due_time: str | None = Field(default=None, max_length=5)  # HH:MM or "none"
     list_name: str | None = Field(default=None, max_length=60)  # a to-do list or "none"
+
+
+class UnfileTodos(BaseModel):
+    apply: bool = False
+    ids: list[int] | None = Field(default=None, max_length=500)
+    all: bool = False  # also entries filed in explicit mode or from the page
 
 
 class NameSpeaker(BaseModel):
@@ -317,6 +326,20 @@ def setup_sound_module_routes() -> APIRouter:
         result = await _filing_call("undo", mai.unfile_item(owner, item_id, call))
         return {"ok": True, "message": "Undone: removed from Odysseus and dismissed.",
                 "result": result, "item": await _item_now(call, owner, item_id)}
+
+    @router.post("/api/modules/sound/unfile-todos", dependencies=[Depends(require_admin)])
+    async def unfile_todos(body: UnfileTodos, request: Request) -> dict[str, Any]:
+        """List (dry run) or remove the single to-dos filed from voice notes."""
+        from src import module_action_items as mai
+
+        fn = getattr(mai, "unfile_auto_todos", None)
+        if fn is None:
+            raise HTTPException(503, "This Odysseus can't clean up filed to-dos.")
+        only = set(body.ids) if body.ids is not None else None
+        result = await _filing_call("clean up", fn(_owner(request), _caller(),
+                                                   apply=body.apply, only=only,
+                                                   include_all=body.all))
+        return {"ok": True, **result}
 
     @router.post("/api/modules/sound/action-items/{item_id}",
                  dependencies=[Depends(require_admin)])
