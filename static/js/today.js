@@ -208,11 +208,13 @@ function generatedLabel(iso) {
 function render(insight) {
   notes.clear();
   const main = $('.ti-main');
+  // The "nothing to report" headline is written without the model, so there is nothing to rate.
+  const hasItems = SECTIONS.some(([key]) => Array.isArray(insight[key]) && insight[key].length);
   const parts = [el('div', { className: 'bs-card' },
     el('p', { className: 'bs-headline' }, insight.headline || 'Nothing to add for today.'),
     el('div', { className: 'bs-meta' }, [insight.date, generatedLabel(insight.generated)]
       .filter(Boolean).join(' · ')),
-    voteRow(insight))];
+    hasItems ? voteRow(insight) : null)];
   for (const [key, label] of SECTIONS) {
     const rows = Array.isArray(insight[key]) ? insight[key] : [];
     if (!rows.length) continue;
