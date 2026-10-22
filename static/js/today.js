@@ -5,6 +5,11 @@
 // are ticked with the notes API's own toggle route
 // (POST /api/notes/<id>/items/<index>/toggle), like the notes page.
 
+// Phase 3: the weights table and "why is this first?" (todayWeights.js), weekly trends
+// (todayTrends.js). Contract: docs/fork/today-insight.md.
+import { mountWeights, renderWhy } from './todayWeights.js';
+import { mountTrends } from './todayTrends.js';
+
 let root = null; // one mount per document
 const $ = (sel) => root.querySelector(sel);
 
@@ -297,8 +302,12 @@ export function mountToday(target) {
   root.replaceChildren(
     el('div', { className: 'bs-row', style: 'justify-content:flex-end;margin:0 0 8px' }, button),
     el('div', { className: 'bs-status ti-note', hidden: true }),
-    el('div', { className: 'ti-main' }, el('div', { className: 'bs-status' }, 'Loading…')));
+    el('div', { className: 'ti-main' }, el('div', { className: 'bs-status' }, 'Loading…')),
+    el('div', { className: 'ti-weights' }),
+    el('div', { className: 'ti-trends' }));
   button.addEventListener('click', refresh);
+  mountWeights($('.ti-weights'));
+  mountTrends($('.ti-trends'));
   load();
   return { refresh: load };
 }

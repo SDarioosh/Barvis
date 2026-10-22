@@ -125,4 +125,12 @@ def setup_today_insight_routes() -> APIRouter:
         return JSONResponse(status_code=202, content={
             "status": status, "generated": (current or {}).get("generated")})
 
+    # Phase 3: outcome log, weights and trends (docs/fork/today-insight.md)
+    from routes.insight_outcome_routes import setup_insight_outcome_routes
+    from routes.insight_trends_routes import setup_insight_trends_routes
+    from routes.insight_weights_routes import setup_insight_weights_routes
+
+    for sub in (setup_insight_outcome_routes(), setup_insight_weights_routes(),
+                setup_insight_trends_routes()):
+        router.include_router(sub)
     return router

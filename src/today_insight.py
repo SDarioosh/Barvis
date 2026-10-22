@@ -217,7 +217,9 @@ def todo_candidates(notes: Iterable[Any], today: Date, tz: tzinfo,
             out.append({"ref": f"todo:{n.id}:{index}", "kind": "todo", "bucket": bucket,
                         "title": text[:200], "date": day.isoformat() if day else None,
                         "time": None, "list": title[:80] or None,
-                        "pinned": bool(getattr(n, "pinned", False))})
+                        "pinned": bool(getattr(n, "pinned", False)),
+                        "note_id": str(n.id),
+                        "note_type": getattr(n, "note_type", None) or "checklist"})
     return out
 
 
@@ -278,23 +280,37 @@ def event_candidates(occurrences: Iterable[dict], now_local: datetime) -> list[d
 
 
 def order_candidates(todos: list[dict], events: list[dict],
-                     limit: int = MAX_CANDIDATES) -> list[dict]:
-    """Overdue and due today (by date and time), then due soon by date, then items of
-    pinned notes, then undated, then later; at most ``limit``."""
+                     limit: int = MAX_CANDIDATES, *, weights: dict | None = None,
+                     dismissed: Iterable[str] = ()) -> list[dict]:
+    """The published rule order (docs/fork/today-insight.md#rule-order), at most ``limit``:
+    tier 0 overdue and due today, 1 due soon, 2 items of pinned notes, 3 undated, 4 later;
+    within a tier higher weight first (``src/insight_weights.py``; never across tiers),
+    then date and time, then input order. Each candidate gets its ``weight``. Refs in
+    ``dismissed`` (the owner's "not today") are left out."""
+    from src import insight_weights
+
+    def tier(c):
+        b = c["bucket"]
+        if b in ("overdue", "due_today"):
+            return 0
+        if b == "due_soon":
+            return 1
+        if c.get("pinned"):
+            return 2
+        return 3 if b == "undated" else 4
+
     def key(pair):
         seq, c = pair
-        b, day, clock = c["bucket"], c.get("date") or "", c.get("time") or ""
-        if b in ("overdue", "due_today"):
-            return (0, day, clock, seq)
-        if b == "due_soon":
-            return (1, day, clock, seq)
-        if c.get("pinned"):
-            return (2, "", "", seq)
-        if b == "undated":
-            return (3, "", "", seq)
-        return (4, day, clock, seq)
+        t = tier(c)
+        dated = t in (0, 1, 4)
+        return (t, -c["weight"], (c.get("date") or "") if dated else "",
+                (c.get("time") or "") if dated else "", seq)
 
-    ordered = [c for _, c in sorted(enumerate([*todos, *events]), key=key)]
+    gone = set(dismissed or ())
+    pool = [c for c in [*todos, *events] if c["ref"] not in gone]
+    for c in pool:
+        c["weight"] = insight_weights.candidate_weight(c, weights) if weights else 0
+    ordered = [c for _, c in sorted(enumerate(pool), key=key)]
     return ordered[:limit]
 
 
@@ -490,38 +506,99 @@ def _module_caller() -> CallTool | None:
         return None
 
 
-async def _module_inputs(owner: str | None, today: Date,
-                         call: CallTool | None) -> tuple[str | None, list[str]]:
+async def _module_inputs(owner: str | None, today: Date, call: CallTool | None
+                         ) -> tuple[str | None, list[str], list[dict]]:
+    """(digest text, open action-item lines for the prompt, the raw JSON rows)."""
     if call is None:
-        return None, []
-    digest, items = None, []
+        return None, [], []
+    digest, items, rows = None, [], []
     try:
         digest = _digest_text(await call("get_daily_digest", {"date": today.isoformat()}))
     except Exception as e:  # noqa: BLE001 -- the insight is written without it
         logger.info("today insight: get_daily_digest failed: %s", e)
     try:
-        items = _action_item_lines(owner, await call("list_action_items",
-                                                     {"status": "open", "format": "json"}))
+        raw = await call("list_action_items", {"status": "open", "format": "json"})
+        from src import module_action_items as mai
+
+        rows = [r for r in (mai.parse_items_json(raw) or []) if isinstance(r, dict)]
+        items = _action_item_lines(owner, raw)
     except Exception as e:  # noqa: BLE001
         logger.info("today insight: list_action_items failed: %s", e)
-    return digest, items
+    return digest, items, rows
 
 
 async def gather(owner: str | None, *, now: datetime | None = None,
                  call: CallTool | None | bool = True) -> dict:
-    """Everything the insight is built from (``call=True``: the module if connected)."""
+    """Everything the insight is built from (``call=True``: the module if connected).
+    Phase 3 additions (docs/fork/today-insight.md): ``weights`` (the day's rule weights),
+    ``notes_state``/``occurrences``/``action_rows`` (what the outcome log observes),
+    ``extra`` (open loops and this week's plans, refs ``loop:``/``belief:``) and
+    ``routines`` (a short text)."""
     tz = owner_timezone(owner)
     now_local = _now_local(tz, now)
     today = now_local.date()
-    todos = todo_candidates(_load_notes(owner), today, tz)
-    events = event_candidates(_load_events(owner, now_local), now_local)
-    candidates = order_candidates(todos, events)
+    notes = _load_notes(owner)
+    occurrences = _load_events(owner, now_local)
+    weights = _learning("insight_weights", "current", {}, owner, today, now=now)
+    marks = _learning("insight_outcomes", "owner_marks", {}, owner, today)
+    todos = todo_candidates(notes, today, tz)
+    events = event_candidates(occurrences, now_local)
+    candidates = order_candidates(todos, events, weights=weights,
+                                  dismissed=(marks or {}).get("dismissed") or ())
     memory = _load_memory(owner, memory_query(candidates))
     caller = _module_caller() if call is True else (call or None)
-    digest, action_items = await _module_inputs(owner, today, caller)
+    digest, action_items, action_rows = await _module_inputs(owner, today, caller)
+    extra = _learning("insight_inputs", "extra_candidates", [], owner, today, action_rows,
+                      now=now) or []
+    gone = set((marks or {}).get("dismissed") or ())
+    extra = [c for c in extra if c.get("ref") not in gone]
+    routines = _learning("insight_routines", "summary", "", owner, today, now=now) or ""
     return {"now": now_local, "today": today, "candidates": candidates, "memory": memory,
-            "digest": digest, "action_items": action_items,
-            "hash": input_hash(candidates, memory, digest, action_items)}
+            "digest": digest, "action_items": action_items, "extra": extra,
+            "routines": routines, "weights": weights or {},
+            "notes_state": notes_state(notes), "occurrences": occurrences,
+            "action_rows": action_rows,
+            "hash": input_hash(candidates, memory, digest,
+                               [action_items, extra, routines])}
+
+
+def notes_state(notes: Iterable[Any]) -> dict[str, dict]:
+    """The to-do notes as the outcome log needs them: per note id its type, due date,
+    archived flag and items as ``(text, done)``."""
+    out = {}
+    for n in notes:
+        out[str(n.id)] = {
+            "note_type": getattr(n, "note_type", None) or "note",
+            "due_date": getattr(n, "due_date", None),
+            "archived": bool(getattr(n, "archived", False)),
+            "items": [(_item_text(i), _item_done(i)) for i in _items(getattr(n, "items", None))]}
+    return out
+
+
+def _learning(module: str, func: str, default: Any, *args, **kwargs) -> Any:
+    """Call a Phase 3 helper (``src/<module>.py``); its failure never stops the insight."""
+    try:
+        import importlib
+
+        return getattr(importlib.import_module(f"src.{module}"), func)(*args, **kwargs)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("today insight: %s.%s failed: %s", module, func, e)
+        return default
+
+
+async def _after_run(owner: str | None, inputs: dict | None, insight: dict | None,
+                     now: datetime | None) -> None:
+    """After every pass (also a no-op): the outcome log observes the day and finalizes
+    earlier days, then the once-a-day push. Failures are logged, never raised."""
+    if insight is not None and inputs is not None:
+        _learning("insight_outcomes", "observe", None, owner, insight, inputs, now=now)
+    if insight is not None:
+        try:
+            from src import insight_push
+
+            await insight_push.maybe_push(owner, insight, now=now)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("today insight: push failed: %s", e)
 
 
 # --------------------------------------------------------------------------- LLM
@@ -899,25 +976,33 @@ async def run(owner: str | None, *, force: bool = False, llm: Llm | None = None,
     previous insight, if any, stays). ``wait_quiet``: see ``default_llm``."""
     async with _run_lock(owner):
         inputs = await gather(owner, now=now, call=call)
-        day = inputs["today"].isoformat()
-        previous = load(owner, day)
-        if not force and previous and previous.get("input_hash") == inputs["hash"]:
-            return "noop", previous
-        if not inputs["candidates"]:
-            status, answer = "empty", {"headline": EMPTY_HEADLINE}
-        else:
-            model = llm or await default_llm(owner, wait_quiet=wait_quiet)
-            status, answer = "generated", await ask_model(model, inputs)
-            if answer is None:
-                logger.warning("today insight for %s: no usable model answer; keeping the "
-                               "previous insight", owner)
-                return "kept", previous
-        async with _lock(owner):
-            votes = (load(owner, day) or {}).get("votes") or []  # votes cast meanwhile
-            insight = make_insight(inputs["today"], answer, inputs["hash"], votes=votes,
-                                   now=now)
-            save(owner, insight)
+        status, insight = await _write(owner, inputs, force=force, llm=llm, now=now,
+                                       wait_quiet=wait_quiet)
+        await _after_run(owner, inputs, insight, now)
         return status, insight
+
+
+async def _write(owner: str | None, inputs: dict, *, force: bool, llm: Llm | None,
+                 now: datetime | None, wait_quiet: bool) -> tuple[str, dict | None]:
+    day = inputs["today"].isoformat()
+    previous = load(owner, day)
+    if not force and previous and previous.get("input_hash") == inputs["hash"]:
+        return "noop", previous
+    if not inputs["candidates"] and not inputs.get("extra"):
+        status, answer = "empty", {"headline": EMPTY_HEADLINE}
+    else:
+        model = llm or await default_llm(owner, wait_quiet=wait_quiet)
+        status, answer = "generated", await ask_model(model, inputs)
+        if answer is None:
+            logger.warning("today insight for %s: no usable model answer; keeping the "
+                           "previous insight", owner)
+            return "kept", previous
+    async with _lock(owner):
+        votes = (load(owner, day) or {}).get("votes") or []  # votes cast meanwhile
+        insight = make_insight(inputs["today"], answer, inputs["hash"], votes=votes,
+                               now=now)
+        save(owner, insight)
+    return status, insight
 
 
 async def generate_now(owner: str | None, *, llm: Llm | None = None,

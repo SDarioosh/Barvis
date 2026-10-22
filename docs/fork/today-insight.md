@@ -189,3 +189,37 @@ type and due date, candidate order and cap, ref validation, the hash no-op, a fa
 memory-order-independent hash, the Refresh route's 202 and the no-wait flag, storage, votes, `context_block`, the token
 route's scope, and the real database loaders. The insight on the owner's data and its
 time on the server's model are part of the Server verification (stage 0.7).
+
+## Learning from outcomes (Phase 3)
+
+Stages 3.1–3.5 of [personal-context.md](personal-context.md#phase-3-learning-from-outcomes).
+Everything rides the Today Insight task above: no new scheduled task and no new upstream
+hook.
+
+### Rule order
+
+<!-- stream B: the published rule table (tiers, weights within a tier) -->
+
+### Outcome log
+
+<!-- stream A -->
+
+### Weights
+
+<!-- stream B -->
+
+### Push
+
+<!-- stream D -->
+
+### Routines
+
+<!-- stream D -->
+
+### Plans and open loops
+
+<!-- stream D -->
+
+### Trends and the insight eval
+
+<!-- stream E -->
