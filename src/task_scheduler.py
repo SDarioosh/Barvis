@@ -1342,7 +1342,11 @@ class TaskScheduler:
         authority = authority.restrict(disabled_tools=get_setting("disabled_tools", []) or ())
         operation = task_operation(task.task_type, task.action, task.prompt)
         if operation is None or not authority.permits(operation):
-            return "Scheduled action has no matching server request authority.", False
+            # Fork: re-seal a built-in task's broken authority, else say why (src/builtin_task_authority.py)
+            from src.builtin_task_authority import recover
+            authority, why = recover(task, get_setting("disabled_tools", []) or ())
+            if authority is None:
+                return f"Scheduled action has no matching server request authority ({why}).", False
 
         action_fn = BUILTIN_ACTIONS.get(task.action)
         if not action_fn:
