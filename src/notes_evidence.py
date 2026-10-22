@@ -42,6 +42,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Iterable
 
+from src import belief_consolidation as consolidation
 from src import evidence_intake as ledger
 
 logger = logging.getLogger(__name__)
@@ -357,6 +358,9 @@ async def run(owner: str | None, *, llm: Llm | None = None, now: datetime | None
         for key, value in ledger.reconcile_source(owner, SOURCE, present, now=now,
                                                   mirror=False).items():
             stats[key] = stats.get(key, 0) + value  # submit counts unconfirmed too
+        merged = consolidation.consolidate(owner, SOURCE, now=now, mirror=False)
+        stats["merged"] = merged["merged"]
+        stats["confirmed"] = stats.get("confirmed", 0) + merged["confirmed"]
         stats["stale"] += ledger.apply_decay(owner, now=now, mirror=False)["stale"]
         memory = ledger.sync_memory(owner, now=now)
         stats.update({f"memory_{k}": v for k, v in memory.items()})
@@ -372,7 +376,8 @@ def changed(stats: dict[str, int]) -> bool:
     """Whether a pass read a note or changed anything in the ledger or memory."""
     return any(stats.get(k) for k in (
         "read", "failed", "beliefs_added", "evidence_added", "evidence_updated", "confirmed",
-        "gone", "stale", "unconfirmed", "memory_added", "memory_updated", "memory_removed"))
+        "merged", "gone", "stale", "unconfirmed", "memory_added", "memory_updated",
+        "memory_removed"))
 
 
 def summary(stats: dict[str, int]) -> str:
@@ -381,7 +386,8 @@ def summary(stats: dict[str, int]) -> str:
     return (f"notes: {stats['read']} read, {stats['skipped']} skipped, "
             f"{stats['unchanged']} unchanged{failed}, {stats['facts']} facts; "
             f"ledger: {stats['beliefs_added']} new, {stats['confirmed']} confirmed, "
-            f"{stats['gone']} gone, {stats['stale']} stale")
+            f"{stats['gone']} gone, {stats['stale']} stale"
+            + (f", {stats['merged']} merged" if stats.get("merged") else ""))
 
 
 async def action_notes_evidence(owner: str, **kwargs) -> tuple[str, bool]:

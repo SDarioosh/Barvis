@@ -121,7 +121,7 @@ rewards easy items; keep the weights visible and the owner in control.
 
 | Stage | Repo | Ships |
 |---|---|---|
-| 4.1 Provenance-aware consolidation | hub | The fork's own consolidation pass that merges only within a source and keeps ids and links; the upstream consolidation job is turned off for sourced entries. |
+| 4.1 Provenance-aware consolidation | hub | The fork's own consolidation pass that merges only within a source and keeps ids and links; the upstream consolidation job is turned off for sourced entries. Built: [beliefs.md](beliefs.md#consolidation-41) (upstream's Memory Tidy task and memory audit skip memories with a `belief_id` or a Phase 0 `module_fact_id` and write them back unchanged; each source's job merges near-duplicate beliefs of that source only: same subject and category, words that differ only in filler or plural/third-person forms, no different negation, number or structured value; owner-decided beliefs never; evidence moves with its source ids and links, the kept belief keeps its memory id; `BELIEF_CONSOLIDATE=off` skips the merge). |
 | 4.2 Retention and export | both | A retention rule for transcripts and audio (the module), memory export in the hub, and a forget that is complete across hub and module. |
 | 4.3 Capture quality | odysseus-sound | Diarization, owner-voice enrollment and the recorder work in `PROGRESS.md`. Capture is the ceiling on everything above: a fact attributed to the wrong speaker is wrong evidence. |
 | 4.4 Shared search | both | The `context` search aggregator from [modules.md](modules.md#shared-search-planned), so chat can ask every module at once and the intake of 1.1 has a uniform read side. |
