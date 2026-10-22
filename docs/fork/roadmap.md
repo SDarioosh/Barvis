@@ -73,6 +73,10 @@ The phased plan for taking in the owner's data, confirming beliefs and using the
 
 No repos exist yet. Each would follow [modules.md](modules.md).
 
+- `odysseus-screen`: screen history from [Screenpipe](https://github.com/screenpipe/screenpipe)
+  on the owner's Mac, behind our own MCP server; wanted by the owner, after personal
+  context Phase 1. Design and privacy rules:
+  [personal-context-prior-art.md](personal-context-prior-art.md#future-module-odysseus-screen-screenpipe).
 - `odysseus-<name>`: _to be decided by the owner._
 
 ## Open questions for the owner
