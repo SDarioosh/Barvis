@@ -1384,6 +1384,8 @@ async function _cmdOpen(args, ctx) {
       research: ['tool-research-btn', 'rail-research'],
       compare: ['tool-compare-btn', 'rail-compare'],
       theme: ['tool-theme-btn', 'rail-theme'],
+      // Fork: module windows (static/js/forkModuleWindows.js)
+      conversations: ['tool-sound-module-btn', 'rail-sound-module'], today: ['tool-today-insight-btn', 'rail-today-insight'],
     };
     const ids = targets[target];
     if (ids && clickFirst(...ids)) return true;
