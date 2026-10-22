@@ -109,9 +109,14 @@ function noteHref(id) {
   return /^[A-Za-z0-9-]{1,80}$/.test(id) ? `/#open=notes&note=${id}` : '/';
 }
 
+// A line's text as the insight titles it: whitespace collapsed, its first 200
+// characters (the server cuts candidate titles there), lower case.
+function lineKey(s) {
+  return String(s || '').replace(/\s+/g, ' ').trim().slice(0, 200).trim().toLowerCase();
+}
+
 function sameText(a, b) {
-  return String(a || '').replace(/\s+/g, ' ').trim().toLowerCase() ===
-    String(b || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  return lineKey(a) === lineKey(b);
 }
 
 // The note as it is now, so a tick finds the right line even if lines moved.

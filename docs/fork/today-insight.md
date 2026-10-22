@@ -268,7 +268,8 @@ gathered (`via: "observed"`):
 | `ignored` | still `open` when the day was finalized (`via: "final"`). |
 
 To-do lines are matched by the ref's index when the line's text is the shown title, else
-re-found by title, as the page does. Titles come from the insight rows and are kept in
+re-found by title, as the page does; texts are compared on their first 200 characters
+(whitespace collapsed, case ignored), where candidate titles are cut. Titles come from the insight rows and are kept in
 memory only; after a restart a line the insight no longer shows is matched by index. Notes
 the pass didn't load (an archived, finished checklist) are looked up by id. Open loops are
 left as they are when the module is unreachable. A passed event stays `open` and becomes

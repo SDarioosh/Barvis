@@ -33,6 +33,7 @@ OWNER_MARKS = ("dismissed", "promoted")
 ACTIONS = ("done", "open", "dismissed", "promoted", "clear")
 SECTIONS = ("focus", "coming_up", "also")
 _DAY = re.compile(r"^(\d{4}-\d{2}-\d{2})\.outcome\.json$")
+TITLE_CHARS = 200  # candidate titles are a line's first 200 characters
 
 _GUARD = threading.Lock()
 _LOCKS: dict[str, threading.RLock] = {}
@@ -131,10 +132,14 @@ def _set(item: dict, outcome: str, via: str, now: datetime | None) -> bool:
     return True
 
 
+def _line_key(s: Any) -> str:
+    """A to-do line's text as candidates title it: whitespace collapsed, its first
+    ``TITLE_CHARS`` characters (``todo_candidates`` cuts there), lower case."""
+    return re.sub(r"\s+", " ", str(s or "")).strip()[:TITLE_CHARS].strip().lower()
+
+
 def _same(a: Any, b: Any) -> bool:
-    def norm(s):
-        return re.sub(r"\s+", " ", str(s or "")).strip().lower()
-    return norm(a) == norm(b)
+    return _line_key(a) == _line_key(b)
 
 
 def _vote_counts(insight: dict) -> dict[str, int]:

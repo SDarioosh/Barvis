@@ -3,7 +3,11 @@ Fictional data only."""
 
 import asyncio
 import json
+import re
+import shutil
+import subprocess
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
@@ -402,3 +406,53 @@ def test_outcome_route_refuses_api_tokens(running):
     client = _client(token=True, scopes=["insight:read"])
     r = client.post("/api/insight/today/outcome", json={"ref": "todo:n1:0", "outcome": "done"})
     assert r.status_code in (401, 403)
+
+
+# ------------------------------------------------------------------ long lines
+LONG = "Call the landlord about the heating " + "and the window in the back room " * 7
+
+
+def test_a_line_longer_than_the_title_is_matched(store):
+    assert len(LONG) > 200
+    [cand] = ti.todo_candidates([_work((LONG, False))], date(2026, 10, 21), TZ)
+    insight = _insight(focus=[("todo:n1:0", cand["title"])])
+    io.observe("alice", insight, _inputs([_work((LONG, False))]), now=NOW)
+    assert _item("todo:n1:0")["outcome"] == "open"
+    io.observe("alice", insight, _inputs([_work(("Water the plants", False), (LONG, True))]),
+               now=LATER)  # moved down and ticked: re-found by its first 200 characters
+    assert _item("todo:n1:0")["outcome"] == "done"
+
+
+# ------------------------------------------------------------------ the page's helpers
+_JS = Path(__file__).resolve().parent.parent / "static" / "js" / "today.js"
+
+
+def _page_functions(*names):
+    """The named top-level functions of static/js/today.js, as source."""
+    src = _JS.read_text(encoding="utf-8")
+    out = []
+    for name in names:
+        m = re.search(rf"^function {name}\(.*?^}}$", src, re.S | re.M)
+        assert m, name
+        out.append(m.group(0))
+    return "\n".join(out)
+
+
+def _node(js):
+    proc = subprocess.run(["node", "--input-type=module"], input=js, capture_output=True,
+                          text=True, timeout=30)
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout.strip())
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node binary not on PATH")
+def test_the_page_finds_a_long_line_by_its_first_200_characters():
+    title = " ".join(LONG.split())[:200]
+    note = {"items": [{"text": "Water the plants"}, {"text": LONG}]}
+    got = _node(_page_functions("lineKey", "sameText", "itemIndex") + f"""
+    const note = {json.dumps(note)};
+    console.log(JSON.stringify([itemIndex(note, {{index: 1}}, {json.dumps(title)}),
+                                itemIndex(note, {{index: 0}}, {json.dumps(title)}),
+                                itemIndex(note, {{index: 0}}, 'Water the plants')]));
+    """)
+    assert got == [1, 1, 0]
