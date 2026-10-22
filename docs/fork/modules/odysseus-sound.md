@@ -295,7 +295,7 @@ conversation (device `computer`, kind `conversation`).
   `localhost`.
 - **Settings:** none. It uses the URL and `?access_token=` of the MCP server named
   `convo` (`SOUND_MODULE_SERVER`) in Settings → MCP. Without that server, or with a
-  module older than MCP 0.5.0, the page says what to fix ("update odysseus-sound").
+  module older than MCP 0.8.0, the page says what to fix ("update odysseus-sound").
   Optional: `SOUND_MODULE_CALL_DEVICE` (default `computer`).
 - Code: `src/call_recorder.py`, routes in `routes/sound_module_routes.py`,
   `static/call-recorder.html`, `static/js/callRecorder.js`; test
@@ -307,7 +307,7 @@ conversation (device `computer`, kind `conversation`).
 
 ## Uploads through the MCP server
 
-Since MCP version 0.5.0 the module's MCP HTTP server (`convo-server mcp --http`) has plain
+Since MCP version 0.8.0 the module's MCP HTTP server (`convo-server mcp --http`) has plain
 HTTP routes next to `/mcp`, behind the same token. They are **not MCP tools**: the model
 never sees them. The module forwards each one to its own ingest API with its ingest
 token, so there is one ingest code path and the ingest token (which also signs
@@ -322,7 +322,7 @@ transcript links) never leaves the module.
 So the MCP token can add recordings. Odysseus finds the module from the `convo` server's
 URL (`/mcp` stripped) and its `access_token` (`src/call_recorder.py`); Odysseus' HTTP MCP
 settings have no header field, so the query token is the only place it is. A module that
-answers 404 on these routes is older than 0.5.0: Odysseus says "update odysseus-sound".
+answers 404 on these routes is older than 0.8.0: Odysseus says "update odysseus-sound".
 
 ## Pairing a phone
 

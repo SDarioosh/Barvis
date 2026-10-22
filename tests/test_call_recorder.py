@@ -170,7 +170,7 @@ def test_forward_chunk_module_errors(monkeypatch, status, detail, expect):
 def test_old_module_says_update(monkeypatch):
     monkeypatch.setattr(rec, "datetime", _FixedDatetime)
 
-    def old(request):  # a module before MCP 0.5.0: Starlette's plain 404
+    def old(request):  # a module before MCP 0.8.0: Starlette's plain 404
         return httpx.Response(404, text="Not Found")
 
     with pytest.raises(rec.RecorderError) as e:
