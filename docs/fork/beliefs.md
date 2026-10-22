@@ -374,6 +374,7 @@ memory shows; structure is for consumers that look beliefs up
 | `pet` | a pet |
 | `plans` | a stated plan |
 | `decision` | a decision taken |
+| `routine` | a regular habit ("Gym on Tuesdays around 18:00"; the calendar routines of the [Today insight](today-insight.md#routines) are submitted as tentative evidence, source `routines`, for the owner to confirm) |
 | `contact_info` | a phone number, email or handle |
 | `health` | a health fact |
 | `project_status` | where a project stands |

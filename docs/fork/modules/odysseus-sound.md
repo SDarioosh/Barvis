@@ -457,7 +457,10 @@ model:
 
 The hub's daily Today insight reads `get_daily_digest` (today) and `list_action_items`
 (`status="open"`, `format="json"`) when the module is connected, and works without them
-otherwise. Details: [../today-insight.md](../today-insight.md).
+otherwise. Its open loops read each row's `with` (the people in the item's conversation,
+module MCP ≥ 0.9.0): an open item of the owner's with someone in `with`, not filed yet,
+is a candidate (`loop:<id>`); an older module without `with` gives no loops. Details:
+[../today-insight.md](../today-insight.md#plans-and-open-loops).
 
 ## Eval and current score
 

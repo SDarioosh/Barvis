@@ -75,6 +75,7 @@ SYNONYMS: dict[str, tuple[str, ...]] = {
     "pet": ("pet", "pets", "dog", "dogs", "cat", "cats"),
     "plans": ("plan", "plans", "planning", "planned"),
     "decision": ("decide", "decides", "decided", "deciding", "decision", "decisions"),
+    "routine": ("routine", "routines", "habit", "habits", "usually", "regularly"),
     "contact_info": ("phone", "email", "number", "handle"),
     "health": ("health", "medication", "condition"),
     "project_status": ("status", "progress"),

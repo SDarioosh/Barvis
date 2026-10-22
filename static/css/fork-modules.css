@@ -182,3 +182,34 @@ html.fm-page body { background: var(--bg); color: var(--fg); margin: 0; display:
                   color: var(--red); display: inline-flex; align-items: center; gap: 6px; }
 .fm-page-top a { color: var(--fg); opacity: 0.7; text-decoration: none; display: inline-flex; }
 .fm-page-top a:hover { opacity: 1; }
+
+/* Today: outcome actions (Phase 3) */
+.fm-root .ti-actions { gap: 6px; margin-top: 4px; flex-wrap: wrap; }
+.fm-root .ti-actions .ti-act { height: 24px; padding: 0 8px; font-size: 11px; }
+.fm-root .ti-why { margin-top: 4px; font-size: 12px; line-height: 1.45; }
+.fm-root .ti-dismissed > summary { cursor: pointer; list-style: revert; }
+.fm-root .ti-dismissed .bs-title { opacity: 0.7; }
+@media (pointer: coarse) {
+  .fm-root .ti-actions .ti-act { height: 32px; padding: 0 10px; font-size: 12px; }
+}
+/* end Today: outcome actions (Phase 3) */
+/* Today: weights (Phase 3) -- static/js/todayWeights.js */
+.fm-root .tw-panel { margin-top: 16px; }
+.fm-root .tw-panel > summary { cursor: pointer; list-style-position: inside; margin: 0 0 6px; }
+.fm-root .tw-rules { margin: 0 0 8px; line-height: 1.45; }
+.fm-root .tw-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.fm-root .tw-table th { text-align: left; font-weight: 600; font-size: 11px;
+                        color: color-mix(in srgb, var(--fg) 65%, transparent); padding: 4px 6px; }
+.fm-root .tw-table td { padding: 4px 6px; border-top: 1px solid color-mix(in srgb, var(--border) 40%, transparent); }
+.fm-root .tw-table .tw-num { text-align: right; font-variant-numeric: tabular-nums; }
+.fm-root .tw-label { overflow-wrap: anywhere; }
+.fm-root .tw-scroll { overflow-x: auto; }
+.fm-root .tw-why { margin-top: 4px; font-size: 12px; }
+/* end Today: weights (Phase 3) */
+/* Today: trends (Phase 3) -- static/js/todayTrends.js */
+.fm-root .tt-panel { margin-top: 8px; }
+.fm-root .tt-table tr.tt-quiet td { opacity: 0.55; }
+.fm-root .tt-bar { display: inline-block; width: 48px; height: 6px; border-radius: 3px; vertical-align: middle;
+                   background: color-mix(in srgb, var(--border) 50%, transparent); overflow: hidden; }
+.fm-root .tt-fill { display: block; height: 100%; background: var(--red); opacity: 0.75; }
+/* end Today: trends (Phase 3) */
