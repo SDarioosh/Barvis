@@ -277,6 +277,7 @@ if AUTH_ENABLED:
         "/api/version",
         "/login",
     }
+    AUTH_EXEMPT_EXACT.add("/api/pair/redeem")  # Fork: phone pairing, rate limited (routes/sound_relay_routes.py)
     AUTH_EXEMPT_PREFIXES = ["/static"]
     # Dynamic paths whose own handler proves identity via a path-embedded
     # secret instead of the session/bearer auth. The route handler at
@@ -882,6 +883,9 @@ app.include_router(setup_sound_module_routes())
 # Fork: Today insight page, votes and token route (routes/today_insight_routes.py)
 from routes.today_insight_routes import setup_today_insight_routes  # noqa: E402
 app.include_router(setup_today_insight_routes())
+# Fork: odysseus-sound phone relay through Odysseus, pairing by QR (routes/sound_relay_routes.py)
+from routes.sound_relay_routes import setup_sound_relay_routes  # noqa: E402
+app.include_router(setup_sound_relay_routes())
 logger.info("MCP routes initialized")
 
 # AI Interaction tools (debates, pipelines, self-managing AI, UI control)
