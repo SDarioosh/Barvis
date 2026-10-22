@@ -892,6 +892,9 @@ app.include_router(setup_beliefs_routes())
 # Fork: odysseus-sound phone relay through Odysseus, pairing by QR (routes/sound_relay_routes.py)
 from routes.sound_relay_routes import setup_sound_relay_routes  # noqa: E402
 app.include_router(setup_sound_relay_routes())
+# Fork: odysseus-sound's summary model for Settings → AI Defaults (routes/summary_model_routes.py)
+from routes.summary_model_routes import setup_summary_model_routes  # noqa: E402
+app.include_router(setup_summary_model_routes())
 logger.info("MCP routes initialized")
 
 # AI Interaction tools (debates, pipelines, self-managing AI, UI control)

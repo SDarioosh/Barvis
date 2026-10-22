@@ -384,6 +384,7 @@ transcript links) never leaves the module.
 | `POST /ingest/chunk` | `POST /v1/ingest/chunk` (same multipart fields and answer) |
 | `POST /sessions/{id}/end` | `POST /v1/sessions/{id}/end` |
 | `GET /health`, `GET /conversations`, `GET /conversations/{id}`, `GET /conversations/{id}/transcript`, `GET /action-items`, `PATCH /action-items/{id}`, `GET /digests/{date}`, `POST /digests/{date}` | the same `/v1` routes (the phone relay's T5 sync) |
+| `GET /settings/llm`, `PUT /settings/llm` | the same `/v1` routes (Settings → AI Defaults: the summary model) |
 
 So the MCP token can add recordings. Odysseus finds the module from the `convo` server's
 URL (`/mcp` stripped) and its `access_token` (`src/call_recorder.py`); Odysseus' HTTP MCP
@@ -430,6 +431,27 @@ Odysseus only.
 - Code: `src/phone_pairing.py`, `routes/sound_relay_routes.py`,
   `static/phone-pairing.html`, `static/js/phonePairing.js`; test
   `tests/test_sound_relay.py`. Relay side: odysseus-sound's `android-relay` README.
+
+## Summary model in Settings
+
+Settings → AI Defaults → **Background & Summaries** (admin only) picks, apart from the chat
+model:
+
+- **Background tasks (Odysseus)**: upstream's `task_endpoint_id` / `task_model`, which
+  upstream has no field for. The Today insight, memory, notes and scheduled-task jobs and
+  chat summaries use it first; blank falls back to the Utility Model, then the chat model
+  (`src/task_endpoint.py`). Helpers that call the Utility Model directly (compaction,
+  titles, calendar and notes helpers) keep using the Utility Model.
+- **Conversation summaries (odysseus-sound)**: the model the module's own LLM server uses
+  for summaries, through `GET`/`PUT /api/fork/summary-model` → the module's
+  `/settings/llm`. The list is what that LLM server's `GET /models` returns; the default
+  is the module's `CONVO_LLM_MODEL`. Only the model name is sent: the module's LLM server
+  (`CONVO_LLM_BASE_URL`) stays what its `.env` says. The choice is stored in the module
+  and used from the next summary on, also after a restart. A module without the route
+  shows "update odysseus-sound".
+
+- Code: `routes/summary_model_routes.py`, `static/js/forkBackgroundModels.js`; test
+  `tests/test_summary_model_routes.py`. Module side: `server/convo_server/llm_settings.py`.
 
 ## Today insight
 

@@ -758,3 +758,13 @@ def test_ranked_memory_keeps_the_hash_stable(inputs, no_lane):
     assert prompt.index("Priya Nair is allergic to peanuts") < prompt.index("Likes cats")
     inputs["memory"][0]["uses"] = 9  # a chat used it: order changes, content doesn't
     assert _run(llm=llm)[0] == "noop" and len(llm.calls) == 1
+
+
+def test_prompt_gives_the_date_not_the_time_of_day(inputs):
+    """The headline is read all day (hub page, T5), so the prompt has no "now" time."""
+    llm = FakeLLM(GOOD)
+    _run(llm=llm)
+    user = llm.calls[0][-1]["content"]
+    first = user.splitlines()[0]
+    assert first == "Today is Wednesday 2026-10-21."
+    assert "current time" in llm.calls[0][0]["content"]
