@@ -122,3 +122,16 @@ def test_loop_survives_a_failed_pass(monkeypatch):
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(caa._loop())
     assert calls == [1]
+
+
+def test_is_empty_is_for_unpinned_checklists_without_items():
+    def note(**kw):
+        base = dict(note_type="todo", items="[]", pinned=False, archived=False,
+                    repeat="none", source="agent", label="odysseus-sound")
+        return Note(**{**base, **kw})
+
+    assert caa.is_empty(note()) and caa.is_empty(note(items=None))
+    for other in (note(items=_items(True)), note(pinned=True), note(archived=True),
+                  note(note_type="note"), note(repeat="daily"),
+                  note(source="calendar", label="calendar")):
+        assert not caa.is_empty(other)

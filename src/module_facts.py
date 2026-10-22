@@ -19,6 +19,13 @@ confirmed and mirrors confirmed beliefs into Odysseus memory, one memory per bel
   copies like any other memory; the next run restores them. Phase 0 copies (a
   ``module_fact_id`` without ``belief_id``) are adopted, not duplicated.
 
+People (plan stage 2.1): each pass also calls ``list_people {"format": "json"}`` once and
+hands the module's people (``id``, ``name``, ``aliases``, ``is_owner``) to the ledger
+(``sync_people``): each module person id maps to one ledger subject, so a fact carrying
+that ``person_id`` lands on the same subject whatever name the module uses for it. A module
+that answers ``list_people`` with text, or has no such tool, is tolerated (logged once);
+facts then match subjects by name.
+
 :func:`propagate_forget` carries the owner's "forget" back to the module: it calls the
 module's ``retire_fact`` for each odysseus-sound fact behind a rejected belief, so the
 fact is not submitted again (an older module without the tool is tolerated; the ledger
@@ -73,6 +80,7 @@ INFO = ("Feed odysseus-sound's facts into the belief ledger as evidence (with th
 PREFERENCE_WORDS = ledger.PREFERENCE_WORDS
 LIST_ALL = {"format": "json", "limit": 1000}
 LIST_CONFIRMED = {"confirmed": True, "format": "json", "limit": 1000}
+LIST_PEOPLE = {"format": "json"}
 FORGET_REASON = "owner forgot it in Odysseus"
 _MISSING_TOOL = re.compile(r"unknown tool|tool not found|no such tool|not found: retire_fact"
                            r"|retire_fact.*not (found|available|exist)", re.IGNORECASE)
@@ -147,6 +155,36 @@ def parse_facts_json(result: str) -> list[dict] | None:
     return out
 
 
+def parse_people_json(result: str) -> list[dict] | None:
+    """The module's ``list_people format="json"`` people (``{"people": [...]}`` or a bare
+    list), or None when it answered with text. Rows without an id are skipped."""
+    try:
+        data = json.loads(result or "")
+    except ValueError:
+        return None
+    rows = data.get("people") if isinstance(data, dict) else data
+    if not isinstance(rows, list):
+        return None
+    out = []
+    for row in rows:
+        if isinstance(row, dict) and str(row.get("id") if row.get("id") is not None
+                                         else "").strip():
+            out.append(row)
+    return out
+
+
+async def read_people(call: CallTool) -> list[dict] | None:
+    """The module's people, or None when it can't say (an older module answers text or
+    has no ``list_people``): people are an extra, never a reason for the facts to fail."""
+    try:
+        return parse_people_json(await call("list_people", dict(LIST_PEOPLE)))
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:  # noqa: BLE001
+        logger.debug("list_people failed: %s", e)
+        return None
+
+
 def category(row: dict) -> str:
     """The hub memory category for a module fact (fact|preference|contact), from the bare
     fact text (words in the link don't count)."""
@@ -170,7 +208,12 @@ def evidence(row: dict, confirmed_ids: set[int] | None = None) -> ledger.Evidenc
         link=str(row.get("link") or ""), seen_first=str(row.get("first_said") or ""),
         seen_last=str(row.get("last_said") or ""), times=max(1, _int(row.get("times_said"))),
         days=max(1, _int(row.get("days"))), source_confirmed=confirmed,
-        category=category(row))
+        category=category(row), person_id=_person_id(row))
+
+
+def _person_id(row: dict) -> str | None:
+    value = row.get("person_id")
+    return str(value).strip() or None if value is not None else None
 
 
 # -------------------------------------------------------------------------- sync
@@ -183,6 +226,7 @@ async def sync(owner: str | None, call: CallTool, *, now: datetime | None = None
         # a module without the per-row flag: ask for its confirmed set (one extra call)
         confirmed = parse_facts_json(await call("list_facts", dict(LIST_CONFIRMED)))
         confirmed_ids = {r["id"] for r in confirmed or []}
+    people = await read_people(call) if rows is not None else None
     async with _lock(owner):
         state = load_state(owner)
         if rows is None:
@@ -195,6 +239,14 @@ async def sync(owner: str | None, call: CallTool, *, now: datetime | None = None
         now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         # no await from here on: the ledger and memory are written in one go
         stats = {"facts": len(rows)}
+        if people is None:
+            if not state.get("people_text_only"):
+                logger.info("odysseus-sound has no list_people JSON; facts match subjects "
+                            "by name (update the module)")
+                state["people_text_only"] = True
+        else:
+            state.pop("people_text_only", None)
+            stats.update(ledger.sync_people(owner, SOURCE, people, now=now, mirror=False))
         stats.update(ledger.submit(owner, [evidence(r, confirmed_ids) for r in rows],
                                    now=now, mirror=False))
         for key, value in ledger.reconcile_source(owner, SOURCE, {str(r["id"]) for r in rows},
@@ -213,7 +265,8 @@ def changed(stats: dict[str, int]) -> bool:
     """Whether a pass changed anything in the ledger or in memory."""
     return any(stats.get(k) for k in (
         "beliefs_added", "evidence_added", "evidence_updated", "confirmed", "gone", "stale",
-        "unconfirmed", "memory_added", "memory_updated", "memory_removed"))
+        "unconfirmed", "memory_added", "memory_updated", "memory_removed", "subjects_added",
+        "mapped", "aliases_added"))
 
 
 def summary(stats: dict[str, int]) -> str:
@@ -222,7 +275,9 @@ def summary(stats: dict[str, int]) -> str:
             f"{stats['confirmed']} confirmed, {stats['unconfirmed']} unconfirmed, "
             f"{stats['gone']} gone, {stats['stale']} stale; "
             f"memory: {stats['memory_kept']} kept, {stats['memory_added']} added, "
-            f"{stats['memory_updated']} updated, {stats['memory_removed']} removed")
+            f"{stats['memory_updated']} updated, {stats['memory_removed']} removed"
+            + (f"; people: {stats['people']} seen, {stats.get('subjects_added', 0)} new"
+               if "people" in stats else ""))
 
 
 async def action_sync_facts(owner: str, **kwargs) -> tuple[str, bool]:

@@ -219,7 +219,8 @@ def inputs(store, monkeypatch):
              "memory": [{"text": "Tom is a colleague", "category": "contact"}]}
     monkeypatch.setattr(ti, "_load_notes", lambda owner: state["notes"])
     monkeypatch.setattr(ti, "_load_events", lambda owner, now_local: state["events"])
-    monkeypatch.setattr(ti, "_load_memory", lambda owner: ti.select_memory(state["memory"]))
+    monkeypatch.setattr(ti, "_load_memory", lambda owner, query=None: ti.select_memory(
+        state["memory"], owner=owner, query=query))
     return state
 
 
@@ -694,3 +695,66 @@ def test_memory_source_links_are_stripped(inputs):
     inputs["memory"] = [{**entries[0], "text": "Jonas is allergic to peanuts (source: "
                                                "http://10.0.0.5:8000/view/abc?sig=rotated)"}]
     assert _run(llm=llm)[0] == "noop"  # only the link changed: same hash
+
+
+# ------------------------------------------------------------------ belief ranking (2.3)
+def _seed_ledger(owner="alice"):
+    from src import evidence_intake as ei
+
+    facts = [(1, "Priya Nair is allergic to peanuts", "Priya Nair"),
+             (2, "Priya Nair lives in Porto", "Priya Nair"),
+             (3, "Tom is a colleague", "Tom"),
+             (4, "Lena collects vintage maps", "Lena")]
+    ei.submit(owner, [ei.Evidence(source="odysseus-sound", source_id=str(i), subject=s,
+                                  about="person", text=t, link=f"http://h/view/c{i}?sig=x",
+                                  seen_first="2026-10-01", seen_last="2026-10-15",
+                                  times=3, days=2, source_confirmed=True)
+                      for i, t, s in facts], now=NOW)
+
+
+@pytest.fixture
+def no_lane(monkeypatch):
+    from src import belief_search
+
+    monkeypatch.setattr(belief_search, "embedder", lambda: None)  # keyword ranking
+
+
+def test_memory_query_from_candidates():
+    cands = [{"title": "Lunch with Priya", "list": None, "location": "Casa Lupo"},
+             {"title": "Send the Q4 deck", "list": "Work"}, {"title": "Lunch with Priya"}]
+    assert ti.memory_query(cands) == "Lunch with Priya\nCasa Lupo\nSend the Q4 deck\nWork"
+    assert ti.memory_query([]) == ""
+
+
+def test_select_memory_ranks_the_days_beliefs_first(store, no_lane):
+    from src.memory import MemoryManager
+
+    _seed_ledger()
+    entries = MemoryManager(str(store)).load("alice")
+    entries.append({"text": "Prefers mornings for deep work", "category": "preference",
+                    "uses": 50, "owner": "alice"})
+    out = ti.select_memory(entries, owner="alice", query="Lunch with Priya\nSend the Q4 deck")
+    assert set(out[:2]) == {"Priya Nair is allergic to peanuts", "Priya Nair lives in Porto"}
+    assert out[2] == "Prefers mornings for deep work"  # then the rest, most used first
+    assert sorted(out) == sorted(set(out)) and len(out) == 5  # no duplicates
+    assert not any("source:" in t for t in out)
+    # nothing in the ledger for the query, or no query: most used first, as before
+    assert ti.select_memory(entries, owner="alice", query="") == ti.select_memory(entries)
+    assert ti.select_memory(entries, owner="bob", query="Lunch with Priya") == \
+        ti.select_memory(entries)
+    assert len(ti.select_memory(entries, 3, owner="alice", query="Priya")) == 3
+
+
+def test_ranked_memory_keeps_the_hash_stable(inputs, no_lane):
+    _seed_ledger()
+    inputs["notes"].append(_note("n9", "People", [("Lunch with Priya", False)],
+                                 due_date="2026-10-21"))
+    inputs["memory"] = [{"text": "Tom is a colleague (source: http://h/view/c3?sig=x)",
+                         "category": "contact", "uses": 1},
+                        {"text": "Likes cats", "category": "fact", "uses": 2}]
+    llm = FakeLLM(GOOD)
+    assert _run(llm=llm)[0] == "generated"
+    prompt = llm.calls[0][1]["content"]
+    assert prompt.index("Priya Nair is allergic to peanuts") < prompt.index("Likes cats")
+    inputs["memory"][0]["uses"] = 9  # a chat used it: order changes, content doesn't
+    assert _run(llm=llm)[0] == "noop" and len(llm.calls) == 1

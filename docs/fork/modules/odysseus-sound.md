@@ -142,13 +142,33 @@ Then, per [../modules.md](../modules.md#registering-a-module-in-odysseus):
 
 odysseus-sound stays the source of truth for action items. Since 2026-10-20 (owner's
 decision, replacing "no copies" of 2026-10-19) Odysseus also **files** them where they
-belong, so voice notes land in the hub's own calendar and to-dos:
+belong, so voice notes land in the hub's own calendar and to-dos. Since 2026-10-21 only
+**explicit** voice-note items are filed by default; a reflective voice note ("stop
+prioritizing side projects…") gives suggestions, not four to-dos.
+
+| `MODULE_FILE_ITEMS` | Voice-note items | Conversation items |
+|---|---|---|
+| `explicit` (default) | filed when explicit (below); the others are suggestions, with one push per pass: "Suggested from your voice note" and their short titles | suggestions |
+| `auto` | all filed (the behaviour of 2026-10-20) | suggestions |
+| `off` | not filed; "new action item" pushes only (the behaviour before filing) | pushes only |
+
+An item is **explicit** when the module says so: `list_action_items format=json` rows
+carry `explicit` (true when the item has a due date or time, a `list_name`, kind
+`reminder` or `event`, or the voice note used a command word). With an older module
+that lacks the field Odysseus derives it the same way, the command words being "remind
+me", "todo"/"to-do", "task" and "add … to my … list". Notes (kind `note`) are always
+explicit: the module makes them only on a command. Intentions and principles are no
+action items at all any more: the module turns them into facts, which reach the
+[belief ledger](../beliefs.md).
+
+Where a filed item goes:
 
 | Item kind (module) | Example | Filed as |
 |---|---|---|
 | `event` | "meeting with Jason on Wednesday at 12 pm" | calendar event in the default calendar: timed (60 min or the stated length, reminder 30 min before), or all-day when no time was said |
-| `task` | "get the proposal done on Wednesday" | to-do (checklist note, label `odysseus-sound`), due that day at `MODULE_DIGEST_HOUR` |
-| `reminder` | "remind me at 5 to call Mom" | to-do due at that time (Odysseus fires its own reminder) |
+| `task` with a date | "get the proposal done on Wednesday" | to-do (checklist note, label `odysseus-sound`), due that day at `MODULE_DIGEST_HOUR`, titled with the short title, the full text as its line |
+| `task` without a date or list | "add a to-do: oil the bike chain" | one line (the short title) on the to-do list **Voice notes** (see below) |
+| `reminder` | "remind me at 5 to call Mom" | to-do due at that time (Odysseus fires its own reminder), titled like a dated task |
 | any task or reminder with a `list_name` | "add milk to my shopping list" | one line on that to-do list (see below) |
 | `note` | "create a note battery dimensions are 13mm x 14mm x 3mm" | an Odysseus note (type note, label `odysseus-sound`) titled with the module's `note_title` ("Battery dimensions"), the text and the source link as content |
 | `note` with a `list_name` | "add to my hardware notes: the screen is 1.4 inch" | one line `- The screen is 1.4 inch` on those notes (see below) |
@@ -167,6 +187,18 @@ belong, so voice notes land in the hub's own calendar and to-dos:
   (`src/checklist_auto_archive.py`), so the next "add … to my shopping list" starts a
   new one; pin a list to keep it.
 
+- **Short titles.** Rows carry `title` (at most 60 characters, a short imperative:
+  "Send battery measurements"). A to-do of its own is titled with it and holds the full
+  text as its one line; pushes and "Voice notes" lines use it too. An older module
+  without `title`: the start of the text, cut at a word (60 characters at most).
+- **The "Voice notes" list.** In every mode, a voice-note task without a due date and
+  without a `list_name` is one line on the to-do list titled "Voice notes" (label
+  `odysseus-sound`, made if missing, not pinned), instead of a to-do of its own. It
+  follows the named-list rules above: status per line both ways, Undo takes the line
+  only, and once every line is ticked the list is archived 10 minutes later, so the next
+  undated task starts a new "Voice notes" list. When its last line is taken off (Undo,
+  moved elsewhere) the empty list is archived at once, unless it is pinned. Tapping **Add to to-dos** on such a
+  suggestion puts it there too.
 - **Notes.** Voice notes only, and only on an explicit command ("create a note",
   "make a note", "note that", "add to my … notes"); a plain statement makes no note.
   A note with a `list_name` (`hardware`) is added as a line to the open note titled
@@ -177,18 +209,35 @@ belong, so voice notes land in the hub's own calendar and to-dos:
   archive or delete the note in Odysseus as you like. Undo on `/modules/sound` (shown
   while the item is still open) removes the note, or only its line. A note whose
   filing failed waits there with **Add to notes**.
-- **Voice notes are filed automatically.** One push per pass ("Filed from your voice
-  note": what went where, "check the time" when the module flagged it). Filed items get
-  no other "new item" or "due today" push; Odysseus' own event and to-do reminders take
-  over.
-- **Conversations only suggest.** Their items wait on `/modules/sound` with **Add to
-  calendar** / **Add to to-dos**; nothing is filed and nothing is pushed until tapped.
+- **Explicit voice-note items are filed automatically.** One push per pass ("Filed
+  from your voice note": what went where, "check the time" when the module flagged it).
+  Filed items get no other "new item" or "due today" push; Odysseus' own event and to-do
+  reminders take over.
+- **Everything else suggests.** Conversation items, and voice-note items that aren't
+  explicit, wait on `/modules/sound` with **Add to calendar** / **Add to to-dos** /
+  **Dismiss**; nothing is filed until tapped. Conversation items are not pushed;
+  voice-note suggestions get one "Suggested from your voice note" push per pass.
 - **Fix or undo** on `/modules/sound`: Move to calendar / Move to to-dos, Change time,
   Undo (removes the Odysseus entry and dismisses the item). An item is filed once: if
   you delete the event or note in Odysseus it is not filed again.
 - **Status both ways**: ticking the to-do (or archiving it) marks the module item done,
   and the other way round; deleting the event dismisses the item; a past event is done.
 - The first run only remembers existing items (no backlog is filed).
+- **Clean-up of the to-dos filed one per item** (before 2026-10-21 every voice-note
+  item became a to-do of its own, titled with the whole sentence). Undo on
+  `/modules/sound` removes one. For all of them, run
+  `python scripts/unfile_voice_note_todos.py --url <hub> --password-file <admin password file>`:
+  it lists the to-dos it would remove, each with why it qualifies: a to-do of its own
+  (label `odysseus-sound`, one line, not a list line) of a voice-note item that is not
+  explicit now, with no due date and no reminder, still in Odysseus, and filed before
+  explicit filing (or in `auto` mode). Dated to-dos and reminders never qualify, so a
+  reminder filed today or an old item the owner since gave a date stays. To-dos filed in
+  `explicit` mode or from the page (Add / Move, recorded as `filed_mode`) are left out
+  unless `--all`. Add `--apply` to delete them and dismiss their open items (done items
+  stay done), or `--apply --only 12,14` for some. It calls the admin route
+  `POST /api/modules/sound/unfile-todos` (`{"apply": false, "ids": [...], "all": false}`),
+  which runs in the hub because the hub holds the module's MCP connection. Removed items
+  are never filed again.
 
 The built-in task **Module Action Items** (`src/module_action_items.py`, every 5 min)
 does all of this. It reads `list_action_items` with `format="json"` (fields in the module's
@@ -198,7 +247,7 @@ pushes without filing. The module's `due_date`/`due_time` are local to its
 `CONVO_TIMEZONE`; set the same timezone in Odysseus (the task logs a warning when they
 differ and converts).
 
-Settings: `MODULE_FILE_ITEMS` (`auto` default, `off` = pushes only, as before),
+Settings: `MODULE_FILE_ITEMS` (`explicit` default, `auto`, `off`; table above),
 `MODULE_ACTION_ITEMS_SERVER` (default `convo`), `MODULE_NOTIFY_CHANNEL` (`ntfy`,
 `browser`, `off`), `MODULE_DIGEST_HOUR` (`8`, `off`). ntfy needs an enabled ntfy
 integration (Settings → Integrations); the topic is the reminder topic

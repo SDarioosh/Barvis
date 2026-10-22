@@ -98,6 +98,46 @@
     .bs-sources a:hover { text-decoration: none; }
     .bs-edit { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
     .bs-edit input { flex: 1 1 260px; min-width: 0; }
+    .bs-wrap [hidden] { display: none !important; }
+    .bs-section button { background: none; border: 0; padding: 0; color: inherit; font: inherit;
+                         letter-spacing: inherit; text-transform: inherit; cursor: pointer; }
+    .bs-section button:hover { text-decoration: underline; }
+    .bs-views { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 10px; }
+    .bs-view[aria-pressed="true"] { border-color: var(--red); color: var(--red); }
+    .bs-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+                   margin-bottom: 4px; }
+    .bs-controls .bs-filter { flex: 1 1 220px; width: auto; min-width: 0; margin-bottom: 0; }
+    .bs-select { background: var(--input-bg, var(--panel)); color: var(--fg);
+                 border: 1px solid var(--input-border, var(--border)); border-radius: 6px;
+                 padding: 6px 8px; font: inherit; font-size: 0.85rem; min-height: 36px;
+                 max-width: 100%; box-sizing: border-box; }
+    .bs-search { position: relative; margin-bottom: 4px; }
+    .bs-search svg { position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+                     opacity: 0.6; pointer-events: none; }
+    .bs-search .bs-filter { padding-left: 32px; margin-bottom: 0; }
+    .bs-why { font-size: 0.8rem; opacity: 0.75; margin: 6px 0 0; font-style: italic;
+              overflow-wrap: anywhere; }
+    .bs-attr { display: inline-flex; align-items: center; gap: 4px; font-size: 0.75rem;
+               border: 1px dashed var(--border); border-radius: 999px; padding: 1px 8px;
+               overflow-wrap: anywhere; }
+    .bs-attr b { font-weight: 600; }
+    .bs-kind { display: inline-flex; align-items: center; gap: 4px; }
+    .bs-kind svg { opacity: 0.8; }
+    .bs-subject-head { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+    .bs-subject-name { font-size: 1rem; font-weight: 600; margin: 0; overflow-wrap: anywhere;
+                       background: none; border: 0; color: var(--fg); padding: 0;
+                       font-family: inherit; cursor: pointer; text-align: left; }
+    .bs-subject-name:hover { text-decoration: underline; }
+    h2.bs-subject-name { cursor: default; }
+    h2.bs-subject-name:hover { text-decoration: none; }
+    .bs-back { margin: 0 0 10px; }
+    .bs-panel { margin-top: 8px; padding: 8px 10px; border: 1px solid var(--border);
+                border-radius: 6px; }
+    .bs-panel .bs-filter { margin-bottom: 6px; }
+    .bs-pick { list-style: none; margin: 0; padding: 0; max-height: 260px; overflow-y: auto; }
+    .bs-pick li { padding: 2px 0; }
+    .bs-pick .bs-btn { width: 100%; justify-content: space-between; text-align: left; }
+    .bs-summary { font-size: 0.9rem; line-height: 1.5; margin: 0; overflow-wrap: anywhere; }
     .bs-toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
                 max-width: min(560px, calc(100vw - 32px)); box-sizing: border-box;
                 background: var(--panel); color: var(--fg); border: 1px solid var(--border);
@@ -117,9 +157,24 @@
       <button type="button" class="bs-btn" id="bl-sync" title="Read the module's facts now">Sync now</button>
     </div>
     <p class="bs-sub" id="bl-counts"></p>
+    <div class="bs-search">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/>
+        <line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input type="search" class="bs-filter" id="bl-search" placeholder="Search what I know"
+        aria-label="Search what I know" autocomplete="off">
+    </div>
+    <div class="bs-views" role="group" aria-label="View" id="bl-views">
+      <button type="button" class="bs-btn bs-view" data-view="status" aria-pressed="true">By status</button>
+      <button type="button" class="bs-btn bs-view" data-view="subject" aria-pressed="false">By subject</button>
+    </div>
     <div class="bs-tabs" role="tablist" id="bl-tabs"></div>
-    <input type="search" class="bs-filter" id="bl-filter" placeholder="Filter by subject"
-      aria-label="Filter by subject" autocomplete="off">
+    <div class="bs-controls">
+      <input type="search" class="bs-filter" id="bl-filter" placeholder="Filter by subject"
+        aria-label="Filter by subject" autocomplete="off">
+      <select class="bs-select" id="bl-attribute" aria-label="Filter by attribute"></select>
+      <select class="bs-select" id="bl-kind" aria-label="Filter by kind" hidden></select>
+    </div>
     <div id="bl-main"><div class="bs-status">Loading…</div></div>
   </div>
   <div class="bs-toast" id="bl-toast" role="status" aria-live="polite" hidden></div>
