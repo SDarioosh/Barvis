@@ -268,6 +268,7 @@ async def sync(owner: str, call: CallTool, *, now: datetime | None = None) -> di
     if rows is None:  # an older module: text only, so the old behaviour (nothing filed)
         logger.info("odysseus-sound answered list_action_items with text; not filing")
         return await _sync_text(owner, call, now=now)
+    rows = [r for r in rows if r.get("mine") is not False]  # someone else's to-do isn't ours
     async with _lock(owner):
         return await _sync_json(owner, call, rows, now=now)
 

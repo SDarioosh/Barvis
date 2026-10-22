@@ -263,7 +263,9 @@ def parse_action_items_result(text: str) -> list[ActionItem]:
         return parse_action_items(text)
     if not isinstance(rows, list):
         return parse_action_items(text)
-    return [i for r in rows if isinstance(r, dict) and (i := item_from_json(r))]
+    # ``mine`` is false when the module says someone else owns the item
+    return [i for r in rows if isinstance(r, dict) and r.get("mine") is not False
+            and (i := item_from_json(r))]
 
 
 def open_url(target: str, ref: Any) -> str | None:
