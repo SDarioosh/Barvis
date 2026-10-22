@@ -256,7 +256,9 @@ Ids and counts only, no titles or text (the insight file has those):
   the push.
 
 Each 15-minute pass (`observe`, also on a no-op) updates the outcomes from what it just
-gathered (`via: "observed"`):
+gathered (`via: "observed"`). An item the page changed (`via: "today"`) at or after the
+time the inputs were gathered (`gathered_at`, before the model call) is left alone: those
+inputs are older than the owner's tick.
 
 | outcome | set when |
 |---|---|

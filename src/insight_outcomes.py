@@ -295,6 +295,7 @@ def _observe_items(owner: str | None, items: dict, titles: dict, inputs: dict,
     occurrences = list(inputs.get("occurrences") or [])
     rows = [r for r in inputs.get("action_rows") or [] if isinstance(r, dict)]
     open_rows = {str(r.get("id")): str(r.get("status") or "open") for r in rows}
+    gathered = str(inputs.get("gathered_at") or "")
     missing = {it.get("note_id") for it in items.values()
                if it.get("kind") == "todo" and it.get("note_id") not in notes}
     if missing:
@@ -303,6 +304,8 @@ def _observe_items(owner: str | None, items: dict, titles: dict, inputs: dict,
         current = item.get("outcome")
         if current in ("dismissed", "ignored"):
             continue  # owner mark; ignored only after finalize
+        if gathered and item.get("via") == "today" and str(item.get("at") or "") >= gathered:
+            continue  # changed on the page after these inputs were read: they are older
         kind = item.get("kind")
         if kind == "todo":
             if "#" in ref and ref not in titles:

@@ -366,6 +366,21 @@ def test_every_run_observes(running):
     assert _item("todo:n1:0")["outcome"] == "done"
 
 
+def test_a_page_tick_during_the_model_call_is_kept(running):
+    asyncio.run(ti.run("alice", now=NOW, call=None, llm=FakeLLM(GOOD)))
+
+    class TickWhileThinking(FakeLLM):
+        async def __call__(self, messages):  # the owner ticks the deck on /today meanwhile
+            running["notes"][0].items = json.dumps([{"text": "Send the Q4 deck", "done": True}])
+            io.record("alice", "todo:n1:0", "done", now=LATER + timedelta(seconds=30))
+            return await super().__call__(messages)
+
+    running["events"] = []  # the inputs changed: the model is asked again
+    asyncio.run(ti.run("alice", now=LATER, call=None, llm=TickWhileThinking(GOOD), force=True))
+    assert _item("todo:n1:0")["outcome"] == "done"  # not undone by the older notes
+    assert _item("todo:n1:0")["via"] == "today"
+
+
 def test_dismissed_items_leave_the_candidates_and_the_chat_block(running):
     asyncio.run(ti.run("alice", now=NOW, call=None, llm=FakeLLM(GOOD)))
     io.record("alice", "todo:n4:0", "promoted", now=NOW)

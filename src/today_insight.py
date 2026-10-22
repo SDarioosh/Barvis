@@ -538,12 +538,14 @@ async def gather(owner: str | None, *, now: datetime | None = None,
                  call: CallTool | None | bool = True) -> dict:
     """Everything the insight is built from (``call=True``: the module if connected).
     Phase 3 additions (docs/fork/today-insight.md): ``weights`` (the day's rule weights),
-    ``notes_state``/``occurrences``/``action_rows`` (what the outcome log observes),
+    ``notes_state``/``occurrences``/``action_rows``/``gathered_at`` (what the outcome log
+    observes, and when it was read),
     ``extra`` (open loops and this week's plans, refs ``loop:``/``belief:``) and
     ``routines`` (a short text)."""
     tz = owner_timezone(owner)
     now_local = _now_local(tz, now)
     today = now_local.date()
+    gathered_at = _utc_iso(now)  # the outcome log keeps page changes made after this
     notes = _load_notes(owner)
     occurrences = _load_events(owner, now_local)
     weights = _learning("insight_weights", "current", {}, owner, today, now=now)
@@ -568,7 +570,7 @@ async def gather(owner: str | None, *, now: datetime | None = None,
             "digest": digest, "action_items": action_items, "extra": extra,
             "routines": routines, "weights": weights or {},
             "notes_state": notes_state(notes), "occurrences": occurrences,
-            "action_rows": action_rows,
+            "action_rows": action_rows, "gathered_at": gathered_at,
             "hash": input_hash(candidates, memory, digest,
                                [action_items, extra, routines])}
 
