@@ -57,6 +57,7 @@ Fork code so far: `src/mcp_trust.py`, `src/mcp_stdio_owner.py`, `src/mcp_session
 `src/skill_invocation.py`, `src/offered_reads.py`, `src/module_action_items.py`,
 `src/sound_module_view.py`, `src/web_turn_scope.py`, `src/module_turn_scope.py`,
 `src/checklist_auto_archive.py`, `src/module_facts.py`, `src/today_insight.py`, `src/call_recorder.py`,
+`src/phone_pairing.py`, `routes/sound_relay_routes.py`, `static/phone-pairing.html`, `static/js/phonePairing.js`,
 `routes/sound_module_routes.py`, `routes/today_insight_routes.py`, `static/sound-module.html`,
 `static/today.html`, `static/js/today.js`, `static/call-recorder.html`, `static/js/callRecorder.js`,
 `static/js/soundModule.js`, `static/js/forkChatAsk.js`, `static/js/forkEntityHash.js`,
@@ -68,7 +69,7 @@ their tests (`tests/test_mcp_trust.py`,
 `tests/test_module_action_items.py`, `tests/test_sound_module_view.py`, `tests/test_web_turn_scope.py`,
 `tests/test_module_turn_scope.py`, `tests/test_calendar_reminder_wall_time.py`,
 `tests/test_checklist_auto_archive.py`, `tests/test_module_facts.py`,
-`tests/test_today_insight.py`, `tests/test_call_recorder.py`), and the hooks listed in [FORK.md](FORK.md).
+`tests/test_today_insight.py`, `tests/test_call_recorder.py`, `tests/test_sound_relay.py`), and the hooks listed in [FORK.md](FORK.md).
 
 ## Fork rules (merge-friendly)
 

@@ -194,31 +194,22 @@ except u.HTTPError as e: print('reachable, HTTP', e.code)
 except Exception as e: print('NOT reachable:', e)"
 ```
 
-### Call recording
+### Call recording and phone pairing
 
-The **Record a call** page ([modules/odysseus-sound.md](modules/odysseus-sound.md#recording-calls-from-the-computer))
-forwards audio to odysseus-sound's ingest API, so Odysseus needs that API's address and
-token. Your `docker-compose.override.yml` is a copy of `docker/fork.override.yml` and
-`fork_deploy.sh` doesn't update it: add the two `SOUND_MODULE_*` lines under
-`environment:` from the current `docker/fork.override.yml` once. Then set them in the
-production checkout's `.env`:
+**Record a call** and **Pair a phone** ([modules/odysseus-sound.md](modules/odysseus-sound.md#uploads-through-the-mcp-server))
+need no settings: they use the `convo` MCP server Odysseus already has (Settings → MCP,
+`http://host.docker.internal:8001/mcp?access_token=…`). They need odysseus-sound with MCP
+0.5.0 or newer (`scripts/fork_deploy.sh deploy` updates both); with an older module the
+pages say "update odysseus-sound". The module's MCP server forwards uploads to its ingest
+API on `CONVO_HOST:CONVO_PORT` on the same machine, so the container never needs to
+reach port 8000.
 
-```bash
-SOUND_MODULE_API_URL=<the module's API as the container reaches it>
-SOUND_MODULE_INGEST_TOKEN=<the module's CONVO_INGEST_TOKEN>
-```
-
-- The address must be reachable from inside the container. The module listens on
-  `CONVO_HOST:CONVO_PORT` (default `127.0.0.1:8000`, which the container can't reach).
-  If the phone relay already uploads over Tailscale, use that same address (the
-  module's `CONVO_PUBLIC_URL`); otherwise bind the module where the container reaches it
-  and use `http://host.docker.internal:8000`. Check with the snippet above, port 8000
-  and path `/health`.
 - Capture needs a secure page: open Odysseus over `https://` (for example
   `tailscale serve` with a Tailscale certificate) or on `localhost`. Over plain
   `http://<tailscale-ip>:7000` the browser refuses and the page says so.
-- Optional: `SOUND_MODULE_CALL_DEVICE` (default `computer`), the device name recordings
-  get in the module.
+- The phone must reach Odysseus at the address in the QR code (its Tailscale address).
+- The `SOUND_MODULE_API_URL` and `SOUND_MODULE_INGEST_TOKEN` settings of an earlier draft
+  are gone; if you added them to `.env` or `docker-compose.override.yml`, remove them.
 
 ## One-time setup (done 2026-10-18)
 

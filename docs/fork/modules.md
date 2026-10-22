@@ -252,8 +252,10 @@ For a breaking change:
    scores in both PRs.
 4. The owner merges the module PR first, then the Odysseus PR.
 
-Bump the version string the module's MCP server reports (odysseus-sound: `version="0.1.0"`
-in `build_mcp`) on every contract change.
+Bump the version string the module's MCP server reports (odysseus-sound: `version=` in
+`build_mcp`, 0.5.0 since the upload routes) on every contract change. Plain HTTP routes a
+module adds next to its MCP endpoint (odysseus-sound's uploads) are part of the contract
+like tools: adding one is non-breaking, renaming or removing one is breaking.
 
 ## Checklist: adding a new module
 
