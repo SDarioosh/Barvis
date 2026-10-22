@@ -266,7 +266,7 @@ inputs are older than the owner's tick.
 | `done` | a to-do's line is ticked (on any surface: notes, chat, T5, phone), or an open loop's action item is among odysseus-sound's done items. Events and plans are never done. |
 | `moved` | a to-do's note got a later due date, or an event now starts on a later day than when it was shown. |
 | `gone` | the note or line was deleted, the event was cancelled or isn't in the calendar window any more, or the loop's action item is in neither the open nor the done items. |
-| `dismissed`, `promoted` | the owner's "Not today" and "↑ first" (`via: "today"`). The pass never overwrites them, except `promoted` → `done`. |
+| `dismissed`, `promoted` | the owner's "Not today" and "↑ first" (`via: "today"`). The pass never overwrites them, except `promoted` → `done`. Marking a `done` item changes nothing (the route answers 200 with the item as it is). |
 | `ignored` | still `open` when the day was finalized (`via: "final"`). |
 
 To-do lines are matched by the ref's index when the line's text is the shown title, else
@@ -295,7 +295,8 @@ left as it is until the day is finalized.
 
 **Finalize**: the first pass after local midnight finalizes every earlier day of the last
 28 days (the weights' window) that isn't final (`final: true`, `finalized`); a final day
-doesn't change any more. Older days are left alone, and a day known final isn't read
+doesn't change any more. Finalizing copies the vote counts from the insight once more, so
+votes cast after the day's last pass count. Older days are left alone, and a day known final isn't read
 again by the same process. A finalized day's titles leave memory.
 
 **Owner order** (`apply_owner_order`): promoted rows come first in Do first (moved there from

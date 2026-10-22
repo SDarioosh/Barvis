@@ -391,6 +391,8 @@ def record(owner: str | None, ref: str, outcome: str, *, now: datetime | None = 
         elif outcome == "open":
             if item.get("outcome") == "done":
                 _set(item, "open", "today", now)
+        elif outcome in OWNER_MARKS and item.get("outcome") == "done":
+            pass  # a done item stays done; a mark on it changes nothing
         else:
             _set(item, outcome, "today", now)
         save(owner, data)
@@ -409,7 +411,9 @@ def _closed(owner: str | None, day: str) -> None:
 
 
 def finalize(owner: str | None, day: str, *, now: datetime | None = None) -> dict:
-    """Close a day: items still ``open`` become ``ignored``. Idempotent; {} without a file."""
+    """Close a day: items still ``open`` become ``ignored``, and the vote counts are
+    copied from the insight once more (votes cast after the last pass count).
+    Idempotent; {} without a file."""
     with _lock(owner):
         data = load(owner, day)
         if data is None:
@@ -418,6 +422,9 @@ def finalize(owner: str | None, day: str, *, now: datetime | None = None) -> dic
             for item in data["items"].values():
                 if item.get("outcome") == "open":
                     _set(item, "ignored", "final", now)
+            insight = _ti().load(owner, day)
+            if insight:
+                data["votes"] = _vote_counts(insight)
             data["final"], data["finalized"] = True, _iso(now)
             save(owner, data)
         _closed(owner, day)

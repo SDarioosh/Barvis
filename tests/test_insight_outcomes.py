@@ -300,6 +300,23 @@ def test_owner_marks_are_not_overwritten_but_promoted_can_become_done(store):
         io.record("alice", "todo:n1:1", "maybe", now=LATER)
 
 
+def test_a_mark_on_a_done_item_changes_nothing(store):
+    insight = _insight(focus=[("todo:n1:0", "Send the Q4 deck")])
+    ti.save("alice", insight)
+    io.observe("alice", insight, _inputs([_work(("Send the Q4 deck", True))]), now=NOW)
+    for mark in ("dismissed", "promoted"):
+        item = io.record("alice", "todo:n1:0", mark, now=LATER)
+        assert (item["outcome"], item["via"]) == ("done", "observed")
+
+
+def test_finalize_counts_votes_cast_after_the_last_pass(store):
+    insight = _insight(votes=[{"vote": "up", "at": "a"}])
+    io.observe("alice", insight, _inputs(), now=NOW)
+    ti.save("alice", {**insight, "votes": [{"vote": "up", "at": "a"},
+                                           {"vote": "down", "at": "b"}]})
+    assert io.finalize("alice", DAY, now=LATER)["votes"] == {"up": 1, "down": 1}
+
+
 def test_record_without_insight_or_outcome_file(store):
     with pytest.raises(LookupError):
         io.record("alice", "todo:n1:0", "done", now=NOW)
@@ -572,3 +589,12 @@ def test_the_page_finds_a_long_line_by_its_first_200_characters():
                                 itemIndex(note, {{index: 0}}, 'Water the plants')]));
     """)
     assert got == [1, 1, 0]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node binary not on PATH")
+def test_the_page_only_links_to_web_pages_and_site_paths():
+    hrefs = ["https://sound.local/view/1", "/beliefs", "//evil.example/x", "/\\evil.example",
+             "/\\/evil.example", "javascript:alert(1)", ""]
+    got = _node(_page_functions("safeLink") +
+                f"console.log(JSON.stringify({json.dumps(hrefs)}.map(safeLink)));")
+    assert got == ["https://sound.local/view/1", "/beliefs", None, None, None, None, None]

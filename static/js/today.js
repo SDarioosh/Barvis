@@ -93,7 +93,8 @@ function postOutcome(ref, outcome) {
 
 function safeLink(href) {
   const text = String(href || '');
-  return /^(https?:\/\/|\/(?!\/))/i.test(text) ? text : null;
+  // a site path, not "//host" or "/\host" (browsers read both as another host)
+  return /^(https?:\/\/|\/(?![\/\\]))/i.test(text) ? text : null;
 }
 
 function eventHref(uid) {
