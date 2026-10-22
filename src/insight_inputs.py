@@ -6,8 +6,10 @@ and events; the prompt labels them ``L1…`` (loops) and ``P1…`` (plans).
 * **Open loops**: things the owner said they would do for someone, from odysseus-sound's
   open action items (``list_action_items`` JSON, already read by the insight pass): rows
   that are the owner's (``mine`` true, or no ``mine`` and an owner word as ``owner``),
-  name the people involved (``with``, module MCP ≥ 0.9.0; a row without ``with`` is
-  never a loop) and aren't filed into Odysseus yet (the Module Action Items state's
+  are for someone: one of the row's ``with`` people (module MCP ≥ 0.9.0; a row without
+  ``with`` is never a loop) is named in its ``text`` or ``title``, by full or first name
+  as a whole word (``with`` lists everyone in the conversation, so "buy milk" said while
+  talking with Ana is not a loop for Ana), and aren't filed into Odysseus yet (the Module Action Items state's
   ``filed``: those are to-dos or events already). At most ``MAX_LOOPS``, by due date
   (undated last), then newest. Ref ``loop:<action item id>``.
 * **Plans**: the owner's beliefs with attribute ``plans`` or ``decision``
@@ -65,6 +67,17 @@ def people(row: dict) -> list[str]:
     return out
 
 
+def named_person(row: dict) -> str | None:
+    """The first ``with`` person (in its order) whose full or first name appears as a
+    whole word, case ignored, in the row's ``text`` or ``title``; None when none is."""
+    said = " ".join(str(row.get(k) or "") for k in ("text", "title"))
+    for name in people(row):
+        for form in dict.fromkeys((name, name.split(" ")[0])):
+            if re.search(rf"(?<!\w){re.escape(form)}(?!\w)", said, re.IGNORECASE):
+                return name
+    return None
+
+
 def _filed(owner: str | None) -> set[str]:
     from src import module_action_items as mai
 
@@ -77,7 +90,7 @@ def _filed(owner: str | None) -> set[str]:
 def is_loop(row: Any, filed: set[str]) -> bool:
     return (isinstance(row, dict) and row.get("id") is not None
             and str(row.get("status") or "open") == "open" and is_mine(row)
-            and bool(people(row)) and str(row["id"]) not in filed
+            and named_person(row) is not None and str(row["id"]) not in filed
             and bool(_title(row)))
 
 
@@ -101,7 +114,7 @@ def loop_candidates(owner: str | None, today: Date, rows: Iterable[dict], *,
                     "bucket": bucket_for(day, today), "title": _title(r),
                     "date": day.isoformat() if day else None,
                     "time": (str(r.get("due_time") or "").strip()[:5] or None) if day else None,
-                    "person": people(r)[0].split(" ")[0],
+                    "person": str(named_person(r)).split(" ")[0],
                     "link": str(r.get("link") or "") or None, "weight": 0})
     return out
 

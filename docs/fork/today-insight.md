@@ -460,12 +460,16 @@ on `/beliefs` (then the Belief Structure task gives it the attribute `routine`).
 candidates after the 30 rule-ordered ones (each part fails soft):
 
 - **Open loops** (≤ 5): open `list_action_items` JSON rows that are the owner's (`mine`
-  true, or no `mine` and an owner word such as "Me" as `owner`), name someone in `with`
-  (module MCP ≥ 0.9.0; a row without `with` is never a loop) and aren't filed into
-  Odysseus yet (the Module Action Items state's `filed`). By due date (undated last),
-  then newest. Ref `loop:<action item id>`, `person` the first name of the first `with`
-  entry, `link` the row's transcript link, bucket from `due_date` as for to-dos. These
-  rows leave the "OPEN ACTION ITEMS (context only)" lines.
+  true, or no `mine` and an owner word such as "Me" as `owner`), are for someone in
+  `with` (module MCP ≥ 0.9.0; a row without `with` is never a loop) and aren't filed
+  into Odysseus yet (the Module Action Items state's `filed`). `with` lists every other
+  person in the conversation, so a row is for someone only when one of its `with`
+  people's full or first name appears as a whole word (case ignored) in its `text` or
+  `title`: "Lend Tom the tent" is a loop for Tom, "Buy milk" said while talking with Ana
+  is not. By due date (undated last), then newest. Ref `loop:<action item id>`,
+  `person` the first name of the first `with` person so named, `link` the row's
+  transcript link, bucket from `due_date` as for to-dos. These rows leave the "OPEN
+  ACTION ITEMS (context only)" lines; rows that aren't loops stay in them.
 - **Plans** (≤ 5): the owner's beliefs with attribute `plans` or `decision`, status
   tentative or confirmed, first seen in the last 7 days, not about another person
   (`about` = person); newest first. Ref `belief:<belief id>`, bucket `undated`. The
