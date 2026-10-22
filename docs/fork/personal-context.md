@@ -108,11 +108,11 @@ choosing.
 
 | Stage | Repo | Ships |
 |---|---|---|
-| 3.1 Outcome log | hub | For each insight: which "do first" items were done that day, which were ignored, which were re-ranked by the owner, next to the 👍/👎 votes of Phase 0. Counts and ids only. |
-| 3.2 Ranking tuning | hub | Rule weights per list, note type and event type learned from the outcome log (simple, inspectable weights; no model training). The T5's offline order in `today_plan.c` follows the same published rules. |
-| 3.3 Push | hub | One ntfy push at the digest hour with the headline and the first item, through the existing module notify channel; off with one setting. |
-| 3.4 Richer insight inputs | hub | Routines (habitual times and days from the calendar and conversation history), what the owner said they wanted to do this week (voice notes), and open loops from conversations ("you told Alice you'd send the file"). |
-| 3.5 Measure | hub | Vote and outcome trends per week on the review page; the memory eval gains insight-ordering cases. |
+| 3.1 Outcome log | hub | For each insight: which "do first" items were done that day, which were ignored, which were re-ranked by the owner, next to the 👍/👎 votes of Phase 0. Counts and ids only. Built: [today-insight.md](today-insight.md#outcome-log) (`<day>.outcome.json` next to each insight: every ref shown, first section and position, outcome done / moved / promoted ("↑ first") / dismissed ("not today") / ignored / gone; observed from the notes and calendar state on every 15-min pass, so ticks on any surface count; the first pass after midnight finalizes earlier days; `/today` records its own ticks and marks at once). |
+| 3.2 Ranking tuning | hub | Rule weights per list, note type and event type learned from the outcome log (simple, inspectable weights; no model training). The T5's offline order in `today_plan.c` follows the same published rules. Built: [today-insight.md](today-insight.md#weights) (integer weights per note type, list, event type and importance from the last 28 finalized days, 0 until a key was shown 6 times, ±3 per key and ±6 per item, applied only within the rule tiers so overdue and due-today items always lead; "How Today ranks" with Reset and "Why first?" on `/today`; `GET /api/codex/insight/weights` feeds the T5's fallback through the relays, module `docs/t5-pda-plan.md` §5). Time of day and the attributes of beliefs used are not weights yet: the log keeps `done_at`, and the model doesn't say which beliefs it used. |
+| 3.3 Push | hub | One ntfy push at the digest hour with the headline and the first item, through the existing module notify channel; off with one setting. Built: [today-insight.md](today-insight.md#push) (`TODAY_INSIGHT_PUSH=on`, default off; after `MODULE_DIGEST_HOUR`, today's insight only, never twice, at most 3 tries a day). |
+| 3.4 Richer insight inputs | hub | Routines (habitual times and days from the calendar and conversation history), what the owner said they wanted to do this week (voice notes), and open loops from conversations ("you told Alice you'd send the file"). Built: [today-insight.md](today-insight.md#routines) (routines from the calendar only: single events on the same weekday and time in ≥ 3 of the last 6 weeks join the prompt and are submitted once as tentative beliefs, attribute `routine`, for the owner to confirm; the owner's `plans`/`decision` beliefs of the last 7 days and open loops (module action items that are the owner's and have `with`, MCP 0.9.0) are extra candidates on the web and in chat; the T5 relays drop them). |
+| 3.5 Measure | hub | Vote and outcome trends per week on the review page; the memory eval gains insight-ordering cases. Built: [today-insight.md](today-insight.md#trends-and-the-insight-eval) (weekly counts on `/today`; `scripts/insight_eval.py` on fictional days, its fixture shared with the T5's host test). |
 
 **Depends on:** Phase 0 votes and Phase 1 review page. **Risk:** optimising for "done"
 rewards easy items; keep the weights visible and the owner in control.
@@ -144,4 +144,5 @@ rewards easy items; keep the weights visible and the owner in control.
 - Phase 1: should the review page live on `/modules/sound` or be its own page under
   the hub (proposal: its own page, since beliefs come from every source)?
 - Phase 2: is a person id in the module contract acceptable (it is a contract change)?
-- Phase 3: is a daily push wanted at all, or does the T5 cover it?
+- Phase 3: is a daily push wanted at all, or does the T5 cover it? (2026-10-22: built, off
+  by default.)
