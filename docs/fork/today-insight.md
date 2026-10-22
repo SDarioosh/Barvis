@@ -202,7 +202,67 @@ hook.
 
 ### Outcome log
 
-<!-- stream A -->
+`src/insight_outcomes.py` records what became of each item the insight showed. One file
+per owner and day, next to the insight: `<DATA_DIR>/today_insight/<owner>/<day>.outcome.json`.
+Ids and counts only, no titles or text (the insight file has those):
+
+```json
+{"version": 1, "date": "2026-10-21", "final": false, "finalized": null,
+ "pushed": null, "push_tries": 0, "votes": {"up": 1, "down": 0},
+ "items": {
+  "todo:n1:0": {"kind": "todo", "section": "focus", "position": 1,
+                "first_shown": "2026-10-21T07:00:00Z", "bucket": "overdue",
+                "date": "2026-10-20", "note_id": "n1", "note_type": "checklist",
+                "outcome": "done", "at": "2026-10-21T09:00:00Z", "via": "observed"},
+  "event:e1": {"kind": "event", "section": "coming_up", "position": 1,
+               "first_shown": "2026-10-21T07:00:00Z", "bucket": "due_today",
+               "date": "2026-10-21", "event_type": "health", "importance": "normal",
+               "outcome": "open", "at": null, "via": null}}}
+```
+
+- **Shown**: every ref in any section of the day's insight. The first section, position,
+  time and the candidate's bucket and date are kept when the insight is rewritten.
+  `kind` is `todo`, `event`, `loop` (`loop:<action item id>`) or `plan` (`belief:<id>`).
+- `votes` counts the 👍/👎 entries of the insight. `pushed` and `push_tries` belong to
+  the push.
+
+Each 15-minute pass (`observe`, also on a no-op) updates the outcomes from what it just
+gathered (`via: "observed"`):
+
+| outcome | set when |
+|---|---|
+| `open` | shown, not done yet. A `done` that is un-ticked the same day goes back to `open`. |
+| `done` | a to-do's line is ticked (on any surface: notes, chat, T5, phone), or an open loop's action item is no longer open in odysseus-sound. Events and plans are never done. |
+| `moved` | a to-do's note got a later due date, or an event now starts on a later day than when it was shown. |
+| `gone` | the note or line was deleted, the event was cancelled or isn't in the calendar window any more, or the loop's action item is missing from the open ones. |
+| `dismissed`, `promoted` | the owner's "Not today" and "↑ first" (`via: "today"`). The pass never overwrites them, except `promoted` → `done`. |
+| `ignored` | still `open` when the day was finalized (`via: "final"`). |
+
+To-do lines are matched by the ref's index when the line's text is the shown title, else
+re-found by title, as the page does. Titles come from the insight rows and are kept in
+memory only; after a restart a line the insight no longer shows is matched by index. Notes
+the pass didn't load (an archived, finished checklist) are looked up by id. Open loops are
+left as they are when the module is unreachable. A passed event stays `open` and becomes
+`ignored` at the end of the day (weights don't count that for events).
+
+**Finalize**: the first pass after local midnight finalizes every earlier day that isn't
+final (`final: true`, `finalized`); a final day doesn't change any more.
+
+**Owner order** (`apply_owner_order`): promoted rows come first in Do first (moved there from
+any section, the latest promotion first), dismissed rows are left out. The page, the token
+route and the chat block use it; a promoted or dismissed item that a rewrite of the insight
+left out keeps its place. Dismissed refs are also left out of the next candidates.
+
+| Route | Auth | Answer |
+|---|---|---|
+| `POST /api/insight/today/outcome` | admin session | body `{"ref", "outcome": "done" \| "open" \| "dismissed" \| "promoted" \| "clear"}` (`open` un-ticks a `done`, `clear` undoes a mark); `{"ok": true, "item": {...}}`; 404 without an insight today or when the ref wasn't shown; 400 for `done`/`open` on an event or a plan |
+| `GET /api/insight/today` | admin session | in the owner's order, plus `outcomes` (`{ref: outcome}`) and `dismissed` (the hidden rows, each with its `section`) |
+| `GET /api/codex/insight/today` | `insight:read` | in the owner's order, without outcomes |
+
+On the page each row has **↑ first** (again: undo), **Not today** and **Why first?** (the
+why route, rendered by `todayWeights.js`). A tick also posts `done` (un-tick: `open`).
+Hidden rows sit under "Not today (n)" with **Undo**. Open loops show "with <person>" and
+open their conversation; plans link to `/beliefs`.
 
 ### Weights
 
