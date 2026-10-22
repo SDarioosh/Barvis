@@ -79,7 +79,7 @@ their tests (`tests/test_mcp_trust.py`,
 `tests/test_belief_eval.py`, `tests/test_subjects.py`, `tests/test_belief_structure.py`, `tests/test_belief_search.py`, `tests/test_belief_eval_scale.py`, `tests/test_ledger_perf.py`, `tests/test_fork_module_windows.py`,
 `tests/test_call_recorder.py`, `tests/test_sound_relay.py`, `tests/test_insight_outcomes.py`,
 `tests/test_insight_weights.py`, `tests/test_insight_push.py`, `tests/test_insight_routines.py`,
-`tests/test_insight_inputs.py`, `tests/test_insight_eval.py`), and the hooks listed in [FORK.md](FORK.md).
+`tests/test_insight_inputs.py`, `tests/test_insight_eval.py`, `tests/test_summary_model_routes.py`), and the hooks listed in [FORK.md](FORK.md).
 
 ## Fork rules (merge-friendly)
 
