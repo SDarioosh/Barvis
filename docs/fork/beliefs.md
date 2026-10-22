@@ -46,7 +46,7 @@ only (a full index there, almost all NULLs, was replaced on open), and
 |---|---|
 | `beliefs` | `id`, `owner` (`''` without auth), `subject` (the name the source used), `about` (`owner`, `person`, `other`), `text`, `norm` (matching key), `category` (`fact`, `preference`, `contact`), `status` (`tentative`, `confirmed`, `stale`, `rejected`), `confirmed_by` (`source`, `owner`, `rule` or null), `first_seen`, `last_seen`, `valid_until` (ISO dates), `memory_id` (the mirrored memory), `created_at`, `updated_at` (UTC ISO), `owner_text` (the owner's correction; when set, memory shows it), `owner_norm`, `note` (e.g. the reason given when forgetting); Phase 2: `subject_id` (the [subject](#subjects-and-contacts-21)), `attribute`, `value`, `valid_from`, `structured_at` ([structure](#structure-22)) |
 | `evidence` | `id`, `belief_id`, `owner`, `source`, `source_id`, `subject`, `about`, `category`, `text` (what the source said), `link`, `seen_first`, `seen_last` (ISO dates), `times`, `days`, `source_confirmed` (0/1), `payload` (JSON of extra fields; `gone: true` and `gone_at` when the source stopped reporting it, `valid_until` when given), `updated_at`. Unique on (`belief_id`, `source`, `source_id`) and on (`owner`, `source`, `source_id`): one source id maps to one belief per owner. |
-| `events` | `id`, `belief_id`, `at`, `kind` (`added`, `evidence`, `confirmed`, `stale`, `rejected`, `corrected`, `restored`, `retired_upstream` (a source stopped reporting it), `unconfirmed` (it no longer meets the rule)), `detail`. A ledger created before `unconfirmed` existed has its `events` table rebuilt with the wider CHECK on first open (rows and ids kept). Only changes are logged (not every hourly re-submit), and only the newest 50 per belief are kept. |
+| `events` | `id`, `belief_id`, `at`, `kind` (`added`, `evidence`, `confirmed`, `stale`, `rejected`, `corrected`, `restored`, `retired_upstream` (a source stopped reporting it), `unconfirmed` (it no longer meets the rule), `merged` (a near-duplicate from the same source was merged into it, [Consolidation](#consolidation-41))), `detail`. A ledger created before `unconfirmed` existed has its `events` table rebuilt with the wider CHECK on first open (rows and ids kept). Only changes are logged (not every hourly re-submit), and only the newest 50 per belief are kept. |
 | `subjects` | see [Subjects and contacts](#subjects-and-contacts-21) |
 | `subject_sources` | see [Subjects and contacts](#subjects-and-contacts-21) |
 
@@ -588,7 +588,8 @@ Lines that don't fit `max_chars` are skipped; "" when nothing matches.
   duplicate. Until the ledger has heard from the module at all, such copies are left
   alone.
 - The owner's own memories and other owners' entries are never touched. Upstream's
-  Memory Tidy may still rewrite or delete copies; the next run restores them.
+  Memory Tidy and memory audit leave mirrored entries alone
+  ([Consolidation](#consolidation-41)).
 - Same discipline as upstream's memory writers: a strict read (`load_all_for_update`,
   never saving over a store it couldn't read) and the save right after, under the
   ledger's lock.
@@ -596,6 +597,60 @@ Lines that don't fit `max_chars` are skipped; "" when nothing matches.
   updated or removed) and leaves every other entry exactly as it is. The owner actions
   and subject edits use it (one click no longer re-reads and compares every mirrored
   belief); the jobs run the full sync.
+
+## Consolidation (4.1)
+
+Code: `src/belief_consolidation.py`; test `tests/test_belief_consolidation.py`. Two parts.
+
+**Upstream's tidy leaves sourced memories alone.** A memory entry with provenance is one
+that mirrors a belief (`belief_id`) or is a Phase 0 copy of a module fact (`source:
+odysseus-sound` with `module_fact_id`). Upstream has two passes that tidy memory by text
+alone: the built-in task **Memory Tidy** (`consolidate_memory`, run after every 5 new
+memories, so the mirror's own additions set it off) and the **memory audit** (the Tidy
+button on the memory page, and the automatic audit after chat extraction). Either could
+merge a mirrored entry into an unrelated memory, rewrite it without its `(source: …)`
+link, or delete it, and the next ledger sync would put it back with a new memory id. Two
+hooks keep them out:
+
+- Memory Tidy (`src/builtin_actions.py`, `action_consolidate_memory`): sourced entries
+  are dropped from each owner's group before the duplicate check and the model call, so
+  they are never compared, sent to the model, rewritten or deleted.
+- Memory audit (`services/memory/memory_extractor.py`, `audit_memories`): sourced
+  entries are split off before the fingerprint, the model call and the 50 % safety net,
+  and written back unchanged (from the fresh strict read when the audit is per owner).
+  The owner's plain memories are audited as before.
+
+**The fork's own pass merges near-duplicate beliefs, one source at a time.**
+`consolidate(owner, source)` runs in each source's job (Module Facts for
+`odysseus-sound`, Notes Evidence for `notes`), after intake and before memory sync. Intake
+already joins evidence whose matching key is equal; this pass catches the same claim in
+slightly different words (a module that writes "Prefers window seats on long flights"
+one week and "… on long flight" the next under two fact ids, or two notes saying it).
+
+- **Candidates:** the owner's tentative and confirmed beliefs whose evidence all comes
+  from that one source. Never merged: beliefs the owner confirmed or corrected,
+  rejected and stale beliefs, beliefs with evidence from two sources (agreement across
+  sources is confirmation, rule (b), not a duplicate), other owners' beliefs.
+- **Same claim:** same subject, `about` and category; the words of the two matching keys
+  may differ only in filler words (`the`, `very`, `still` …) and in another form of the
+  same word (plural or third person: flight/flights, prefer/prefers). A different name,
+  place, thing or tense stays apart ("a rabbit called Luna" / "… called Bruno",
+  "works at" / "worked at"), and so does any difference in a negation word (`not`, `no`,
+  `never`, `doesn't`, `longer` …) or a number. Two structured beliefs must also agree on
+  attribute and value.
+- **Which one stays:** confirmed before tentative, then the one already in memory (its
+  memory id and `uses` stay), then more evidence, then the older belief.
+- **The merge:** the other belief's evidence moves to the kept one with its source ids,
+  links and dates, so the source keeps mapping those ids to the kept belief and a
+  resubmit changes nothing. The kept belief gets an event `merged` (`#<id>: <its text>`)
+  and takes the other's structure if it had none. The merged belief is deleted (its
+  events and cached vector with it); its memory entry goes at the memory sync. The kept
+  belief's dates and status are recomputed: merged sightings can confirm it by rule (c).
+- Result lines of both jobs gain `, N merged` when something was merged.
+- `BELIEF_CONSOLIDATE=off` skips the merge pass; the upstream exclusion always applies.
+- On the fictional scale corpus (`scripts/belief_eval_scale.py`, distinct beliefs only)
+  the pass plans 0 merges: 0.1 s for `medium` (3000 beliefs), 0.4 s for `large`
+  (10 000).
 
 ## The odysseus-sound facts job
 
@@ -678,6 +733,7 @@ states.
 | `EVIDENCE_NOTES` | off | `on` lets the Notes Evidence task submit facts from the owner's plain notes |
 | `BELIEF_STRUCTURE` | on | `off` stops the Belief Structure task (structure already written stays) |
 | `BELIEF_STRUCTURE_BATCH` | 5 | beliefs per model call of the Belief Structure task (1 to 10) |
+| `BELIEF_CONSOLIDATE` | on | `off` skips the merge of near-duplicate beliefs within a source ([Consolidation](#consolidation-41)) |
 
 Values below 1 count as 1; a value that isn't a number falls back to the default.
 

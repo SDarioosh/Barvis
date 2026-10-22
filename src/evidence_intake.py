@@ -70,7 +70,7 @@ CATEGORIES = ("fact", "preference", "contact")
 STATUSES = ("tentative", "confirmed", "stale", "rejected")
 CONFIRMED_BY = ("source", "owner", "rule")
 EVENT_KINDS = ("added", "evidence", "confirmed", "stale", "rejected", "corrected",
-               "restored", "retired_upstream", "unconfirmed")
+               "restored", "retired_upstream", "unconfirmed", "merged")
 NORM_VERSION = 1  # PRAGMA user_version: matching keys of this version
 SCHEMA_VERSION = 2  # PRAGMA user_version: subjects and structure columns (Phase 2)
 SUBJECT_KINDS = ("person", "project", "thing", "owner")
@@ -156,7 +156,8 @@ CREATE TABLE IF NOT EXISTS events (
     belief_id INTEGER NOT NULL REFERENCES beliefs (id) ON DELETE CASCADE,
     at TEXT NOT NULL,
     kind TEXT NOT NULL CHECK (kind IN ('added', 'evidence', 'confirmed', 'stale',
-        'rejected', 'corrected', 'restored', 'retired_upstream', 'unconfirmed')),
+        'rejected', 'corrected', 'restored', 'retired_upstream', 'unconfirmed',
+        'merged')),
     detail TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS events_belief ON events (belief_id);
@@ -442,17 +443,18 @@ def _migrate_norms(db: sqlite3.Connection) -> None:
 
 def _migrate_event_kinds(db: sqlite3.Connection) -> None:
     """Once per ledger file: widen the ``events.kind`` CHECK to today's kinds (an older
-    ledger lacks ``unconfirmed``). SQLite can't alter a CHECK, so the table is rebuilt."""
+    ledger lacks ``unconfirmed`` or ``merged``). SQLite can't alter a CHECK, so the table
+    is rebuilt."""
     sql = db.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'events'"
                      ).fetchone()[0]
-    if "'unconfirmed'" in sql:
+    if all(f"'{k}'" in sql for k in EVENT_KINDS):
         return
     kinds = ", ".join(f"'{k}'" for k in EVENT_KINDS)
     db.execute("BEGIN IMMEDIATE")
     try:
         sql = db.execute("SELECT sql FROM sqlite_master WHERE type = 'table' "
                          "AND name = 'events'").fetchone()[0]
-        if "'unconfirmed'" not in sql:
+        if not all(f"'{k}'" in sql for k in EVENT_KINDS):
             db.execute("CREATE TABLE events_new (id INTEGER PRIMARY KEY AUTOINCREMENT, "
                        "belief_id INTEGER NOT NULL REFERENCES beliefs (id) ON DELETE CASCADE, "
                        f"at TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN ({kinds})), "

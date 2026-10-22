@@ -55,6 +55,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from src import belief_consolidation as consolidation
 from src import evidence_intake as ledger
 from src.module_action_items import (
     CallTool,
@@ -252,6 +253,9 @@ async def sync(owner: str | None, call: CallTool, *, now: datetime | None = None
         for key, value in ledger.reconcile_source(owner, SOURCE, {str(r["id"]) for r in rows},
                                                   now=now, mirror=False).items():
             stats[key] = stats.get(key, 0) + value
+        merged = consolidation.consolidate(owner, SOURCE, now=now, mirror=False)
+        stats["merged"] = merged["merged"]
+        stats["confirmed"] = stats.get("confirmed", 0) + merged["confirmed"]
         stats["stale"] += ledger.apply_decay(owner, now=now, mirror=False)["stale"]
         memory = ledger.sync_memory(owner, now=now)
         stats.update({f"memory_{k}": v for k, v in memory.items()})
@@ -265,7 +269,7 @@ def changed(stats: dict[str, int]) -> bool:
     """Whether a pass changed anything in the ledger or in memory."""
     return any(stats.get(k) for k in (
         "beliefs_added", "evidence_added", "evidence_updated", "confirmed", "gone", "stale",
-        "unconfirmed", "memory_added", "memory_updated", "memory_removed", "subjects_added",
+        "merged", "unconfirmed", "memory_added", "memory_updated", "memory_removed", "subjects_added",
         "mapped", "aliases_added"))
 
 
@@ -273,7 +277,8 @@ def summary(stats: dict[str, int]) -> str:
     """Counts only: never fact text."""
     return (f"facts: {stats['facts']} seen, {stats['beliefs_added']} new, "
             f"{stats['confirmed']} confirmed, {stats['unconfirmed']} unconfirmed, "
-            f"{stats['gone']} gone, {stats['stale']} stale; "
+            f"{stats['gone']} gone, {stats['stale']} stale"
+            + (f", {stats['merged']} merged" if stats.get("merged") else "") + "; "
             f"memory: {stats['memory_kept']} kept, {stats['memory_added']} added, "
             f"{stats['memory_updated']} updated, {stats['memory_removed']} removed"
             + (f"; people: {stats['people']} seen, {stats.get('subjects_added', 0)} new"

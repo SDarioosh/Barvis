@@ -615,6 +615,9 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
             for mem in all_memories:
                 memory_groups.setdefault(_memory_owner(mem), []).append(mem)
 
+        # Fork: memories with provenance are left to the ledger's pass (src/belief_consolidation.py)
+        from src.belief_consolidation import without_sourced
+        memory_groups = {o: without_sourced(g) for o, g in memory_groups.items()}
         memory_groups = {group_owner: group for group_owner, group in memory_groups.items() if group}
         if not memory_groups:
             raise TaskNoop("no memories to consolidate")
