@@ -943,6 +943,8 @@ def _insight_block(owner: str | None, now: datetime | None, limit: int) -> str:
         return ""
     if not insight:
         return ""
+    # the owner's "↑ first" / "not today" (src/insight_outcomes.py)
+    insight = _learning("insight_outcomes", "ordered", insight, owner, insight)
     text = ("Today's plan, for questions about today, priorities or what to do first. "
             f"For anything else use your tools as usual. ({insight.get('date')})")
     if insight.get("headline"):

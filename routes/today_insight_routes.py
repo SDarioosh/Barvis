@@ -2,7 +2,9 @@
 
 * ``GET  /today``: ``static/today.html`` (sidebar: Today).
 * ``GET  /api/insight/today``: today's insight with its ``votes`` (404 when none yet),
-  plus ``refreshing`` and ``refresh_error`` for the page's Refresh.
+  plus ``refreshing`` and ``refresh_error`` for the page's Refresh. In the owner's order
+  (``src/insight_outcomes.py``: "↑ first" rows first in ``focus``, "not today" rows left
+  out and listed under ``dismissed``), with ``outcomes`` ({ref: outcome}).
 * ``POST /api/insight/today/vote`` {vote: up|down}: 👍/👎 on today's insight.
 * ``POST /api/insight/refresh``: write it now, even when the inputs didn't change. Starts
   the work in the background and answers 202 ``{"status": "started"|"running",
@@ -10,8 +12,8 @@
   longer than the request timeout); the page polls ``GET /api/insight/today`` until
   ``generated`` changes or ``refreshing`` is false.
 * ``GET  /api/codex/insight/today``: for API-token clients (odysseus-sound's phone and PC
-  relays, the T5 PDA) with scope ``insight:read``; same JSON without ``input_hash`` and
-  ``votes``, 404 ``{"error": "no insight yet"}`` when there is none.
+  relays, the T5 PDA) with scope ``insight:read``; same JSON (owner order applied)
+  without ``input_hash``, ``votes`` and outcomes, 404 ``{"error": "no insight yet"}`` when there is none.
 
 The page routes use the same auth as the odysseus-sound page (admin session). To-dos are
 ticked through the notes API's own ``toggle`` route, not a new one.
@@ -30,6 +32,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from core.middleware import require_admin
+from src import insight_outcomes as io
 from src import today_insight as ti
 from src.auth_helpers import effective_user
 
@@ -48,6 +51,22 @@ def _owner(request: Request) -> str:
 
 def _no_insight(**extra: Any) -> JSONResponse:
     return JSONResponse(status_code=404, content={"error": "no insight yet", **extra})
+
+
+def _outcome(owner: str, insight: dict) -> dict | None:
+    try:
+        return io.load(owner, str(insight.get("date") or ""))
+    except Exception as e:  # noqa: BLE001 -- the page works without it
+        logger.warning("today insight: outcome log unreadable: %s", e)
+        return None
+
+
+def _owner_order(owner: str, insight: dict) -> dict:
+    try:
+        return io.ordered(owner, insight)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("today insight: owner order failed: %s", e)
+        return insight
 
 
 # Refresh runs per owner; asyncio keeps only weak references to tasks, so hold them.
@@ -100,7 +119,7 @@ def setup_today_insight_routes() -> APIRouter:
 
         owner = _scope_owner(request, INSIGHT_READ_SCOPES)
         insight = ti.load_today(owner)
-        return ti.public(insight) if insight else _no_insight()
+        return ti.public(_owner_order(owner, insight)) if insight else _no_insight()
 
     @router.get("/api/insight/today", dependencies=[Depends(require_admin)])
     async def insight(request: Request):
@@ -108,7 +127,11 @@ def setup_today_insight_routes() -> APIRouter:
         found = ti.load_today(owner)
         if not found:
             return _no_insight(**_refresh_state(owner))
-        return {**ti.public(found), "votes": found.get("votes") or [], **_refresh_state(owner)}
+        outcome = _outcome(owner, found)
+        return {**ti.public(io.ordered(owner, found, outcome or {})),
+                "votes": found.get("votes") or [], "outcomes": io.outcome_map(outcome),
+                "dismissed": io.dismissed_rows(found, outcome, owner),
+                **_refresh_state(owner)}
 
     @router.post("/api/insight/today/vote", dependencies=[Depends(require_admin)])
     async def vote(request: Request, body: Vote) -> dict[str, Any]:

@@ -4,6 +4,9 @@
 // the standalone page (static/today.html). Data: routes/today_insight_routes.py. To-dos
 // are ticked with the notes API's own toggle route
 // (POST /api/notes/<id>/items/<index>/toggle), like the notes page.
+// Phase 3 (src/insight_outcomes.py): each row has "↑ first", "Not today" and "Why first?";
+// ticks, marks and undo are posted to POST /api/insight/today/outcome. The server already
+// puts promoted rows first and leaves dismissed ones out (listed under `dismissed`).
 
 // Phase 3: the weights table and "why is this first?" (todayWeights.js), weekly trends
 // (todayTrends.js). Contract: docs/fork/today-insight.md.
@@ -76,7 +79,21 @@ function parseRef(ref) {
   if (todo) return { kind: 'todo', noteId: todo[1], index: Number(todo[2]) };
   const ev = /^event:(.+)$/.exec(ref || '');
   if (ev) return { kind: 'event', uid: ev[1] };
+  if (/^loop:./.test(ref || '')) return { kind: 'loop' };
+  if (/^belief:./.test(ref || '')) return { kind: 'plan' };
   return { kind: 'other' };
+}
+
+// The day's outcomes ({ref: outcome}) from the last load.
+let outcomes = {};
+
+function postOutcome(ref, outcome) {
+  return postJSON('/api/insight/today/outcome', { ref, outcome });
+}
+
+function safeLink(href) {
+  const text = String(href || '');
+  return /^(https?:\/\/|\/(?!\/))/i.test(text) ? text : null;
 }
 
 function eventHref(uid) {
@@ -144,8 +161,11 @@ function todoRow(row, ref) {
       const r = await api(`/api/notes/${encodeURIComponent(ref.noteId)}/items/${index}/toggle`,
                           { method: 'POST' });
       const items = Array.isArray(r.items) ? r.items : [];
-      show(items[index] ? items[index].done : want);
+      const done = items[index] ? !!items[index].done : want;
+      show(done);
       notes.delete(ref.noteId);
+      // the outcome log; the 15-min pass sees the tick anyway, so a failure is quiet
+      postOutcome(row.ref, done ? 'done' : 'open').catch(() => {});
     } catch (e) {
       show(!want);
       msg.textContent = `Couldn't save: ${e.message}`;
@@ -166,13 +186,107 @@ function eventRow(row, ref) {
       row.why ? el('div', { className: 'bs-why' }, row.why) : null));
 }
 
+function loopRow(row) {
+  const href = safeLink(row.link);
+  const title = href
+    ? el('a', { className: 'bs-title', href, target: '_blank', rel: 'noopener noreferrer',
+                title: 'Open the conversation' }, row.title || row.ref)
+    : el('span', { className: 'bs-title' }, row.title || row.ref);
+  return el('li', { className: 'ti-item' }, el('div', { className: 'bs-body' }, title,
+    row.person ? el('div', { className: 'bs-meta' }, `with ${row.person}`) : null,
+    row.why ? el('div', { className: 'bs-why' }, row.why) : null));
+}
+
+function planRow(row) {
+  return el('li', { className: 'ti-item' }, el('div', { className: 'bs-body' },
+    el('a', { className: 'bs-title', href: '/beliefs', title: 'Open in Beliefs' }, row.title || row.ref),
+    row.why ? el('div', { className: 'bs-why' }, row.why) : null));
+}
+
+// "↑ first", "Not today" and "Why first?" under a row.
+function rowActions(row) {
+  const promoted = outcomes[row.ref] === 'promoted';
+  const msg = el('span', { className: 'bs-meta bs-msg' });
+  const why = el('div', { className: 'ti-why', hidden: true });
+  const mark = async (outcome) => {
+    msg.textContent = '';
+    msg.classList.remove('error');
+    try {
+      await postOutcome(row.ref, outcome);
+      await load();
+    } catch (e) {
+      msg.textContent = `Couldn't save: ${e.message}`;
+      msg.classList.add('error');
+    }
+  };
+  const showWhy = async () => {
+    if (!why.hidden) {
+      why.hidden = true;
+      return;
+    }
+    why.hidden = false;
+    why.replaceChildren(el('span', { className: 'bs-meta' }, 'Loading…'));
+    try {
+      const data = await api(`/api/insight/today/why?ref=${encodeURIComponent(row.ref)}`);
+      why.replaceChildren();
+      renderWhy(why, data);
+    } catch (e) {
+      why.replaceChildren(el('span', { className: 'bs-meta' }, e.status === 404
+        ? 'No explanation for this item.' : `Couldn't load the explanation: ${e.message}`));
+    }
+  };
+  return el('div', {},
+    el('div', { className: 'bs-row ti-actions' },
+      el('button', { type: 'button', className: 'bs-btn ti-act', 'aria-pressed': String(promoted),
+                     title: promoted ? 'Undo: back to the model\'s order' : 'Show this first today',
+                     onclick: () => mark(promoted ? 'clear' : 'promoted') }, '↑ first'),
+      el('button', { type: 'button', className: 'bs-btn ti-act', title: 'Hide this for today',
+                     onclick: () => mark('dismissed') }, 'Not today'),
+      el('button', { type: 'button', className: 'bs-btn ti-act', title: 'Why is this here?',
+                     onclick: showWhy }, 'Why first?'),
+      msg),
+    why);
+}
+
 function itemRow(row) {
   const ref = parseRef(row.ref);
-  if (ref.kind === 'todo') return todoRow(row, ref);
-  if (ref.kind === 'event') return eventRow(row, ref);
-  return el('li', { className: 'ti-item' }, el('div', { className: 'bs-body' },
-    el('span', { className: 'bs-title' }, row.title || row.ref),
-    row.why ? el('div', { className: 'bs-why' }, row.why) : null));
+  let li;
+  if (ref.kind === 'todo') li = todoRow(row, ref);
+  else if (ref.kind === 'event') li = eventRow(row, ref);
+  else if (ref.kind === 'loop') li = loopRow(row);
+  else if (ref.kind === 'plan') li = planRow(row);
+  else {
+    li = el('li', { className: 'ti-item' }, el('div', { className: 'bs-body' },
+      el('span', { className: 'bs-title' }, row.title || row.ref),
+      row.why ? el('div', { className: 'bs-why' }, row.why) : null));
+  }
+  const body = li.querySelector('.bs-body');
+  if (body && row.ref) body.append(rowActions(row));
+  return li;
+}
+
+// "Not today (n)": the rows the owner hid today, collapsed, each with Undo.
+function dismissedBlock(rows) {
+  const list = el('ul', { className: 'bs-items' }, ...rows.map(row => {
+    const msg = el('span', { className: 'bs-meta bs-msg' });
+    const undo = async () => {
+      try {
+        await postOutcome(row.ref, 'clear');
+        await load();
+      } catch (e) {
+        msg.textContent = `Couldn't save: ${e.message}`;
+        msg.classList.add('error');
+      }
+    };
+    return el('li', { className: 'ti-item' }, el('div', { className: 'bs-body' },
+      el('span', { className: 'bs-title' }, row.title || 'An item hidden today'),
+      el('div', { className: 'bs-row ti-actions' },
+        el('button', { type: 'button', className: 'bs-btn ti-act', onclick: undo,
+                       title: 'Show it again today' }, 'Undo'), msg)));
+  }));
+  return el('details', { className: 'ti-dismissed' },
+    el('summary', { className: 'bs-section' }, `Not today (${rows.length})`),
+    el('div', { className: 'bs-card' }, list));
 }
 
 function lastVote(votes) {
@@ -212,6 +326,7 @@ function generatedLabel(iso) {
 
 function render(insight) {
   notes.clear();
+  outcomes = (insight && typeof insight.outcomes === 'object' && insight.outcomes) || {};
   const main = $('.ti-main');
   // The "nothing to report" headline is written without the model, so there is nothing to rate.
   const hasItems = SECTIONS.some(([key]) => Array.isArray(insight[key]) && insight[key].length);
@@ -227,6 +342,8 @@ function render(insight) {
                el('div', { className: 'bs-card' }, el('ul', { className: 'bs-items' },
                  ...rows.map(itemRow))));
   }
+  const dismissed = Array.isArray(insight.dismissed) ? insight.dismissed.filter(r => r && r.ref) : [];
+  if (dismissed.length) parts.push(dismissedBlock(dismissed));
   main.replaceChildren(...parts);
 }
 
