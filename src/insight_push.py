@@ -22,11 +22,9 @@ Docs: ``docs/fork/today-insight.md#push``.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 logger = logging.getLogger(__name__)
@@ -71,72 +69,31 @@ def message(insight: dict, outcome: dict | None = None) -> tuple[str, str]:
 
 
 # ------------------------------------------------------------ pushed / tries state
-# The outcome log (stream A) owns the ``pushed`` stamp and ``push_tries``. While a
-# function is missing there, a small file next to the insight keeps the same state.
-def _fallback_path(owner: str | None) -> Path:
-    from src.today_insight import insight_path
-
-    return insight_path(owner, "2000-01-01").parent / "push.json"
-
-
-def _fallback(owner: str | None, day: str) -> dict:
-    try:
-        data = json.loads(_fallback_path(owner).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        data = {}
-    if not isinstance(data, dict) or data.get("date") != day:
-        data = {"date": day, "pushed": None, "push_tries": 0}
-    return data
-
-
-def _save_fallback(owner: str | None, data: dict) -> None:
-    path = _fallback_path(owner)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data), encoding="utf-8")
-    tmp.replace(path)
-
-
-def _outcomes_func(name: str) -> Callable | None:
-    try:
-        from src import insight_outcomes
-    except Exception:  # noqa: BLE001
-        return None
-    return getattr(insight_outcomes, name, None)
-
-
+# The outcome log keeps the ``pushed`` stamp and ``push_tries`` (src/insight_outcomes.py).
 def _pushed(owner: str | None, day: str) -> Any:
-    func, mark = _outcomes_func("pushed"), _outcomes_func("mark_pushed")
-    if func is not None and mark is not None:
-        return func(owner, day)
-    return _fallback(owner, day).get("pushed")
+    from src import insight_outcomes
+
+    return insight_outcomes.pushed(owner, day)
 
 
 def _note_try(owner: str | None, day: str) -> int:
     """Count one try today; returns today's count including this one."""
-    func = _outcomes_func("note_push_try")
-    if func is not None:
-        return int(func(owner, day) or 0)
-    data = _fallback(owner, day)
-    data["push_tries"] = int(data.get("push_tries") or 0) + 1
-    _save_fallback(owner, data)
-    return data["push_tries"]
+    from src import insight_outcomes
+
+    return int(insight_outcomes.note_push_try(owner, day) or 0)
 
 
 def _mark_pushed(owner: str | None, day: str, now: datetime) -> None:
-    func = _outcomes_func("mark_pushed")
-    if func is not None and _outcomes_func("pushed") is not None:
-        func(owner, day, now=now)
-        return
-    data = _fallback(owner, day)
-    data["pushed"] = now.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    _save_fallback(owner, data)
+    from src import insight_outcomes
+
+    insight_outcomes.mark_pushed(owner, day, now=now)
 
 
 def _outcome(owner: str | None, day: str) -> dict | None:
-    load = _outcomes_func("load")
+    from src import insight_outcomes
+
     try:
-        return load(owner, day) if load is not None else None
+        return insight_outcomes.load(owner, day)
     except Exception as e:  # noqa: BLE001
         logger.debug("insight push: outcome log unavailable: %s", e)
         return None
@@ -166,8 +123,11 @@ async def maybe_push(owner: str | None, insight: dict, *, now: datetime | None =
     if _pushed(owner, day):
         return False
     title, body = message(insight, _outcome(owner, day))
-    if not body or _note_try(owner, day) > MAX_TRIES:
-        return False  # the count goes on past MAX_TRIES; only today's file holds it
+    from src import insight_outcomes
+
+    if not body or insight_outcomes.push_tries(owner, day) >= MAX_TRIES:
+        return False
+    _note_try(owner, day)
     send = push or mai.push
     try:
         ok = bool(await send(owner or "", title, body, f"today-insight:{day}"))
