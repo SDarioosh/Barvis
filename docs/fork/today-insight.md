@@ -393,7 +393,7 @@ rule order (null for open loops, plans and items no longer among the candidates)
 `contributions` lists every key of the item with its weight, counts, `reset_at` and
 `label`; `picked_by` is `owner` when today's outcome file marks the ref `promoted`, else
 `model`. `text` example: "Overdue since Oct 20; 1st in the rule order; your Work list
-counts +2 (you finished 7 of 9). The model put it first."
+counts +2 (you finished 7 of 9, moved up 1). The model put it first."
 
 On `/today`, **How Today ranks** (collapsed) shows the rows with Reset per row and Reset
 all; with no rows it says "No weights yet: Today learns from what you tick, move up or
@@ -469,8 +469,10 @@ candidates after the 30 rule-ordered ones (each part fails soft):
   person in the conversation, so a row is for someone only when one of its `with`
   people's full or first name appears as a whole word (case ignored) in its `text` or
   `title`: "Lend Tom the tent" is a loop for Tom, "Buy milk" said while talking with Ana
-  is not. By due date (undated last), then newest. Ref `loop:<action item id>`,
-  `person` the first name of the first `with` person so named, `link` the row's
+  is not. A leading title (Dr, Mr, Mrs, Ms, Mx, Prof, Sir, Dame) is never a first name:
+  "Dr. Patel" matches "Dr. Patel" or "Patel", not another "Dr. …". By due date (undated
+  last), then newest. Ref `loop:<action item id>`, `person` the first name of the first
+  `with` person so named (the full name after a title: "Dr. Patel"), `link` the row's
   transcript link, bucket from `due_date` as for to-dos. These rows leave the "OPEN
   ACTION ITEMS (context only)" lines; rows that aren't loops stay in them.
 - **Plans** (≤ 5): the owner's beliefs with attribute `plans` or `decision`, status

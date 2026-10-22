@@ -67,12 +67,35 @@ def people(row: dict) -> list[str]:
     return out
 
 
+_TITLE_WORD = re.compile(r"^(?:dr|mr|mrs|ms|mx|prof|sir|dame)\.?$", re.IGNORECASE)
+
+
+def _name_forms(name: str) -> tuple[str, ...]:
+    """The forms a ``with`` name matches by: the full name and the first name, or, after a
+    title ("Dr. Patel"), the name without the title; a title alone never matches."""
+    words = name.split()
+    rest = words[1:] if words and _TITLE_WORD.match(words[0]) else words
+    if not rest:
+        return (name,)
+    short = " ".join(rest) if len(rest) < len(words) else rest[0]
+    return tuple(dict.fromkeys((name, short)))
+
+
+def short_name(name: str) -> str:
+    """How a loop names its person: the first name, or the full name after a title."""
+    words = name.split()
+    if words and _TITLE_WORD.match(words[0]):
+        return name
+    return words[0] if words else name
+
+
 def named_person(row: dict) -> str | None:
     """The first ``with`` person (in its order) whose full or first name appears as a
-    whole word, case ignored, in the row's ``text`` or ``title``; None when none is."""
+    whole word, case ignored, in the row's ``text`` or ``title``; None when none is.
+    A leading title doesn't count as a first name: "Dr. Patel" matches "Patel"."""
     said = " ".join(str(row.get(k) or "") for k in ("text", "title"))
     for name in people(row):
-        for form in dict.fromkeys((name, name.split(" ")[0])):
+        for form in _name_forms(name):
             if re.search(rf"(?<!\w){re.escape(form)}(?!\w)", said, re.IGNORECASE):
                 return name
     return None
@@ -114,7 +137,7 @@ def loop_candidates(owner: str | None, today: Date, rows: Iterable[dict], *,
                     "bucket": bucket_for(day, today), "title": _title(r),
                     "date": day.isoformat() if day else None,
                     "time": (str(r.get("due_time") or "").strip()[:5] or None) if day else None,
-                    "person": str(named_person(r)).split(" ")[0],
+                    "person": short_name(str(named_person(r))),
                     "link": str(r.get("link") or "") or None, "weight": 0})
     return out
 
