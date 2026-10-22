@@ -239,24 +239,30 @@ retired), which returns `{"facts": [{"id", "subject", "about" (owner/person/othe
   memory stay) and the action-item task's `MODULE_ACTION_ITEMS_SERVER` (default
   `convo`).
 
-## Conversations page
+## Conversations window
 
-`/modules/sound` (sidebar: **Conversations**, admin only) shows open action items live
+**Conversations** (sidebar, icon rail, `/open conversations`, an optional shortcut; admin
+only) opens a tool window in the app; `/modules/sound` shows the same view as its own page
+(`static/js/forkModuleWindows.js`, `static/js/soundModule.js`). It shows open action items live
 (Done / Dismiss call `update_action_item`; Odysseus keeps no copy), the module's
 conversations (filter by words, person, dates and type: all, conversations, voice notes;
 voice notes are labelled), and a "who is this?" card for every unnamed speaker. **Open** reads one
 conversation in place (`get_conversation`, `get_transcript` 200 lines a page); tapping a
 speaker fixes one line (`reassign_line`), a whole unnamed `Speaker N` (`name_speaker`) or
-a name everywhere (`rename_speaker_everywhere`, confirmed first). **Ask in chat** opens
-`/?ask=/sound About the conversation "<title>" (id <id>, <start>): ` for the owner to
-finish and send. It calls
+a name everywhere (`rename_speaker_everywhere`, confirmed first). **Ask in chat** puts
+`/sound About the conversation "<title>" (id <id>, <start>): ` into a new chat for the
+owner to finish and send (the page links to `/?ask=…`). It calls
 `list_action_items`, `update_action_item`, `search_conversations`, `get_conversation`,
 `get_transcript`, `reassign_line`, `rename_speaker_everywhere`,
 `list_unnamed_speakers` and `name_speaker` through the MCP
 manager and parses their result lines (`src/sound_module_view.py`, test
 `tests/test_sound_module_view.py`); change those line shapes together with the parser.
-`SOUND_MODULE_SERVER` names the server (default `convo`). The external "Transcript" link
-and per-line times open the module's signed `/view` links in a new tab (Odysseus' CSP doesn't allow framing another origin).
+`SOUND_MODULE_SERVER` names the server (default `convo`). A signed `/view` link to a
+moment (`#t=<s>`), clicked in chat or in the view (quotes, line times, "where it was
+said"), opens the reader at that line; the **Transcript** buttons and a modified click
+open the module's page in a new tab (Odysseus' CSP doesn't allow framing another origin).
+This relies on the link format in [../modules.md](../modules.md): a `/view/<id>` path
+with a `sig` parameter.
 Audio isn't kept after transcription, so cards quote lines instead of playing them.
 
 ## Today insight
