@@ -3,7 +3,11 @@ Fictional data only."""
 
 import asyncio
 import json
+import re
+import shutil
+import subprocess
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
@@ -23,6 +27,7 @@ def store(tmp_path, monkeypatch):
     monkeypatch.setattr(ti, "_RUN_LOCKS", {})
     monkeypatch.setattr(io, "_TITLES", {})
     monkeypatch.setattr(io, "_LOCKS", {})
+    monkeypatch.setattr(io, "_FINAL", {})
     archived = {}
     monkeypatch.setattr(io, "_load_notes_by_id",
                         lambda owner, ids: {i: archived[i] for i in ids if i in archived})
@@ -120,8 +125,47 @@ def test_done_refound_by_title_after_lines_moved(store):
     moved = [_work(("Book flights", True), ("Water the plants", False))]
     io.observe("alice", _insight(focus=[("todo:n1:1", "Water the plants")]),
                _inputs(moved), now=LATER)
-    assert _item("todo:n1:1")["outcome"] == "done"
-    assert _item("todo:n1:1")["section"] == "focus"
+    # todo:n1:1 names another line now: Book flights' record keeps following its line
+    assert _item("todo:n1:1#1")["outcome"] == "done"
+    assert _item("todo:n1:1#1")["section"] == "focus"
+    assert _item("todo:n1:1")["outcome"] == "open"
+
+
+def test_one_record_per_line_when_a_line_is_inserted_above(store):
+    from src import insight_weights as iw
+
+    io.observe("alice", _insight(focus=[("todo:n1:0", "Pay rent")]),
+               _inputs([_work(("Pay rent", False))]), now=NOW)
+    # the owner adds "Call bank" at the top; the next insight shows both
+    notes = [_work(("Call bank", False), ("Pay rent", False))]
+    rewritten = _insight(focus=[("todo:n1:0", "Call bank"), ("todo:n1:1", "Pay rent")])
+    ti.save("alice", rewritten)
+    io.observe("alice", rewritten, _inputs(notes), now=LATER)
+    data = io.load("alice", DAY)
+    assert sorted(data["items"]) == ["todo:n1:0", "todo:n1:1"]
+    assert data["items"]["todo:n1:1"]["first_shown"] == "2026-10-21T07:00:00Z"  # Pay rent's
+    assert data["items"]["todo:n1:0"]["first_shown"] == "2026-10-21T09:00:00Z"
+    # Call bank ticked on the page, then seen by the pass: not overwritten
+    io.record("alice", "todo:n1:0", "done", now=LATER)
+    ticked = [_work(("Call bank", True), ("Pay rent", False))]
+    io.observe("alice", rewritten, _inputs(ticked), now=LATER + timedelta(minutes=15))
+    assert _item("todo:n1:0")["outcome"] == "done" and _item("todo:n1:1")["outcome"] == "open"
+    io.finalize("alice", DAY, now=LATER + timedelta(hours=1))
+    weights = iw.compute("alice", date(2026, 10, 22), now=NOW + timedelta(days=1))
+    row = weights["keys"]["list:n1"]
+    assert (row["shown"], row["done"], row["ignored"]) == (2, 1, 1)
+
+
+def test_a_tick_on_a_rewritten_insight_before_the_pass(store):
+    io.observe("alice", _insight(focus=[("todo:n1:0", "Pay rent")]),
+               _inputs([_work(("Pay rent", False))]), now=NOW)
+    rewritten = _insight(focus=[("todo:n1:0", "Call bank")])
+    ti.save("alice", rewritten)  # the page shows it before the pass observes it
+    assert io.record("alice", "todo:n1:0", "done", now=LATER)["first_shown"] == \
+        "2026-10-21T09:00:00Z"
+    assert _item("todo:n1:0#1")["outcome"] == "open"  # Pay rent, untouched
+    with pytest.raises(LookupError):
+        io.record("alice", "todo:n1:0#1", "done", now=LATER)
 
 
 def test_moved_when_due_date_moves_later(store):
@@ -186,6 +230,48 @@ def test_loops_done_gone_and_plans_untouched(store):
     assert _item("loop:a1")["outcome"] == "open"
 
 
+def test_a_closed_loop_is_done_a_deleted_one_gone(store):
+    loops = [{"ref": f"loop:{i}", "kind": "loop", "bucket": "undated", "title": f"Loop {i}",
+              "weight": 0} for i in ("a1", "a2")]
+    insight = _insight(coming_up=[("loop:a1", "Loop a1"), ("loop:a2", "Loop a2")])
+    io.observe("alice", insight, _inputs(rows=[{"id": "a1", "status": "open"},
+                                               {"id": "a2", "status": "open"}], extra=loops),
+               now=NOW)
+    assert io.open_loop_ids("alice", date(2026, 10, 21)) == {"a1", "a2"}
+    # both left the open items: a1 was closed, a2 deleted; nothing else is open
+    inp = {**_inputs(), "action_rows_done": [{"id": "a1", "status": "done"}]}
+    io.observe("alice", insight, inp, now=LATER)
+    assert [_item(f"loop:{i}")["outcome"] for i in ("a1", "a2")] == ["done", "gone"]
+    assert io.open_loop_ids("alice", date(2026, 10, 21)) == set()
+
+
+def test_closed_loops_are_read_only_when_an_open_loop_left(running):
+    calls = []
+    open_rows = [{"id": 7, "status": "open", "mine": True, "title": "Lend Mira the tent",
+                  "text": "Lend Mira the tent", "with": [{"id": "p1", "name": "Mira"}]}]
+
+    async def call(tool, args):
+        calls.append((tool, args))
+        if tool == "list_action_items":
+            rows = open_rows if args["status"] == "open" else [{"id": 7, "status": "done"}]
+            return json.dumps(rows)
+        return "No digest"
+
+    answer = json.dumps({"headline": "h", "focus": [{"ref": "T1", "why": "today"}],
+                         "coming_up": [{"ref": "L1", "why": "Mira waits"}], "also": []})
+    st = asyncio.run(ti.run("alice", now=NOW, call=call, llm=FakeLLM(answer)))
+    assert _item("loop:7")["outcome"] == "open"
+    assert ("list_action_items", {"status": "done", "format": "json"}) not in calls
+    open_rows.clear()  # closed in odysseus-sound
+    calls.clear()
+    asyncio.run(ti.run("alice", now=LATER, call=call, llm=FakeLLM(answer)))
+    assert calls.count(("list_action_items", {"status": "done", "format": "json"})) == 1
+    assert _item("loop:7")["outcome"] == "done"
+    calls.clear()  # nothing open any more: not read again
+    asyncio.run(ti.run("alice", now=LATER, call=call, llm=FakeLLM(answer)))
+    assert ("list_action_items", {"status": "done", "format": "json"}) not in calls
+
+
 # ------------------------------------------------------------------ owner marks
 def test_owner_marks_are_not_overwritten_but_promoted_can_become_done(store):
     insight = _insight(focus=[("todo:n1:0", "Send the Q4 deck"), ("todo:n1:1", "Book flights")])
@@ -212,6 +298,23 @@ def test_owner_marks_are_not_overwritten_but_promoted_can_become_done(store):
         io.record("alice", "todo:zz:0", "done", now=LATER)
     with pytest.raises(ValueError):
         io.record("alice", "todo:n1:1", "maybe", now=LATER)
+
+
+def test_a_mark_on_a_done_item_changes_nothing(store):
+    insight = _insight(focus=[("todo:n1:0", "Send the Q4 deck")])
+    ti.save("alice", insight)
+    io.observe("alice", insight, _inputs([_work(("Send the Q4 deck", True))]), now=NOW)
+    for mark in ("dismissed", "promoted"):
+        item = io.record("alice", "todo:n1:0", mark, now=LATER)
+        assert (item["outcome"], item["via"]) == ("done", "observed")
+
+
+def test_finalize_counts_votes_cast_after_the_last_pass(store):
+    insight = _insight(votes=[{"vote": "up", "at": "a"}])
+    io.observe("alice", insight, _inputs(), now=NOW)
+    ti.save("alice", {**insight, "votes": [{"vote": "up", "at": "a"},
+                                           {"vote": "down", "at": "b"}]})
+    assert io.finalize("alice", DAY, now=LATER)["votes"] == {"up": 1, "down": 1}
 
 
 def test_record_without_insight_or_outcome_file(store):
@@ -287,6 +390,25 @@ def test_the_first_pass_after_midnight_finalizes_yesterday(store):
         ["2026-10-20", DAY]
 
 
+def test_finalize_pending_reads_the_window_once(store, monkeypatch):
+    today = date(2026, 10, 21)
+    for back in (1, 2, 28, 29, 40):
+        day = (today - timedelta(days=back)).isoformat()
+        io.save("alice", {**io.blank(day), "items": {
+            "todo:n1:0": {"kind": "todo", "outcome": "open", "at": None, "via": None}}})
+    io._TITLES[(ti._slug("alice"), "2026-10-20")] = {"todo:n1:0": "Pay rent"}
+    reads = []
+    real_load = io.load
+    monkeypatch.setattr(io, "load", lambda owner, day: reads.append(day) or real_load(owner, day))
+    assert io.finalize_pending("alice", today, now=NOW) == 3  # yesterday … 28 days back
+    assert io.load("alice", "2026-09-22")["final"] is False  # 29 days back: left alone
+    assert io.load("alice", "2026-09-11")["final"] is False
+    assert (ti._slug("alice"), "2026-10-20") not in io._TITLES  # evicted with its day
+    reads.clear()
+    assert io.finalize_pending("alice", today, now=NOW) == 0
+    assert reads == []  # final days aren't parsed again
+
+
 def test_push_helpers(store):
     assert io.pushed("alice", DAY) is None and io.push_tries("alice", DAY) == 0
     assert io.note_push_try("alice", DAY) == 1 and io.note_push_try("alice", DAY) == 2
@@ -321,6 +443,21 @@ def test_every_run_observes(running):
     running["notes"][0].items = json.dumps([{"text": "Send the Q4 deck", "done": True}])
     asyncio.run(ti.run("alice", now=LATER, call=None, llm=FakeLLM(GOOD)))
     assert _item("todo:n1:0")["outcome"] == "done"
+
+
+def test_a_page_tick_during_the_model_call_is_kept(running):
+    asyncio.run(ti.run("alice", now=NOW, call=None, llm=FakeLLM(GOOD)))
+
+    class TickWhileThinking(FakeLLM):
+        async def __call__(self, messages):  # the owner ticks the deck on /today meanwhile
+            running["notes"][0].items = json.dumps([{"text": "Send the Q4 deck", "done": True}])
+            io.record("alice", "todo:n1:0", "done", now=LATER + timedelta(seconds=30))
+            return await super().__call__(messages)
+
+    running["events"] = []  # the inputs changed: the model is asked again
+    asyncio.run(ti.run("alice", now=LATER, call=None, llm=TickWhileThinking(GOOD), force=True))
+    assert _item("todo:n1:0")["outcome"] == "done"  # not undone by the older notes
+    assert _item("todo:n1:0")["via"] == "today"
 
 
 def test_dismissed_items_leave_the_candidates_and_the_chat_block(running):
@@ -402,3 +539,62 @@ def test_outcome_route_refuses_api_tokens(running):
     client = _client(token=True, scopes=["insight:read"])
     r = client.post("/api/insight/today/outcome", json={"ref": "todo:n1:0", "outcome": "done"})
     assert r.status_code in (401, 403)
+
+
+# ------------------------------------------------------------------ long lines
+LONG = "Call the landlord about the heating " + "and the window in the back room " * 7
+
+
+def test_a_line_longer_than_the_title_is_matched(store):
+    assert len(LONG) > 200
+    [cand] = ti.todo_candidates([_work((LONG, False))], date(2026, 10, 21), TZ)
+    insight = _insight(focus=[("todo:n1:0", cand["title"])])
+    io.observe("alice", insight, _inputs([_work((LONG, False))]), now=NOW)
+    assert _item("todo:n1:0")["outcome"] == "open"
+    io.observe("alice", insight, _inputs([_work(("Water the plants", False), (LONG, True))]),
+               now=LATER)  # moved down and ticked: re-found by its first 200 characters
+    assert _item("todo:n1:0")["outcome"] == "done"
+
+
+# ------------------------------------------------------------------ the page's helpers
+_JS = Path(__file__).resolve().parent.parent / "static" / "js" / "today.js"
+
+
+def _page_functions(*names):
+    """The named top-level functions of static/js/today.js, as source."""
+    src = _JS.read_text(encoding="utf-8")
+    out = []
+    for name in names:
+        m = re.search(rf"^function {name}\(.*?^}}$", src, re.S | re.M)
+        assert m, name
+        out.append(m.group(0))
+    return "\n".join(out)
+
+
+def _node(js):
+    proc = subprocess.run(["node", "--input-type=module"], input=js, capture_output=True,
+                          text=True, timeout=30)
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout.strip())
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node binary not on PATH")
+def test_the_page_finds_a_long_line_by_its_first_200_characters():
+    title = " ".join(LONG.split())[:200]
+    note = {"items": [{"text": "Water the plants"}, {"text": LONG}]}
+    got = _node(_page_functions("lineKey", "sameText", "itemIndex") + f"""
+    const note = {json.dumps(note)};
+    console.log(JSON.stringify([itemIndex(note, {{index: 1}}, {json.dumps(title)}),
+                                itemIndex(note, {{index: 0}}, {json.dumps(title)}),
+                                itemIndex(note, {{index: 0}}, 'Water the plants')]));
+    """)
+    assert got == [1, 1, 0]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node binary not on PATH")
+def test_the_page_only_links_to_web_pages_and_site_paths():
+    hrefs = ["https://sound.local/view/1", "/beliefs", "//evil.example/x", "/\\evil.example",
+             "/\\/evil.example", "javascript:alert(1)", ""]
+    got = _node(_page_functions("safeLink") +
+                f"console.log(JSON.stringify({json.dumps(hrefs)}.map(safeLink)));")
+    assert got == ["https://sound.local/view/1", "/beliefs", None, None, None, None, None]

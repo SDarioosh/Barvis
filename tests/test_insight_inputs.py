@@ -52,6 +52,20 @@ def test_loops_need_mine_with_open_and_not_filed(store):
     assert sorted(refs) == ["loop:1", "loop:8"]
 
 
+def test_a_loop_names_its_person_in_its_text(store):
+    rows = [_row(1, title="Buy milk", text="Buy milk", with_=("Ana", "Tom")),  # just there
+            _row(2, title="Lend the tent", text="Lend Tom the tent", with_=("Ana", "Tom")),
+            _row(3, title="Send ANA SILVA the photos", text="", with_=("Ana Silva",)),
+            _row(4, title="Call Anabel", text="Call Anabel", with_=("Ana",)),  # not a word
+            _row(5, title="Pay Tom's share", text="", with_=("Tom Berg",))]
+    cands = ii.loop_candidates("alice", TODAY, rows, filed=set())
+    assert {c["ref"]: c["person"] for c in cands} == {"loop:2": "Tom", "loop:3": "Ana",
+                                                     "loop:5": "Tom"}
+    # rows that aren't loops stay in the context lines
+    lines = ti._action_item_lines("alice", rows, skip=["2", "3", "5"])
+    assert lines == ["Buy milk", "Call Anabel"]
+
+
 def test_filed_items_from_the_module_state(store):
     from src import module_action_items as mai
 

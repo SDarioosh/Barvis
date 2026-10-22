@@ -28,7 +28,7 @@ sandbox runs only with other sandbox runs.
 - STT: whisper.cpp `ggml-base.en.bin` (~148 MB).
 
 Speed on 4 CPUs: ~60 tokens/s prompt processing, ~7 tokens/s generation. Seeding the 8
-demo conversations takes ~8 min. One eval question takes ~10–110 s with
+demo conversations took ~8 min (10 conversations since 2026-10-22: ~20 min). One eval question takes ~10–110 s with
 `--frontend raw` and ~1.5–6 min with `--frontend odysseus`. Run a few questions, not all
 20.
 
@@ -124,15 +124,25 @@ curl -s -b $J -X POST $B/api/model-endpoints -F name=sandbox-llama \
   -F base_url=http://127.0.0.1:8082/v1 -F supports_tools=true
 curl -s -b $J -X POST $B/api/mcp/servers -F name=convo -F transport=http \
   -F "url=http://127.0.0.1:8001/mcp?access_token=$CONVO_MCP_TOKEN"
-# --trim: the tool set of all earlier sandbox runs; see "All Odysseus tools on" for why
-venv/bin/python scripts/modules_setup.py --url http://$B --password-file $SBX/admin.txt --trim
 INSTR=$(cd $SOUND/server && .venv/bin/python -c \
   "import json; from convo_server.mcp_server import INSTRUCTIONS; print(json.dumps(INSTRUCTIONS))")
 curl -s -b $J -X POST $B/api/presets/custom -H 'content-type: application/json' \
   -d "{\"system_prompt\": $INSTR, \"temperature\": 0.3, \"max_tokens\": 2048}"
+# after the Custom preset: setup copies its text into the /sound skill (an empty
+# preset leaves the skill without instructions)
+# --trim: the tool set of all earlier sandbox runs; see "All Odysseus tools on" for why
+venv/bin/python scripts/modules_setup.py --url http://$B --password-file $SBX/admin.txt --trim
 ```
 
 ## Run the eval
+
+**Question numbers moved (2026-10-22).** `server/eval/bakeoff.py` has gained questions
+since the runs below: the Maria question is now
+**9** ("What did Maria ask me to do last week?"), and 21 is "What was my latest voice note about?"; 22 no longer exists. Scores of
+`--only 1 4 16 21` before and after that change are not comparable. Q4 ("next
+appointment") depends on the date: the seeded appointment is on 2026-10-21, so from
+2026-10-22 on it has no future answer. Compare runs only when made on the same day with
+the same bakeoff.
 
 ```bash
 cd $SOUND/server && . $SBX/convo.env

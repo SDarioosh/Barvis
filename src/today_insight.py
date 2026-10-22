@@ -513,12 +513,16 @@ def _module_caller() -> CallTool | None:
         return None
 
 
-async def _module_inputs(owner: str | None, today: Date, call: CallTool | None
-                         ) -> tuple[str | None, list[str], list[dict]]:
-    """(digest text, open action-item lines for the prompt, the raw JSON rows)."""
+async def _module_inputs(owner: str | None, today: Date, call: CallTool | None,
+                         loops: Iterable[str] = ()
+                         ) -> tuple[str | None, list[str], list[dict], list[dict] | None]:
+    """(digest text, open action-item lines for the prompt, the raw JSON rows, the done
+    rows). ``loops``: ids of open loops the outcome log still has open; when one of them
+    isn't among the open rows, the done items are read once (else None), so the log can
+    tell a closed loop (``done``) from a deleted one (``gone``)."""
     if call is None:
-        return None, [], []
-    digest, items, rows = None, [], []
+        return None, [], [], None
+    digest, items, rows, done = None, [], [], None
     try:
         digest = _digest_text(await call("get_daily_digest", {"date": today.isoformat()}))
     except Exception as e:  # noqa: BLE001 -- the insight is written without it
@@ -531,19 +535,30 @@ async def _module_inputs(owner: str | None, today: Date, call: CallTool | None
         items = _action_item_lines(owner, raw)
     except Exception as e:  # noqa: BLE001
         logger.info("today insight: list_action_items failed: %s", e)
-    return digest, items, rows
+        return digest, items, rows, None  # unreachable: closed loops can't be told
+    if set(map(str, loops)) - {str(r.get("id")) for r in rows}:
+        try:
+            raw = await call("list_action_items", {"status": "done", "format": "json"})
+            from src import module_action_items as mai
+
+            done = [r for r in (mai.parse_items_json(raw) or []) if isinstance(r, dict)]
+        except Exception as e:  # noqa: BLE001
+            logger.info("today insight: list_action_items (done) failed: %s", e)
+    return digest, items, rows, done
 
 
 async def gather(owner: str | None, *, now: datetime | None = None,
                  call: CallTool | None | bool = True) -> dict:
     """Everything the insight is built from (``call=True``: the module if connected).
     Phase 3 additions (docs/fork/today-insight.md): ``weights`` (the day's rule weights),
-    ``notes_state``/``occurrences``/``action_rows`` (what the outcome log observes),
+    ``notes_state``/``occurrences``/``action_rows``/``action_rows_done``/``gathered_at``
+    (what the outcome log observes, and when it was read),
     ``extra`` (open loops and this week's plans, refs ``loop:``/``belief:``) and
     ``routines`` (a short text)."""
     tz = owner_timezone(owner)
     now_local = _now_local(tz, now)
     today = now_local.date()
+    gathered_at = _utc_iso(now)  # the outcome log keeps page changes made after this
     notes = _load_notes(owner)
     occurrences = _load_events(owner, now_local)
     weights = _learning("insight_weights", "current", {}, owner, today, now=now)
@@ -554,7 +569,9 @@ async def gather(owner: str | None, *, now: datetime | None = None,
                                   dismissed=(marks or {}).get("dismissed") or ())
     memory = _load_memory(owner, memory_query(candidates))
     caller = _module_caller() if call is True else (call or None)
-    digest, action_items, action_rows = await _module_inputs(owner, today, caller)
+    loops = _learning("insight_outcomes", "open_loop_ids", set(), owner, today) or set()
+    digest, action_items, action_rows, action_rows_done = await _module_inputs(
+        owner, today, caller, loops)
     extra = _learning("insight_inputs", "extra_candidates", [], owner, today, action_rows,
                       now=now) or []
     loop_ids = [c["ref"].split(":", 1)[1] for c in extra
@@ -568,7 +585,8 @@ async def gather(owner: str | None, *, now: datetime | None = None,
             "digest": digest, "action_items": action_items, "extra": extra,
             "routines": routines, "weights": weights or {},
             "notes_state": notes_state(notes), "occurrences": occurrences,
-            "action_rows": action_rows,
+            "action_rows": action_rows, "action_rows_done": action_rows_done,
+            "gathered_at": gathered_at,
             "hash": input_hash(candidates, memory, digest,
                                [action_items, extra, routines])}
 

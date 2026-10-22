@@ -256,26 +256,48 @@ Ids and counts only, no titles or text (the insight file has those):
   the push.
 
 Each 15-minute pass (`observe`, also on a no-op) updates the outcomes from what it just
-gathered (`via: "observed"`):
+gathered (`via: "observed"`). An item the page changed (`via: "today"`) at or after the
+time the inputs were gathered (`gathered_at`, before the model call) is left alone: those
+inputs are older than the owner's tick.
 
 | outcome | set when |
 |---|---|
 | `open` | shown, not done yet. A `done` that is un-ticked the same day goes back to `open`. |
-| `done` | a to-do's line is ticked (on any surface: notes, chat, T5, phone), or an open loop's action item is no longer open in odysseus-sound. Events and plans are never done. |
+| `done` | a to-do's line is ticked (on any surface: notes, chat, T5, phone), or an open loop's action item is among odysseus-sound's done items. Events and plans are never done. |
 | `moved` | a to-do's note got a later due date, or an event now starts on a later day than when it was shown. |
-| `gone` | the note or line was deleted, the event was cancelled or isn't in the calendar window any more, or the loop's action item is missing from the open ones. |
-| `dismissed`, `promoted` | the owner's "Not today" and "↑ first" (`via: "today"`). The pass never overwrites them, except `promoted` → `done`. |
+| `gone` | the note or line was deleted, the event was cancelled or isn't in the calendar window any more, or the loop's action item is in neither the open nor the done items. |
+| `dismissed`, `promoted` | the owner's "Not today" and "↑ first" (`via: "today"`). The pass never overwrites them, except `promoted` → `done`. Marking a `done` item changes nothing (the route answers 200 with the item as it is). |
 | `ignored` | still `open` when the day was finalized (`via: "final"`). |
 
 To-do lines are matched by the ref's index when the line's text is the shown title, else
-re-found by title, as the page does. Titles come from the insight rows and are kept in
-memory only; after a restart a line the insight no longer shows is matched by index. Notes
-the pass didn't load (an archived, finished checklist) are looked up by id. Open loops are
-left as they are when the module is unreachable. A passed event stays `open` and becomes
+re-found by title, as the page does; texts are compared on their first 200 characters
+(whitespace collapsed, case ignored), where candidate titles are cut. Titles come from the
+insight rows and are kept in memory only; after a restart a line the insight no longer
+shows is matched by index. Notes
+the pass didn't load (an archived, finished checklist) are looked up by id. The pass reads the open action items
+(`list_action_items {"status": "open"}`); only when an open loop the log still has open
+(or today's insight shows) is missing from them does it also read
+`list_action_items {"status": "done", "format": "json"}`, once (`action_rows_done`). Open
+loops are left as they are when the module is unreachable. A passed event stays `open` and becomes
 `ignored` at the end of the day (weights don't count that for events).
 
-**Finalize**: the first pass after local midnight finalizes every earlier day that isn't
-final (`final: true`, `finalized`); a final day doesn't change any more.
+**One record per line.** A to-do ref (`todo:<note>:<index>`) is an index, so after the
+owner adds, removes or moves lines the same ref can name another line. When an insight
+row's title for a ref differs from the title its record was shown with, the ref names a
+new line: the old record moves to a spare key `<ref>#<n>` (for example `todo:n1:0#1`)
+and keeps following its own line by title, and the ref gets a fresh record. When the old
+line is shown again under another ref, its record moves to that ref instead of a second
+record being started (also when a ref the insight no longer shows still holds it). So
+each line is counted once by the weights and the trends, and a tick on the page
+(`record`, which applies the same rule first) lands on the line the page showed. Spare
+keys are never shown and can't be marked; after a restart (titles lost) a spare key is
+left as it is until the day is finalized.
+
+**Finalize**: the first pass after local midnight finalizes every earlier day of the last
+28 days (the weights' window) that isn't final (`final: true`, `finalized`); a final day
+doesn't change any more. Finalizing copies the vote counts from the insight once more, so
+votes cast after the day's last pass count. Older days are left alone, and a day known final isn't read
+again by the same process. A finalized day's titles leave memory.
 
 **Owner order** (`apply_owner_order`): promoted rows come first in Do first (moved there from
 any section, the latest promotion first), dismissed rows are left out. The page, the token
@@ -441,12 +463,16 @@ on `/beliefs` (then the Belief Structure task gives it the attribute `routine`).
 candidates after the 30 rule-ordered ones (each part fails soft):
 
 - **Open loops** (≤ 5): open `list_action_items` JSON rows that are the owner's (`mine`
-  true, or no `mine` and an owner word such as "Me" as `owner`), name someone in `with`
-  (module MCP ≥ 0.9.0; a row without `with` is never a loop) and aren't filed into
-  Odysseus yet (the Module Action Items state's `filed`). By due date (undated last),
-  then newest. Ref `loop:<action item id>`, `person` the first name of the first `with`
-  entry, `link` the row's transcript link, bucket from `due_date` as for to-dos. These
-  rows leave the "OPEN ACTION ITEMS (context only)" lines.
+  true, or no `mine` and an owner word such as "Me" as `owner`), are for someone in
+  `with` (module MCP ≥ 0.9.0; a row without `with` is never a loop) and aren't filed
+  into Odysseus yet (the Module Action Items state's `filed`). `with` lists every other
+  person in the conversation, so a row is for someone only when one of its `with`
+  people's full or first name appears as a whole word (case ignored) in its `text` or
+  `title`: "Lend Tom the tent" is a loop for Tom, "Buy milk" said while talking with Ana
+  is not. By due date (undated last), then newest. Ref `loop:<action item id>`,
+  `person` the first name of the first `with` person so named, `link` the row's
+  transcript link, bucket from `due_date` as for to-dos. These rows leave the "OPEN
+  ACTION ITEMS (context only)" lines; rows that aren't loops stay in them.
 - **Plans** (≤ 5): the owner's beliefs with attribute `plans` or `decision`, status
   tentative or confirmed, first seen in the last 7 days, not about another person
   (`about` = person); newest first. Ref `belief:<belief id>`, bucket `undated`. The

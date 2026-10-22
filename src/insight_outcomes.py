@@ -21,7 +21,7 @@ import logging
 import re
 import threading
 from datetime import date as Date
-from datetime import datetime, timezone, tzinfo
+from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
@@ -33,12 +33,18 @@ OWNER_MARKS = ("dismissed", "promoted")
 ACTIONS = ("done", "open", "dismissed", "promoted", "clear")
 SECTIONS = ("focus", "coming_up", "also")
 _DAY = re.compile(r"^(\d{4}-\d{2}-\d{2})\.outcome\.json$")
+_TODO = re.compile(r"^todo:(.+):(\d+)(?:#\d+)?$")  # ``#n``: a spare key (``_retire_renamed``)
+TITLE_CHARS = 200  # candidate titles are a line's first 200 characters
+FINALIZE_DAYS = 28  # finalize_pending looks this far back (the weights' window)
 
 _GUARD = threading.Lock()
 _LOCKS: dict[str, threading.RLock] = {}
-# Titles of shown items, in memory only (never on disk): the 15-min pass re-finds a ticked
-# line by its title when the lines moved, even after the insight was rewritten without it.
+# Titles of shown items, in memory only (never on disk): per key the line its record
+# follows. The 15-min pass re-finds a ticked line by its title when the lines moved, even
+# after the insight was rewritten without it.
 _TITLES: dict[tuple[str, str], dict[str, str]] = {}
+# Days known to be final, per outcome folder, so finalize_pending doesn't read them again.
+_FINAL: dict[str, set[str]] = {}
 
 
 def _ti():
@@ -114,7 +120,7 @@ def _new_item(ref: str, section: str, position: int, candidate: dict | None,
     item = {"kind": kind, "section": section, "position": position,
             "first_shown": _iso(now), "bucket": c.get("bucket"), "date": c.get("date")}
     if kind == "todo":
-        m = re.match(r"^todo:(.+):(\d+)$", ref)
+        m = _TODO.match(ref)
         item["note_id"] = c.get("note_id") or (m.group(1) if m else None)
         item["note_type"] = c.get("note_type")
     elif kind == "event":
@@ -131,10 +137,48 @@ def _set(item: dict, outcome: str, via: str, now: datetime | None) -> bool:
     return True
 
 
+def _line_key(s: Any) -> str:
+    """A to-do line's text as candidates title it: whitespace collapsed, its first
+    ``TITLE_CHARS`` characters (``todo_candidates`` cuts there), lower case."""
+    return re.sub(r"\s+", " ", str(s or "")).strip()[:TITLE_CHARS].strip().lower()
+
+
 def _same(a: Any, b: Any) -> bool:
-    def norm(s):
-        return re.sub(r"\s+", " ", str(s or "")).strip().lower()
-    return norm(a) == norm(b)
+    return _line_key(a) == _line_key(b)
+
+
+def _retire_renamed(items: dict, titles: dict, insight: dict) -> None:
+    """A to-do ref (``todo:<note>:<index>``) whose row title differs from the title its
+    record was shown with names another line now (a line was added, removed or moved
+    above it). Its record keeps following its own line by title under a spare key
+    ``<ref>#<n>`` (never shown, so the page can't act on it), and the ref is free for a
+    fresh record of the new line."""
+    for _, _, row in _rows(insight):
+        ref, title = row["ref"], row.get("title")
+        if (ref in items and ref.startswith("todo:") and title and ref in titles
+                and not _same(titles[ref], title)):
+            n = 1
+            while f"{ref}#{n}" in items:
+                n += 1
+            items[f"{ref}#{n}"] = items.pop(ref)
+            titles[f"{ref}#{n}"] = titles.pop(ref)
+
+
+def _adopt(items: dict, titles: dict, ref: str, title: Any, shown: set[str]) -> bool:
+    """Move the record of the same line (same note, same title) kept under a key the
+    insight doesn't show (an older ref or a spare key) to ``ref``, the line's ref now, so
+    one line has one record. True when one was moved."""
+    m = _TODO.match(ref)
+    if not m or not title or "#" in ref:
+        return False
+    for key in list(items):
+        if (key != ref and key not in shown and items[key].get("kind") == "todo"
+                and str(items[key].get("note_id") or "") == m.group(1)
+                and key in titles and _same(titles[key], title)):
+            items[ref] = items.pop(key)
+            titles.pop(key, None)
+            return True
+    return False
 
 
 def _vote_counts(insight: dict) -> dict[str, int]:
@@ -172,11 +216,11 @@ def _todo_outcome(ref: str, item: dict, note: dict | None, title: str | None,
     """``done``, ``open``, ``moved`` or ``gone`` from the note as it is now: the line at
     the ref's index when its text is the title, else the line with that title (as
     ``/today`` finds it); without a known title, the line at the index."""
-    m = re.match(r"^todo:.+:(\d+)$", ref)
+    m = _TODO.match(ref)
     if note is None or m is None:
         return "gone"
     items = note.get("items") or []
-    index = int(m.group(1))
+    index = int(m.group(2))
     at = None
     if index < len(items) and (title is None or _same(items[index][0], title)):
         at = index
@@ -228,12 +272,14 @@ def observe(owner: str | None, insight: dict, inputs: dict, *,
         data = load(owner, day) or blank(day)
         items = data["items"]
         titles = _TITLES.setdefault((_ti()._slug(owner), day), {})
+        _retire_renamed(items, titles, insight)
+        shown = {row["ref"] for _, _, row in _rows(insight)}
         for section, position, row in _rows(insight):
             ref = row["ref"]
-            if ref not in items:
+            if ref not in items and not _adopt(items, titles, ref, row.get("title"), shown):
                 items[ref] = _new_item(ref, section, position, by_ref.get(ref), now)
             if row.get("title"):
-                titles.setdefault(ref, str(row["title"]))  # the item first shown
+                titles[ref] = str(row["title"])  # the line the ref names now
         for ref in items:
             if ref not in titles and by_ref.get(ref, {}).get("title"):
                 titles[ref] = str(by_ref[ref]["title"])
@@ -251,7 +297,11 @@ def _observe_items(owner: str | None, items: dict, titles: dict, inputs: dict,
     notes = dict(inputs.get("notes_state") or {})
     occurrences = list(inputs.get("occurrences") or [])
     rows = [r for r in inputs.get("action_rows") or [] if isinstance(r, dict)]
+    done_rows = inputs.get("action_rows_done")  # None: not read, or the module failed
     open_rows = {str(r.get("id")): str(r.get("status") or "open") for r in rows}
+    closed = {str(r.get("id")) for r in done_rows or [] if isinstance(r, dict)}
+    reachable = bool(rows) or isinstance(done_rows, list)
+    gathered = str(inputs.get("gathered_at") or "")
     missing = {it.get("note_id") for it in items.values()
                if it.get("kind") == "todo" and it.get("note_id") not in notes}
     if missing:
@@ -260,16 +310,26 @@ def _observe_items(owner: str | None, items: dict, titles: dict, inputs: dict,
         current = item.get("outcome")
         if current in ("dismissed", "ignored"):
             continue  # owner mark; ignored only after finalize
+        if gathered and item.get("via") == "today" and str(item.get("at") or "") >= gathered:
+            continue  # changed on the page after these inputs were read: they are older
         kind = item.get("kind")
         if kind == "todo":
+            if "#" in ref and ref not in titles:
+                continue  # a spare key without its title (after a restart): can't tell
             seen = _todo_outcome(ref, item, notes.get(item.get("note_id")), titles.get(ref), tz)
         elif kind == "event":
             seen = _event_outcome(ref, item, occurrences, tz)
         elif kind == "loop":
-            if not rows:
-                continue  # module unreachable or nothing open: can't tell
-            status = open_rows.get(ref.split(":", 1)[1])
-            seen = "gone" if status is None else ("open" if status == "open" else "done")
+            if not reachable:
+                continue  # module unreachable, or nothing read: can't tell
+            loop_id = ref.split(":", 1)[1]
+            status = open_rows.get(loop_id)
+            if loop_id in closed:
+                seen = "done"
+            elif status is None:
+                seen = "gone"
+            else:
+                seen = "open" if status == "open" else "done"
         else:
             continue  # plans: only open, ignored and the owner's marks
         if current == "promoted" and seen != "done":
@@ -277,6 +337,19 @@ def _observe_items(owner: str | None, items: dict, titles: dict, inputs: dict,
         if kind == "loop" and current == "done" and item.get("via") == "today":
             continue  # closed on the page; the module may not know yet
         _set(item, seen, "observed", now)
+
+
+def open_loop_ids(owner: str | None, today: Date) -> set[str]:
+    """Action item ids of the open loops today's outcome log (or today's insight, for
+    rows not observed yet) still has open, so the pass knows to read the done items."""
+    day = today.isoformat()
+    items = _items_of(load(owner, day))
+    ids = {r.split(":", 1)[1] for r, it in items.items()
+           if r.startswith("loop:") and it.get("outcome") in ("open", "promoted")}
+    for _, _, row in _rows(_ti().load(owner, day) or {}):
+        if row["ref"].startswith("loop:") and row["ref"] not in items:
+            ids.add(row["ref"].split(":", 1)[1])
+    return ids
 
 
 # ------------------------------------------------------------------- owner actions
@@ -294,13 +367,21 @@ def record(owner: str | None, ref: str, outcome: str, *, now: datetime | None = 
         raise LookupError("no insight yet")
     shown = {row["ref"]: (section, position) for section, position, row in
              reversed(list(_rows(insight)))}
+    if "#" in ref:
+        raise LookupError("not in today's insight")  # a spare key is never shown
     with _lock(owner):
         data = load(owner, day) or blank(day)
         items = data["items"]
-        if ref not in items:
+        titles = _TITLES.setdefault((ti._slug(owner), day), {})
+        _retire_renamed(items, titles, insight)  # the insight may be newer than the pass
+        title = next((row.get("title") for _, _, row in _rows(insight) if row["ref"] == ref),
+                     None)
+        if ref not in items and not _adopt(items, titles, ref, title, set(shown)):
             if ref not in shown:
                 raise LookupError("not in today's insight")
             items[ref] = _new_item(ref, *shown[ref], None, now)
+        if title:
+            titles[ref] = str(title)
         item = items[ref]
         if outcome in ("done", "open") and item.get("kind") not in ("todo", "loop"):
             raise ValueError("only to-dos and open loops can be done")
@@ -310,6 +391,8 @@ def record(owner: str | None, ref: str, outcome: str, *, now: datetime | None = 
         elif outcome == "open":
             if item.get("outcome") == "done":
                 _set(item, "open", "today", now)
+        elif outcome in OWNER_MARKS and item.get("outcome") == "done":
+            pass  # a done item stays done; a mark on it changes nothing
         else:
             _set(item, outcome, "today", now)
         save(owner, data)
@@ -317,19 +400,34 @@ def record(owner: str | None, ref: str, outcome: str, *, now: datetime | None = 
 
 
 # ---------------------------------------------------------------------- finalize
+def _final_days(owner: str | None) -> set[str]:
+    return _FINAL.setdefault(str(outcome_path(owner, "2000-01-01").parent), set())
+
+
+def _closed(owner: str | None, day: str) -> None:
+    """A final day: remembered as such, and its titles leave memory."""
+    _final_days(owner).add(day)
+    _TITLES.pop((_ti()._slug(owner), day), None)
+
+
 def finalize(owner: str | None, day: str, *, now: datetime | None = None) -> dict:
-    """Close a day: items still ``open`` become ``ignored``. Idempotent; {} without a file."""
+    """Close a day: items still ``open`` become ``ignored``, and the vote counts are
+    copied from the insight once more (votes cast after the last pass count).
+    Idempotent; {} without a file."""
     with _lock(owner):
         data = load(owner, day)
         if data is None:
             return {}
-        if data.get("final"):
-            return data
-        for item in data["items"].values():
-            if item.get("outcome") == "open":
-                _set(item, "ignored", "final", now)
-        data["final"], data["finalized"] = True, _iso(now)
-        save(owner, data)
+        if not data.get("final"):
+            for item in data["items"].values():
+                if item.get("outcome") == "open":
+                    _set(item, "ignored", "final", now)
+            insight = _ti().load(owner, day)
+            if insight:
+                data["votes"] = _vote_counts(insight)
+            data["final"], data["finalized"] = True, _iso(now)
+            save(owner, data)
+        _closed(owner, day)
         return data
 
 
@@ -343,14 +441,23 @@ def _files(owner: str | None) -> list[tuple[str, Path]]:
 
 
 def finalize_pending(owner: str | None, today: Date, *, now: datetime | None = None) -> int:
-    """Finalize every day before ``today`` that isn't final yet (the first pass after
-    local midnight closes yesterday). Returns how many were finalized."""
+    """Finalize every day of the ``FINALIZE_DAYS`` before ``today`` that isn't final yet
+    (the first pass after local midnight closes yesterday). Older days are left alone (the
+    weights don't read them), and a day known final in this process isn't read again.
+    Returns how many were finalized."""
+    lo, hi = (today - timedelta(days=FINALIZE_DAYS)).isoformat(), today.isoformat()
+    final = _final_days(owner)
+    final.difference_update({d for d in final if d < lo})
     count = 0
     for day, _ in _files(owner):
-        if day >= today.isoformat():
+        if not lo <= day < hi or day in final:
             continue
         data = load(owner, day)
-        if data is not None and not data.get("final"):
+        if data is None:
+            continue
+        if data.get("final"):
+            _closed(owner, day)
+        else:
             finalize(owner, day, now=now)
             count += 1
     return count
@@ -428,7 +535,8 @@ def _missing_rows(owner: str | None, insight: dict, outcome: dict | None,
                   mark: str) -> dict[str, dict]:
     items = _items_of(outcome)
     shown = {row["ref"] for _, _, row in _rows(insight)}
-    refs = [r for r, it in items.items() if it.get("outcome") == mark and r not in shown]
+    refs = [r for r, it in items.items()
+            if it.get("outcome") == mark and r not in shown and "#" not in r]
     if not refs:
         return {}
     titles = _resolve_titles(owner, str(insight.get("date") or ""), refs)
