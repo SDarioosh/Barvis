@@ -91,7 +91,8 @@ Return JSON only, in this shape:
 Rules:
 - Exactly one item per fact, with that fact's own number n. Never merge two facts into \
 one item; each item describes only its own fact's text.
-- attribute: exactly one of {", ".join(ledger.ATTRIBUTES)}. Use "other" when none fits.
+- attribute: exactly one of {", ".join(ledger.ATTRIBUTES)}. Use "other" when none fits. \
+"routine" is a regular habit (something done on the same weekday or time each week).
 - value: the fact's core in a few words taken from its own text, without the subject, \
 e.g. "Lisbon", "peanuts", "product manager at Acme", "21 May". At most 120 characters.
 - valid_from / valid_to: only dates the text states (when it started, when it ends), \

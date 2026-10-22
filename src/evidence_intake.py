@@ -77,7 +77,7 @@ SUBJECT_KINDS = ("person", "project", "thing", "owner")
 # The controlled vocabulary of a belief's ``attribute`` (stage 2.2); anything else: other.
 ATTRIBUTES = ("lives_in", "works_at", "role", "birthday", "allergy", "diet", "likes",
               "dislikes", "relationship", "owns", "pet", "plans", "decision",
-              "contact_info", "health", "project_status", "deadline", "other")
+              "routine", "contact_info", "health", "project_status", "deadline", "other")
 PROJECT_ATTRIBUTES = ("project_status", "deadline")
 PROJECT_WORDS = re.compile(r"\b(project|launch|release|migration|plan)\b", re.IGNORECASE)
 GENERIC_SUBJECT = "General"  # the subject of evidence that names none
