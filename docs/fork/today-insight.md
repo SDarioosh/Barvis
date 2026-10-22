@@ -456,4 +456,71 @@ Refs the owner marked "not today" are left out like the others.
 
 ### Trends and the insight eval
 
-<!-- stream E -->
+Code: `src/insight_trends.py`, route `routes/insight_trends_routes.py`, UI
+`static/js/todayTrends.js`. Tests: `tests/test_insight_trends.py`,
+`tests/test_insight_eval.py`.
+
+**Route.** `GET /api/insight/trends?weeks=8` (admin session; `weeks` 1–26, default 8,
+else 422) counts, per ISO week (Monday to Sunday), the week of today (the owner's local
+date) first:
+
+```json
+{"weeks": [{"week": "2026-W43", "start": "2026-10-19", "insights": 4, "votes_up": 2,
+            "votes_down": 0, "shown": 31, "done": 12, "promoted": 2, "dismissed": 3,
+            "moved": 1, "ignored": 9}]}
+```
+
+- `insights`: days of the week with an insight file.
+- `shown`: items of the days' outcome files ([Outcome log](#outcome-log)) that aren't
+  `gone`, as the weights count them; `done` … `ignored`: items with that outcome. An item
+  still `open` (today) counts as shown only.
+- `votes_up`/`votes_down`: the outcome file's `votes`, else (a day without an outcome
+  file) the 👍/👎 entries of the insight itself.
+- Counts only, no titles. A week without data is in the list with zeros, so the panel
+  shows the gap.
+
+**Panel.** On `/today`, **Last weeks** (collapsed, under How Today ranks) loads on first
+open and shows one row per week: shown, done, ↑ first, not today, moved, ignored, 👍/👎,
+and a small bar of done out of shown. Weeks with nothing shown are greyed; with no data
+at all it says "Nothing to show yet: each week fills in as Today shows you items."
+
+**The insight eval.** `scripts/insight_eval.py` checks the rule order and the weights on
+fictional days, in a temp `DATA_DIR`, with every `now` given: no model, no network.
+
+```bash
+venv/bin/python scripts/insight_eval.py          # expected vs got per check, score N/N
+venv/bin/python scripts/insight_eval.py --json   # the same as JSON
+venv/bin/python scripts/insight_eval.py --data-dir /tmp/insight-eval --keep  # keep the files
+```
+
+Exit code 1 on any mismatch, 2 when `--data-dir` already holds a run. Cases:
+
+| case | checks |
+|---|---|
+| `rule_order` | without weights: overdue (oldest first) and due today, due soon, pinned, undated, later; an undated shopping list and done items left out; the cap keeps the head of the order |
+| `weights` | a 28-day history written day by day through the outcome log (`observe`, `record`, finalize; yesterday is finalized by the first weights read) gives the hand-computed weights: one list always done (+3), one always dismissed (−3), a mixed one (+1), a mostly ignored one (−1); the to-do base; stable during the day |
+| `tiers` | with those weights the order changes within tiers only: the dismissed list's overdue item still comes before the favoured list's due-soon item; a cap keeps every overdue and due-today item |
+| `min_shown` | a list shown 5 times keeps weight 0; shown 6 times it moves |
+| `t5_table` | `t5_table` for the fixture's notes, and it agrees with the candidates' weights |
+| `t5_day` | the T5 PDA host test's own day through the hub's `order_candidates` (below) |
+| `owner_marks` | "not today" leaves the ref out of today's candidates; "↑ first" puts it first in Do first (`apply_owner_order`); today's marks don't change today's weights |
+| `reset` | after `reset` the key is 0 (also on the next read) and its tier is back in rule order; after reset all the order is the rule order and the T5 table is empty |
+
+Fixtures: `scripts/fixtures/insight_eval_day.json` (notes, events, the history pattern
+and every expected value, with the weights worked out by hand in `_weights_by_hand`) and
+`scripts/fixtures/t5_weights_day.json`.
+
+**Shared with the T5.** `scripts/fixtures/t5_weights_day.json` is a verbatim copy of
+odysseus-sound's `firmware/pda/test/fixtures/insight_eval_day.json`, the day its PDA host
+test uses for the rule-based fallback: a feed with `todos`, `calendar`, `weights` and the
+T5's expected plan, `expected` (with the weights) and `expected_without_weights`. The
+`t5_day` case turns the feed's notes into hub candidates (`todo_candidates`,
+`event_candidates` with the feed's date and time zone), builds a hub weights dict whose
+`candidate_weight` is exactly the table's number per note (a number beyond ±3 is split
+into `list:` + `note_type:`, as `t5_table` merges them; `t5_table` of that dict gives the
+feed's `weights` back), and checks per T5 section (DO FIRST = tier 0, COMING UP = tier 1,
+ALSO = pinned then undated) that the hub's to-dos come in the T5's order, with and
+without weights, and that each event is in the same section. Not compared, because the
+two differ by design: the hub's tier 4 (unpinned, due later than a week: last for the
+hub, not on the T5's Today), the hub's cap of 30 against the T5's 5 per section, and
+where an event stands among the to-dos of its section. Change the two copies together.
