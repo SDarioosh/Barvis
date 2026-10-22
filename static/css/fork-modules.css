@@ -206,3 +206,10 @@ html.fm-page body { background: var(--bg); color: var(--fg); margin: 0; display:
 .fm-root .tw-scroll { overflow-x: auto; }
 .fm-root .tw-why { margin-top: 4px; font-size: 12px; }
 /* end Today: weights (Phase 3) */
+/* Today: trends (Phase 3) -- static/js/todayTrends.js */
+.fm-root .tt-panel { margin-top: 8px; }
+.fm-root .tt-table tr.tt-quiet td { opacity: 0.55; }
+.fm-root .tt-bar { display: inline-block; width: 48px; height: 6px; border-radius: 3px; vertical-align: middle;
+                   background: color-mix(in srgb, var(--border) 50%, transparent); overflow: hidden; }
+.fm-root .tt-fill { display: block; height: 100%; background: var(--red); opacity: 0.75; }
+/* end Today: trends (Phase 3) */
