@@ -319,6 +319,12 @@ columns on first open, and every belief is filed under a subject from its `subje
 
 - `is_owner` → the owner subject (an owner subject still called "Owner" takes the real
   name; "Owner" stays an alias); the mapping is moved there if it pointed elsewhere.
+- When no person is marked `is_owner`, a person whose name is an owner word (`Me`, `I`,
+  `Myself`, `Owner`, `the owner`, `User`, `the user`) is the owner too: its id maps to the
+  owner subject and the name becomes an owner alias (the module's own facts about the
+  owner carry that person id). A "Me" person subject an earlier pass created is removed
+  when nothing else uses it. When an `is_owner` person is reported, such a name is an
+  ordinary person.
 - Else the subject the id maps to, else one whose name or alias matches the person's
   name or aliases, else a new `person`. A matched inferred `thing` or `project` becomes a
   `person`.
@@ -380,22 +386,38 @@ Only attributes a consumer uses are added (plan risk: over-modelling).
 the facts job; posts nothing to chat; queued with the other model-backed tasks):
 
 - Takes up to 40 **confirmed** beliefs per run with `structured_at` empty
-  (`structure_candidates(owner, limit=40)`), oldest first. A correction (`correct`) or a
-  source edit of the belief's text clears `structured_at`, so the belief is structured
-  again; the old structure stays until then.
-- Sends up to 10 per call to the local model (background workload, thinking off, waits
-  for chat to go quiet): id, subject name, subject kind and text, as data, never as
-  instructions. The answer: `{"items": [{"id", "attribute", "value", "valid_from",
-  "valid_to"}]}`; one retry on unusable JSON, then the batch waits for the next run.
-- Validation (`apply_structure(owner, id, attribute, value, valid_from=None,
+  (`structure_candidates(owner, limit)`: `id`, `subject`, `kind`, `text`, `first_seen`,
+  `last_seen`): never tried first, then the longest ago tried (`<DATA_DIR>/
+  belief_structure_<owner>.json` keeps when each waiting belief was last tried), so
+  beliefs the model keeps getting wrong can't starve the rest. A correction (`correct`)
+  or a source edit of the belief's text clears `structured_at`, so the belief is
+  structured again; the old structure stays until then.
+- Sends `BELIEF_STRUCTURE_BATCH` (5) per call to the local model (background workload,
+  thinking off, waits for chat to go quiet; the answer budget grows with the batch). The
+  facts are numbered 1..n, each with subject name, subject kind, text and the dates it
+  was said (`said`), as data, never as instructions. The answer:
+  `{"items": [{"n", "attribute", "value", "valid_from", "valid_to"}]}`, mapped back by
+  number (a small model mixes up long ids); one retry on unusable JSON, then the batch
+  waits for the next run.
+- **An item must fit its belief.** Its value shares a content word (4+ letters, not a stop
+  word, the same first five letters) with the belief's text; a value without one ("cat",
+  "42") shares any word; `other`, and `birthday` with a date in the text, always fit.
+  Otherwise the item is **rejected** (counted) and the belief waits. This catches a model
+  that merges two facts into one item under the first one's number (seen with batches of
+  10 on a 4B model: an appointment filed as "health: avoid hard food, nuts").
+- **No guessed dates.** A `valid_from`/`valid_to` is kept only when its year is in the
+  text, or it falls within a year after the belief was last said and the text names a
+  month or day ("by October 31", said 2026-10-15 → 2026-10-31; a guessed 2023 is
+  dropped).
+- Writing (`apply_structure(owner, id, attribute, value, valid_from=None,
   valid_to=None, *, expected_text=None)`): unknown attribute → `other`; value cut at 120
-  characters; dates must be whole ISO dates; ids outside the batch are dropped. A
-  `valid_to` becomes `valid_until` only when the belief has none yet (then expiry applies
-  as usual). A belief whose text changed while the model answered, or that is no longer
-  confirmed, is left for the next run.
-- Result line, counts only: `structure: 12 to do, 12 structured (2 other), 0 waiting`
-  (`, 1 failed` when a batch had no usable answer). Nothing to do: no model call, not
-  logged in Activity. `BELIEF_STRUCTURE=off` stops it.
+  characters; dates must be whole ISO dates. A `valid_to` becomes `valid_until` only when
+  the belief has none yet, and never when it is in the past or before the belief was last
+  seen, so a wrong end date can't expire a current belief. A belief whose text changed
+  while the model answered, or that is no longer confirmed, is left for the next run.
+- Result line, counts only: `structure: 12 to do, 11 structured (2 other), 1 waiting, 1
+  rejected` (`, 1 failed` when a batch had no usable answer). Nothing to do: no model
+  call, not logged in Activity. `BELIEF_STRUCTURE=off` stops it.
 
 ## Projects (2.4)
 
@@ -654,6 +676,7 @@ states.
 | `MODULE_FACTS_SYNC` | on | `off` stops the facts job (memories already mirrored stay) |
 | `EVIDENCE_NOTES` | off | `on` lets the Notes Evidence task submit facts from the owner's plain notes |
 | `BELIEF_STRUCTURE` | on | `off` stops the Belief Structure task (structure already written stays) |
+| `BELIEF_STRUCTURE_BATCH` | 5 | beliefs per model call of the Belief Structure task (1 to 10) |
 
 Values below 1 count as 1; a value that isn't a number falls back to the default.
 
@@ -834,24 +857,25 @@ timings vary by machine, counts don't):
 | beliefs (confirmed / tentative / stale / rejected) | 3000 (1815 / 830 / 232 / 123) | 10000 (6038 / 2732 / 796 / 434) |
 | evidence rows / subjects | 3432 / 301 | 11287 / 1001 |
 | `beliefs.db` / `memory.json` | 2.9 MB / 1.3 MB | 9.7 MB / 4.2 MB |
-| submit, new evidence, per 1000 (first → last chunk) | ~380 ms (190 → 570) | ~1200 ms (200 → 2150) |
-| submit, unchanged (the hourly pass), per 1000 | ~55 ms, flat | ~53 ms, flat |
-| `sync_memory` first / no-op | ~120 / ~110 ms | ~500 / ~230 ms |
-| owner action (correct, reject, confirm), mean / p95 | ~105 / ~135 ms | ~360 / ~440 ms |
+| submit, new evidence, per 1000 (first → last chunk) | ~115 ms, flat (115 → 106) | ~125 ms, flat (126 → 101) |
+| submit, unchanged (the hourly pass), per 1000 | ~45 ms, flat | ~50 ms, flat |
+| `sync_memory` first / no-op | ~95 / ~85 ms | ~340 / ~215 ms |
+| owner action (correct, reject, confirm), mean / p95 | ~45 / ~50 ms | ~135 / ~165 ms |
 | `list_beliefs` all / review page (500) / one subject | ~85 / ~20 / ~1 ms | ~240 / ~35 / ~1 ms |
-| `list_subjects` | ~200 ms | ~4 s |
-| structure (fake model): as planned, per batch of 10, hourly runs | 1815 / 1815, ~21 ms, 46 | 6038 / 6038, ~21 ms, 151 |
+| `list_subjects` | ~5 ms | ~50 ms |
+| structure (fake model): as planned, per batch of 5, hourly runs | 1815 / 1815, ~13 ms, 46 | 6038 / 6038, ~13 ms, 151 |
 | retrieval (the 2.3 ranker, no embedding lane): top-1, top-5, p50 / p95 | 0.92, 0.97, ~75 / ~110 ms | 0.91, 0.97, ~365 / ~460 ms |
 
-- Per-chunk submit times should stay flat as the ledger grows (the unchanged pass does).
-  When the chunks of new evidence grow chunk after chunk, a lookup per item scales with
-  the ledger size. They do today (about +210 ms per 1000 beliefs already in the ledger),
-  and `list_subjects` grows with subjects × beliefs: without `ANALYZE` statistics SQLite
-  answers the text match in `submit` and the per-subject counts of `list_subjects` from
-  an index on `owner` alone, i.e. by scanning every belief of the owner. A fix belongs in
-  the ledger, not in the eval; rerun `--size large` to see it.
-- An owner action costs about one no-op `sync_memory` plus a read; it grows with the
-  number of mirrored beliefs, since each one reads and compares `memory.json`.
+- Per-chunk submit times should stay flat as the ledger grows, and they do: about
+  110–130 ms per 1000 new items at medium and large, whatever is already in the ledger
+  (the text match is two index searches; see [Storage](#storage)). Chunks that grow
+  chunk after chunk mean a lookup per item scales with the ledger size again: check the
+  query plans (`tests/test_ledger_perf.py`).
+- `list_subjects` counts every subject's beliefs in one grouped query: ~5 ms at medium,
+  ~50 ms at large.
+- An owner action syncs only its own belief's memory entry (`sync_memory(...,
+  belief_ids=...)`); what still grows is reading and writing `memory.json` (~4 MB at
+  large).
 - "hourly runs to structure all" is how long a backlog of this size takes the real task
   (40 per run).
 - Retrieval: the per-kind top-5 (`alias`, `attribute`, `name`, `owner`) shows which
