@@ -1,4 +1,6 @@
 """Fork: odysseus-sound page data from the module's MCP tools (src/sound_module_view.py)."""
+import json
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -624,3 +626,11 @@ def test_unfile_script_reports_through_the_route():
         "1 to-dos would be removed (run again with --apply):",
         "- #12 [open] Call Mom (filed before explicit filing; not explicit now)"]
     assert script.parse_args([]).apply is False
+
+
+def test_parse_action_items_result_skips_other_peoples_items():
+    rows = [{"id": 1, "text": "Buy milk", "mine": True},
+            {"id": 2, "text": "Let Shahyah know how it goes", "owner": "Hayden", "mine": False},
+            {"id": 3, "text": "Call Mom"}]  # an older module sends no flag
+    items = view.parse_action_items_result(json.dumps(rows))
+    assert [i.id for i in items] == [1, 3]
