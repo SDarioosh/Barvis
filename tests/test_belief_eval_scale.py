@@ -55,7 +55,9 @@ def test_sizes_and_shares(small_run):
     assert lg["evidence"] > lg["beliefs"]  # two-source and rule beliefs have two
     assert results["memory"]["entries"] == lg["confirmed"]
     assert results["structure"]["structured"] == lg["confirmed"]
-    assert results["structure"]["batches"] == -(-lg["confirmed"] // 10)
+    from src.belief_structure import batch_size
+
+    assert results["structure"]["batches"] == -(-lg["confirmed"] // batch_size())
     for key in ("submit_new", "submit_unchanged", "owner_actions", "sync_memory_second",
                 "list_beliefs_all", "stats", "list_subjects"):
         assert key in results["timings"]
