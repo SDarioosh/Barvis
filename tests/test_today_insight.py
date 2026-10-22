@@ -330,7 +330,7 @@ def test_module_inputs_are_optional(inputs):
     async def broken(tool, args):
         raise RuntimeError("module down")
 
-    assert asyncio.run(ti._module_inputs("alice", TODAY, broken)) == (None, [], [])
+    assert asyncio.run(ti._module_inputs("alice", TODAY, broken)) == (None, [], [], None)
 
 
 def test_action_noop_and_disabled(inputs, monkeypatch):

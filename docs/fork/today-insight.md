@@ -263,9 +263,9 @@ inputs are older than the owner's tick.
 | outcome | set when |
 |---|---|
 | `open` | shown, not done yet. A `done` that is un-ticked the same day goes back to `open`. |
-| `done` | a to-do's line is ticked (on any surface: notes, chat, T5, phone), or an open loop's action item is no longer open in odysseus-sound. Events and plans are never done. |
+| `done` | a to-do's line is ticked (on any surface: notes, chat, T5, phone), or an open loop's action item is among odysseus-sound's done items. Events and plans are never done. |
 | `moved` | a to-do's note got a later due date, or an event now starts on a later day than when it was shown. |
-| `gone` | the note or line was deleted, the event was cancelled or isn't in the calendar window any more, or the loop's action item is missing from the open ones. |
+| `gone` | the note or line was deleted, the event was cancelled or isn't in the calendar window any more, or the loop's action item is in neither the open nor the done items. |
 | `dismissed`, `promoted` | the owner's "Not today" and "↑ first" (`via: "today"`). The pass never overwrites them, except `promoted` → `done`. |
 | `ignored` | still `open` when the day was finalized (`via: "final"`). |
 
@@ -274,8 +274,11 @@ re-found by title, as the page does; texts are compared on their first 200 chara
 (whitespace collapsed, case ignored), where candidate titles are cut. Titles come from the
 insight rows and are kept in memory only; after a restart a line the insight no longer
 shows is matched by index. Notes
-the pass didn't load (an archived, finished checklist) are looked up by id. Open loops are
-left as they are when the module is unreachable. A passed event stays `open` and becomes
+the pass didn't load (an archived, finished checklist) are looked up by id. The pass reads the open action items
+(`list_action_items {"status": "open"}`); only when an open loop the log still has open
+(or today's insight shows) is missing from them does it also read
+`list_action_items {"status": "done", "format": "json"}`, once (`action_rows_done`). Open
+loops are left as they are when the module is unreachable. A passed event stays `open` and becomes
 `ignored` at the end of the day (weights don't count that for events).
 
 **One record per line.** A to-do ref (`todo:<note>:<index>`) is an index, so after the

@@ -294,7 +294,10 @@ def _observe_items(owner: str | None, items: dict, titles: dict, inputs: dict,
     notes = dict(inputs.get("notes_state") or {})
     occurrences = list(inputs.get("occurrences") or [])
     rows = [r for r in inputs.get("action_rows") or [] if isinstance(r, dict)]
+    done_rows = inputs.get("action_rows_done")  # None: not read, or the module failed
     open_rows = {str(r.get("id")): str(r.get("status") or "open") for r in rows}
+    closed = {str(r.get("id")) for r in done_rows or [] if isinstance(r, dict)}
+    reachable = bool(rows) or isinstance(done_rows, list)
     gathered = str(inputs.get("gathered_at") or "")
     missing = {it.get("note_id") for it in items.values()
                if it.get("kind") == "todo" and it.get("note_id") not in notes}
@@ -314,10 +317,16 @@ def _observe_items(owner: str | None, items: dict, titles: dict, inputs: dict,
         elif kind == "event":
             seen = _event_outcome(ref, item, occurrences, tz)
         elif kind == "loop":
-            if not rows:
-                continue  # module unreachable or nothing open: can't tell
-            status = open_rows.get(ref.split(":", 1)[1])
-            seen = "gone" if status is None else ("open" if status == "open" else "done")
+            if not reachable:
+                continue  # module unreachable, or nothing read: can't tell
+            loop_id = ref.split(":", 1)[1]
+            status = open_rows.get(loop_id)
+            if loop_id in closed:
+                seen = "done"
+            elif status is None:
+                seen = "gone"
+            else:
+                seen = "open" if status == "open" else "done"
         else:
             continue  # plans: only open, ignored and the owner's marks
         if current == "promoted" and seen != "done":
@@ -325,6 +334,19 @@ def _observe_items(owner: str | None, items: dict, titles: dict, inputs: dict,
         if kind == "loop" and current == "done" and item.get("via") == "today":
             continue  # closed on the page; the module may not know yet
         _set(item, seen, "observed", now)
+
+
+def open_loop_ids(owner: str | None, today: Date) -> set[str]:
+    """Action item ids of the open loops today's outcome log (or today's insight, for
+    rows not observed yet) still has open, so the pass knows to read the done items."""
+    day = today.isoformat()
+    items = _items_of(load(owner, day))
+    ids = {r.split(":", 1)[1] for r, it in items.items()
+           if r.startswith("loop:") and it.get("outcome") in ("open", "promoted")}
+    for _, _, row in _rows(_ti().load(owner, day) or {}):
+        if row["ref"].startswith("loop:") and row["ref"] not in items:
+            ids.add(row["ref"].split(":", 1)[1])
+    return ids
 
 
 # ------------------------------------------------------------------- owner actions

@@ -229,6 +229,48 @@ def test_loops_done_gone_and_plans_untouched(store):
     assert _item("loop:a1")["outcome"] == "open"
 
 
+def test_a_closed_loop_is_done_a_deleted_one_gone(store):
+    loops = [{"ref": f"loop:{i}", "kind": "loop", "bucket": "undated", "title": f"Loop {i}",
+              "weight": 0} for i in ("a1", "a2")]
+    insight = _insight(coming_up=[("loop:a1", "Loop a1"), ("loop:a2", "Loop a2")])
+    io.observe("alice", insight, _inputs(rows=[{"id": "a1", "status": "open"},
+                                               {"id": "a2", "status": "open"}], extra=loops),
+               now=NOW)
+    assert io.open_loop_ids("alice", date(2026, 10, 21)) == {"a1", "a2"}
+    # both left the open items: a1 was closed, a2 deleted; nothing else is open
+    inp = {**_inputs(), "action_rows_done": [{"id": "a1", "status": "done"}]}
+    io.observe("alice", insight, inp, now=LATER)
+    assert [_item(f"loop:{i}")["outcome"] for i in ("a1", "a2")] == ["done", "gone"]
+    assert io.open_loop_ids("alice", date(2026, 10, 21)) == set()
+
+
+def test_closed_loops_are_read_only_when_an_open_loop_left(running):
+    calls = []
+    open_rows = [{"id": 7, "status": "open", "mine": True, "title": "Lend Mira the tent",
+                  "text": "Lend Mira the tent", "with": [{"id": "p1", "name": "Mira"}]}]
+
+    async def call(tool, args):
+        calls.append((tool, args))
+        if tool == "list_action_items":
+            rows = open_rows if args["status"] == "open" else [{"id": 7, "status": "done"}]
+            return json.dumps(rows)
+        return "No digest"
+
+    answer = json.dumps({"headline": "h", "focus": [{"ref": "T1", "why": "today"}],
+                         "coming_up": [{"ref": "L1", "why": "Mira waits"}], "also": []})
+    st = asyncio.run(ti.run("alice", now=NOW, call=call, llm=FakeLLM(answer)))
+    assert _item("loop:7")["outcome"] == "open"
+    assert ("list_action_items", {"status": "done", "format": "json"}) not in calls
+    open_rows.clear()  # closed in odysseus-sound
+    calls.clear()
+    asyncio.run(ti.run("alice", now=LATER, call=call, llm=FakeLLM(answer)))
+    assert calls.count(("list_action_items", {"status": "done", "format": "json"})) == 1
+    assert _item("loop:7")["outcome"] == "done"
+    calls.clear()  # nothing open any more: not read again
+    asyncio.run(ti.run("alice", now=LATER, call=call, llm=FakeLLM(answer)))
+    assert ("list_action_items", {"status": "done", "format": "json"}) not in calls
+
+
 # ------------------------------------------------------------------ owner marks
 def test_owner_marks_are_not_overwritten_but_promoted_can_become_done(store):
     insight = _insight(focus=[("todo:n1:0", "Send the Q4 deck"), ("todo:n1:1", "Book flights")])
