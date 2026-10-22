@@ -171,6 +171,7 @@ off, as in incognito).
 | `TODAY_INSIGHT_ENABLED` | `on` | `off` makes every run a no-op (the stored insight stays readable) |
 | `TODAY_INSIGHT_SKIP_LISTS` | `Shopping,Groceries,Grocery` | list titles left out unless dated |
 | `MODULE_ACTION_ITEMS_SERVER` | `convo` | the odysseus-sound MCP server |
+| `TODAY_INSIGHT_PUSH` | `off` | `on` pushes today's insight to the phone once a day ([Push](#push)) |
 | interval | every 15 min | the task's schedule in Tasks |
 
 ## Known limits
@@ -210,15 +211,71 @@ hook.
 
 ### Push
 
-<!-- stream D -->
+`src/insight_push.py`, called after every pass (`maybe_push(owner, insight, now=)`).
+With `TODAY_INSIGHT_PUSH=on` (default `off`) today's insight goes to the phone once a day
+through the module notify channel (`module_action_items.push`: Odysseus' reminder
+dispatcher on `MODULE_NOTIFY_CHANNEL`, ntfy or browser; nothing else). It is sent when
+all hold:
+
+- `MODULE_NOTIFY_CHANNEL` isn't `off`;
+- the insight is today's (the owner's local date) and not the fixed "Nothing is due …"
+  one;
+- the local hour is at least `MODULE_DIGEST_HOUR` (`off`: never);
+- today's outcome file has no `pushed` stamp, and fewer than 3 sends were tried today
+  (`push_tries`).
+
+Title `Today`; body the headline, then `First: <title>` of the first focus row after the
+owner's own order (`apply_owner_order`), when there is one; key `today-insight:<date>`.
+The day is marked pushed only when the send succeeded, so a failed send is tried again on
+the next pass, at most 3 times a day. The insight is rewritten during the day; only the
+first one past the hour is pushed.
 
 ### Routines
 
-<!-- stream D -->
+`src/insight_routines.py`, from the calendar only. The owner's single events (not
+recurring, not all-day, not cancelled) that started in the 6 weeks before today are
+grouped by normalized summary (lower case, letters and digits, single spaces: "Gym!" and
+"gym" are one) and weekday. A group is a routine when its starts within 60 minutes of the
+group's median start fall in at least 3 distinct weeks. Recurring series are skipped:
+they already say they repeat. `detect(events, tz, today)` is the pure rule.
+
+Computed at most once a day and cached in
+`<DATA_DIR>/today_insight/<owner>/routines.json` (`date`, `routines`, `submitted`).
+`summary(owner, today)` gives at most 400 characters of whole lines, most weeks first,
+e.g. `- Gym: Tuesdays around 18:00 (4 of the last 6 weeks)`, which joins the prompt as
+`ROUTINES (habits seen in the calendar):`.
+
+Each routine goes to the [belief ledger](beliefs.md) once, when first found: source
+`routines`, id `<normalized summary>:<weekday>` (0 = Monday), about the owner, text
+`Usually has Gym on Tuesdays around 18:00`, link `/#event-<date of its last occurrence>`,
+one sighting on one day, never source-confirmed. The ids it submitted are kept in
+`submitted`, so a routine found again every day is not submitted again, and one sighting
+never meets the repetition rule: the belief stays tentative until the owner confirms it
+on `/beliefs` (then the Belief Structure task gives it the attribute `routine`).
 
 ### Plans and open loops
 
-<!-- stream D -->
+`src/insight_inputs.py`: `extra_candidates(owner, today, action_rows)` adds up to 10
+candidates after the 30 rule-ordered ones (each part fails soft):
+
+- **Open loops** (≤ 5): open `list_action_items` JSON rows that are the owner's (`mine`
+  true, or no `mine` and an owner word such as "Me" as `owner`), name someone in `with`
+  (module MCP ≥ 0.9.0; a row without `with` is never a loop) and aren't filed into
+  Odysseus yet (the Module Action Items state's `filed`). By due date (undated last),
+  then newest. Ref `loop:<action item id>`, `person` the first name of the first `with`
+  entry, `link` the row's transcript link, bucket from `due_date` as for to-dos. These
+  rows leave the "OPEN ACTION ITEMS (context only)" lines.
+- **Plans** (≤ 5): the owner's beliefs with attribute `plans` or `decision`, status
+  tentative or confirmed, first seen in the last 7 days, not about another person
+  (`about` = person); newest first. Ref `belief:<belief id>`, bucket `undated`. The
+  attribute is set by the Belief Structure task, so in practice these are beliefs that
+  were confirmed once.
+
+The prompt lists them under `OPEN LOOPS (things the person said they would do for
+someone; labels L…)` and `PLANS THIS WEEK (labels P…)`, each block only when it has
+rows; the system prompt says loops fit `coming_up` and plans fit `also`. `resolve_ref`
+accepts `L1`/`P1` and the exact refs; `validate` keeps `person` and `link` on loop rows.
+Refs the owner marked "not today" are left out like the others.
 
 ### Trends and the insight eval
 
