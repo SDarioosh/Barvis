@@ -117,10 +117,12 @@ it. `votes` are 👍/👎 from the page, kept when the insight is rewritten late
 relays fetch it with the Odysseus token for the T5 feed (stage 0.5); give that token
 `insight:read` next to `todos:read`.
 
-## The Today page
+## The Today window
 
-`/today` (sidebar: **Today**) shows the headline, Do first, Coming up and Also worth a
-look with each item's title and reason, in the odysseus-sound page's style.
+**Today** (sidebar, icon rail, `/open today`, an optional shortcut) opens a tool window in
+the app; `/today` shows the same view as its own page. It shows the headline, Do first,
+Coming up and Also worth a look with each item's title and reason, in the style of the
+built-in windows (`static/css/fork-modules.css`, shared with Conversations).
 
 - To-do items have a tick box that uses the notes page's own route
   (`POST /api/notes/<id>/items/<index>/toggle`) and shows the tick at once. The page reads
