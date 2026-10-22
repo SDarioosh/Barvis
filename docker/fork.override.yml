@@ -12,3 +12,7 @@ services:
       # Module MCP servers whose readOnlyHint tools run without approval
       # (src/mcp_trust.py). Comma separated, e.g. convo,<next module>.
       - ODYSSEUS_TRUSTED_READONLY_MCP=convo
+      # "Record a call" (src/call_recorder.py): odysseus-sound's ingest API and token,
+      # read from the checkout's .env; empty = the page says it isn't set up.
+      - SOUND_MODULE_API_URL=${SOUND_MODULE_API_URL:-}
+      - SOUND_MODULE_INGEST_TOKEN=${SOUND_MODULE_INGEST_TOKEN:-}

@@ -194,6 +194,32 @@ except u.HTTPError as e: print('reachable, HTTP', e.code)
 except Exception as e: print('NOT reachable:', e)"
 ```
 
+### Call recording
+
+The **Record a call** page ([modules/odysseus-sound.md](modules/odysseus-sound.md#recording-calls-from-the-computer))
+forwards audio to odysseus-sound's ingest API, so Odysseus needs that API's address and
+token. Your `docker-compose.override.yml` is a copy of `docker/fork.override.yml` and
+`fork_deploy.sh` doesn't update it: add the two `SOUND_MODULE_*` lines under
+`environment:` from the current `docker/fork.override.yml` once. Then set them in the
+production checkout's `.env`:
+
+```bash
+SOUND_MODULE_API_URL=<the module's API as the container reaches it>
+SOUND_MODULE_INGEST_TOKEN=<the module's CONVO_INGEST_TOKEN>
+```
+
+- The address must be reachable from inside the container. The module listens on
+  `CONVO_HOST:CONVO_PORT` (default `127.0.0.1:8000`, which the container can't reach).
+  If the phone relay already uploads over Tailscale, use that same address (the
+  module's `CONVO_PUBLIC_URL`); otherwise bind the module where the container reaches it
+  and use `http://host.docker.internal:8000`. Check with the snippet above, port 8000
+  and path `/health`.
+- Capture needs a secure page: open Odysseus over `https://` (for example
+  `tailscale serve` with a Tailscale certificate) or on `localhost`. Over plain
+  `http://<tailscale-ip>:7000` the browser refuses and the page says so.
+- Optional: `SOUND_MODULE_CALL_DEVICE` (default `computer`), the device name recordings
+  get in the module.
+
 ## One-time setup (done 2026-10-18)
 
 How an upstream Odysseus Compose install becomes fork production. Kept for a rebuild.

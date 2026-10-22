@@ -259,6 +259,45 @@ manager and parses their result lines (`src/sound_module_view.py`, test
 and per-line times open the module's signed `/view` links in a new tab (Odysseus' CSP doesn't allow framing another origin).
 Audio isn't kept after transcription, so cards quote lines instead of playing them.
 
+## Recording calls from the computer
+
+`/modules/sound/record` (**Record a call** on the Conversations page, admin only) records
+a Zoom, Meet or Teams call on any computer with a Chromium browser (Chrome, Brave, Edge)
+and sends it to the module, which transcribes, diarizes and summarizes it like any other
+conversation (device `computer`, kind `conversation`).
+
+- **What it captures.** The browser asks what to share. A meeting in a tab: pick the tab
+  and turn on *Also share tab audio* (Windows, Mac, Linux). The Zoom desktop app: pick
+  its window or the entire screen and turn on *Also share system audio* (Windows; macOS
+  14.2+ with Chrome 141+; Linux depends on the desktop, untested). Plus the microphone
+  (a checkbox, remembered). Video is required by the browser but never recorded.
+- **How it sends.** The page mixes call audio and microphone into one track and records a
+  self-contained 30 s WebM/Opus file at a time (about 120 KB; the next file starts before
+  the previous one closes, so no audio is lost between them). Pieces upload one by one,
+  in order, through `POST /api/modules/sound/record/chunk`; Odysseus checks them and
+  forwards them to the module's documented ingest API (`POST /v1/ingest/chunk`, then
+  `POST /v1/sessions/{id}/end` on Stop). Failed uploads retry with backoff while the tab
+  is open; a piece the module rejects is skipped and shown. When the module ends a
+  session (`CONVO_SILENCE_STOP_SECONDS` of silence or `CONVO_MAX_SESSION_SECONDS`), the
+  page continues in a new session; one within `CONVO_CONVERSATION_GAP_SECONDS` joins the
+  same conversation.
+- **Security.** The module's ingest token stays in Odysseus' environment; the browser
+  never sees it. The upload routes are admin only and need an `X-Odysseus-Recorder: 1`
+  header, so a plain cross-site form can't post audio. Capture needs a secure page:
+  Odysseus over `https://` (a Tailscale certificate) or on `localhost`.
+- **Settings** (Odysseus' environment; [deploy.md](../deploy.md#call-recording)):
+  `SOUND_MODULE_API_URL` (the module's API, e.g. `http://127.0.0.1:8000`),
+  `SOUND_MODULE_INGEST_TOKEN` (the module's `CONVO_INGEST_TOKEN`),
+  `SOUND_MODULE_CALL_DEVICE` (default `computer`). Without the first two the page says
+  it isn't set up.
+- Code: `src/call_recorder.py`, routes in `routes/sound_module_routes.py`,
+  `static/call-recorder.html`, `static/js/callRecorder.js`; test
+  `tests/test_call_recorder.py`. No module change: the ingest API already takes `webm`.
+- Limits: you press Start for each call (a web page can't notice a meeting starting);
+  the tab must stay open and the computer awake (the page asks for a screen wake lock);
+  call audio and microphone arrive mixed, so the module's diarization tells the speakers
+  apart; without headphones the microphone also hears the other people.
+
 ## Today insight
 
 The hub's daily Today insight reads `get_daily_digest` (today) and `list_action_items`

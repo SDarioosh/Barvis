@@ -234,9 +234,10 @@ and upgrade on purpose, rereading this table each time.
   ("worked on the T5 firmware for 3 h"), submitted through the 1.1 intake as `experience`
   evidence with links. Raw screen text never goes into hub memory.
 - Audio: odysseus-sound owns conversations, including Zoom and other calls on the
-  computer (planned there as a desktop meeting recorder that uploads to its normal ingest
-  path). Run Screenpipe with audio capture off, so a meeting isn't recorded and
-  transcribed twice.
+  computer, recorded with the hub's **Record a call** page into the module's normal ingest
+  path ([modules/odysseus-sound.md](modules/odysseus-sound.md#recording-calls-from-the-computer)).
+  Run Screenpipe with audio capture off, so a meeting isn't recorded and transcribed
+  twice.
 
 **Privacy rules for this module** (on top of AGENTS.md):
 
