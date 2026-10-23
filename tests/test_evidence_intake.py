@@ -571,6 +571,6 @@ def test_existing_ledger_owner_keys_are_migrated_once(data):
                                     subject="Owner")], now=T1)
     assert counts["beliefs_added"] == 0
     with sqlite3.connect(data / "beliefs.db") as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == ei.SCHEMA_VERSION
+        assert db.execute("PRAGMA user_version").fetchone()[0] == ei.ERASE_VERSION
         assert sorted(r[0] for r in db.execute("SELECT norm FROM beliefs")) == \
             ["jenn is allergic to cats", "owner is allergic to peanuts"]

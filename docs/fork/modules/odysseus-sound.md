@@ -294,9 +294,17 @@ retired), which returns `{"facts": [{"id", "subject", "about" (owner/person/othe
   it; beliefs not heard of for `BELIEF_STALE_DAYS` (180) go stale. Running twice
   changes nothing. Memory Tidy may merge or delete copies like any memory; the next run
   puts them back. The owner's own memories and other owners' copies are never touched.
-- **Forgetting**: when the owner forgets a belief in Odysseus, the hub calls the module's
-  `retire_fact {"fact_id", "reason"}` so the fact doesn't come back; a module without
-  that tool is tolerated (the hub keeps the belief rejected).
+- **Forgetting** (4.2): when the owner forgets a belief in Odysseus, the hub calls the
+  module's `erase_fact {"fact_id", "reason"}` (MCP 0.10.0, write, destructive): the fact
+  is retired and its words leave the module (the transcript line that said it reads
+  `[forgotten]`, the notes and digests are rewritten without it, later repeats are
+  erased too). A module older than 0.10.0 gets `retire_fact {"fact_id", "reason"}`
+  instead (hidden, words kept) and the facts job tries `erase_fact` again every pass; a
+  module with neither is tolerated (the hub keeps the belief rejected and erased).
+  [beliefs.md](../beliefs.md#complete-forget-42).
+- **Retention** (module setting): `CONVO_TRANSCRIPT_RETENTION_DAYS` (default 0 = keep
+  forever) deletes old transcript lines and kept audio; summaries, facts and action items
+  stay, `get_transcript` and the transcript page say the lines were removed.
 - The result line has counts only (`facts: 12 seen, 1 new, 1 confirmed, 0 unconfirmed,
   0 gone, 0 stale; memory: 11 kept, 1 added, 0 updated, 0 removed`); a run with no change is not logged
   in Activity. An older module that answers `list_facts` with text: nothing is synced

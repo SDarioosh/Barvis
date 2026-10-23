@@ -47,6 +47,7 @@ Settings (environment): ``BELIEF_CONFIRM_SOURCES`` (2), ``BELIEF_CONFIRM_TIMES``
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -70,9 +71,17 @@ CATEGORIES = ("fact", "preference", "contact")
 STATUSES = ("tentative", "confirmed", "stale", "rejected")
 CONFIRMED_BY = ("source", "owner", "rule")
 EVENT_KINDS = ("added", "evidence", "confirmed", "stale", "rejected", "corrected",
-               "restored", "retired_upstream", "unconfirmed", "merged")
+               "restored", "retired_upstream", "unconfirmed", "merged", "erased")
 NORM_VERSION = 1  # PRAGMA user_version: matching keys of this version
 SCHEMA_VERSION = 2  # PRAGMA user_version: subjects and structure columns (Phase 2)
+ERASE_VERSION = 3  # PRAGMA user_version: ``erased_at`` (complete forget, stage 4.2)
+# An erased belief keeps only a hash of its matching keys, so the same claim coming back
+# from any source still finds it (and stays out of memory) without its words being kept.
+ERASED_PREFIX = "erased:"
+# Per-evidence erase state (``payload.erase``): the module erased it (``done``), only
+# retired it (an older module: ``retired``), not reached yet (``pending``); evidence of
+# another source keeps its link so the page can say where the words still are (``source``).
+ERASE_STATES = ("done", "retired", "pending", "source")
 SUBJECT_KINDS = ("person", "project", "thing", "owner")
 # The controlled vocabulary of a belief's ``attribute`` (stage 2.2); anything else: other.
 ATTRIBUTES = ("lives_in", "works_at", "role", "birthday", "allergy", "diet", "likes",
@@ -195,6 +204,10 @@ class BeliefNotFound(LookupError):
 
 class SubjectNotFound(LookupError):
     """No subject with that id for that owner."""
+
+
+class BeliefErased(ValueError):
+    """The owner erased this belief: it can't be confirmed, corrected or restored."""
 
 
 # ----------------------------------------------------------------------- settings
@@ -406,6 +419,8 @@ def _connect(write: bool = False, *, optimize: bool = False) -> Iterator[sqlite3
         _migrate_event_kinds(db)
         if version < SCHEMA_VERSION:
             _migrate_subjects(db)
+        if version < ERASE_VERSION:
+            _migrate_erase(db)
         if version < SCHEMA_VERSION:
             db.execute("PRAGMA optimize")
         db.execute("BEGIN IMMEDIATE" if write else "BEGIN")
@@ -501,6 +516,21 @@ def _migrate_subjects(db: sqlite3.Connection) -> None:
                 db.execute("UPDATE beliefs SET subject_id = ? WHERE id = ?",
                            (subject_id, row["id"]))
             db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+    except BaseException:
+        db.execute("ROLLBACK")
+        raise
+    db.execute("COMMIT")
+
+
+def _migrate_erase(db: sqlite3.Connection) -> None:
+    """Once per ledger file (``PRAGMA user_version`` 3): the ``erased_at`` column."""
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        if db.execute("PRAGMA user_version").fetchone()[0] < ERASE_VERSION:
+            cols = {r[1] for r in db.execute("PRAGMA table_info(beliefs)")}
+            if "erased_at" not in cols:
+                db.execute("ALTER TABLE beliefs ADD COLUMN erased_at TEXT")
+            db.execute(f"PRAGMA user_version = {ERASE_VERSION}")
     except BaseException:
         db.execute("ROLLBACK")
         raise
@@ -751,6 +781,7 @@ def _belief_dict(row: Mapping, evidence: list[dict]) -> dict:
         "subject_id": row["subject_id"], **joined,
         "attribute": row["attribute"], "value": row["value"], "valid_from": row["valid_from"],
         "structured_at": row["structured_at"],
+        "erased_at": row["erased_at"] if "erased_at" in keys else None,
     }
 
 
@@ -885,11 +916,35 @@ MATCH_SQL = ("SELECT id FROM beliefs INDEXED BY beliefs_owner_norm "
              "ORDER BY 1 LIMIT 1")
 
 
+def erased_key(norm: str | None) -> str | None:
+    """The matching key an erased belief keeps: a hash of ``norm``, never the words."""
+    if not norm or norm.startswith(ERASED_PREFIX):
+        return norm or None
+    return ERASED_PREFIX + hashlib.sha256(norm.encode("utf-8")).hexdigest()
+
+
 def _match(db: sqlite3.Connection, owner: str, norm: str, exclude: int | None = None
            ) -> int | None:
     other = exclude or -1
-    row = db.execute(MATCH_SQL, (owner, norm, other, owner, norm, other)).fetchone()
-    return row["id"] if row else None
+    for key in (norm, erased_key(norm)):  # a live belief, else an erased one
+        row = db.execute(MATCH_SQL, (owner, key, other, owner, key, other)).fetchone()
+        if row:
+            return row["id"]
+    return None
+
+
+def _erased(db: sqlite3.Connection, belief_id: int) -> bool:
+    row = db.execute("SELECT erased_at FROM beliefs WHERE id = ?", (belief_id,)).fetchone()
+    return bool(row and row["erased_at"])
+
+
+def _erased_evidence(ev: dict, state: str) -> dict:
+    """What evidence filed under an erased belief keeps: no words, a link only for a
+    source that still holds them (not odysseus-sound, which erases them itself)."""
+    out = dict(ev, subject="", text="", payload=json.dumps({"erase": state}))
+    if ev["source"] == MODULE_SOURCE:
+        out["link"] = ""
+    return out
 
 
 def _subject_for(cache: _Subjects, ev: dict, stamp: str) -> int:
@@ -941,7 +996,13 @@ def _attach(db: sqlite3.Connection, owner: str, ev: dict, stamp: str, cache: _Su
             belief_id, added = _new_belief(db, owner, ev, stamp, cache), 1
         else:
             _event(db, belief_id, "evidence", f"from {ev['source']}", stamp)
-            _note_person(cache, belief_id, ev, stamp)
+            if _erased(db, belief_id):
+                # said again after an erase: filed without its words; module evidence is
+                # erased there by the next pass (``belief_forget.retry_pending``)
+                ev = _erased_evidence(ev, "pending" if ev["source"] == MODULE_SOURCE
+                                      else "source")
+            else:
+                _note_person(cache, belief_id, ev, stamp)
         db.execute(
             f"INSERT INTO evidence (belief_id, owner, source, source_id, {', '.join(_EV_COLS)}, "
             "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -949,6 +1010,17 @@ def _attach(db: sqlite3.Connection, owner: str, ev: dict, stamp: str, cache: _Su
         return "evidence_added", {belief_id}, added, True
     old_payload = _payload(row["payload"])
     was_gone = bool(old_payload.get("gone"))
+    if _erased(db, row["belief_id"]):
+        # an erased belief's evidence: only counts and dates follow the source
+        keep = ("seen_first", "seen_last", "times", "days", "source_confirmed")
+        if not was_gone and all(row[c] == ev[c] for c in keep):
+            return "unchanged", {row["belief_id"]}, 0, False
+        payload = {k: v for k, v in old_payload.items() if k not in _RESERVED_PAYLOAD}
+        db.execute(f"UPDATE evidence SET {', '.join(f'{c} = ?' for c in keep)}, payload = ?, "
+                   "updated_at = ? WHERE id = ?",
+                   (*(ev[c] for c in keep), json.dumps(payload, sort_keys=True), stamp,
+                    row["id"]))
+        return "evidence_updated", {row["belief_id"]}, 0, True
     same = (not was_gone and all(row[c] == ev[c] for c in _EV_COLS if c != "payload")
             and json.dumps({k: v for k, v in old_payload.items() if k not in _RESERVED_PAYLOAD},
                            sort_keys=True, ensure_ascii=False) == ev["payload"])
@@ -1124,9 +1196,15 @@ def _owner_action(owner: str | None, belief_id: int, now: datetime | None, apply
         return get_belief(owner, row["id"])
 
 
+def _not_erased(row: Mapping) -> None:
+    if row["erased_at"]:
+        raise BeliefErased("this belief was erased; it can't be brought back")
+
+
 def confirm(owner: str | None, belief_id: int, *, now: datetime | None = None) -> dict:
     """The owner confirms a belief: confirmed by the owner, in memory, never decays."""
     def apply(db, row, stamp, _today):
+        _not_erased(row)
         if row["status"] == "confirmed" and row["confirmed_by"] == "owner":
             return
         _set(db, row["id"], stamp, status="confirmed", confirmed_by="owner")
@@ -1150,6 +1228,92 @@ def reject(owner: str | None, belief_id: int, reason: str = "", *,
     return _owner_action(owner, belief_id, now, apply)["evidence"]
 
 
+def erase(owner: str | None, belief_id: int, outcomes: Mapping[str, str] | None = None, *,
+          now: datetime | None = None) -> dict:
+    """The owner forgot a belief for good (stage 4.2): it must already be rejected
+    (:func:`reject`). Its words leave the ledger: text, correction, note, subject name
+    and structure are cleared, its matching keys become hashes (:func:`erased_key`, so the
+    claim said again still finds it and stays out of memory), its evidence keeps no text
+    (and no link, except evidence of a source that still holds the words), its events keep
+    no details, and its search vector is deleted. ``outcomes``: per odysseus-sound fact id,
+    what the module did (``erased``, ``retired``, else not reached). Idempotent: run
+    again, it updates the evidence states. Returns ``{"belief", "texts", "remaining",
+    "pending"}``: ``texts`` the words it held (to find copies elsewhere; only on the first
+    erase), ``remaining`` ``[{"source", "link"}]`` where the words still are,
+    ``pending`` how many module facts aren't erased there yet. Raises
+    :class:`BeliefNotFound`, ``ValueError`` when the belief isn't rejected."""
+    owner = owner or ""
+    stamp = _stamp(_now(now))
+    outcomes = {str(k): v for k, v in (outcomes or {}).items()}
+    with _WRITE:
+        with _connect(write=True) as db:
+            db.execute("PRAGMA secure_delete = ON")
+            row = _belief(db, owner, belief_id)
+            if row["status"] != "rejected":
+                raise ValueError("forget the belief before erasing it")
+            first = not row["erased_at"]
+            evidence = db.execute("SELECT * FROM evidence WHERE belief_id = ? ORDER BY id",
+                                  (row["id"],)).fetchall()
+            texts = ([t for t in (row["text"], row["owner_text"], *(e["text"] for e in evidence))
+                      if t] if first else [])
+            remaining, pending = [], 0
+            for e in evidence:
+                old = _payload(e["payload"]).get("erase")
+                if e["source"] == MODULE_SOURCE:
+                    did = outcomes.get(str(e["source_id"]))
+                    state = ("done" if did == "erased" or old == "done" else
+                             "retired" if did == "retired" else "pending")
+                    pending += state != "done"
+                else:
+                    state = "source"
+                    if e["link"]:
+                        remaining.append({"source": e["source"], "link": e["link"]})
+                link = "" if e["source"] == MODULE_SOURCE else e["link"]
+                db.execute("UPDATE evidence SET subject = '', text = '', link = ?, payload = ?, "
+                           "updated_at = ? WHERE id = ?",
+                           (link, json.dumps({"erase": state}), stamp, e["id"]))
+            if first:
+                _set(db, row["id"], stamp, text="", norm=erased_key(row["norm"]),
+                     owner_text=None, owner_norm=erased_key(row["owner_norm"]), note=None,
+                     subject="", subject_id=None, attribute=None, value=None,
+                     valid_from=None, structured_at=stamp, erased_at=stamp)
+                db.execute("UPDATE events SET detail = '' WHERE belief_id = ?", (row["id"],))
+                _event(db, row["id"], "erased", "", stamp)
+                if db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND "
+                              "name = 'belief_vectors'").fetchone():
+                    db.execute("DELETE FROM belief_vectors WHERE belief_id = ?", (row["id"],))
+        _checkpoint()
+        return {"belief": get_belief(owner, row["id"]), "texts": texts,
+                "remaining": remaining, "pending": pending}
+
+
+def _checkpoint() -> None:
+    """Move the write-ahead log into the ledger file, so erased words leave the -wal
+    file too (``secure_delete`` zeroes the freed pages)."""
+    try:
+        db = sqlite3.connect(str(db_path()), timeout=30, isolation_level=None)
+        try:
+            db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        finally:
+            db.close()
+    except sqlite3.Error as e:  # pragma: no cover - a busy reader; the next one does it
+        logger.debug("ledger checkpoint skipped: %s", e)
+
+
+def erase_pending(owner: str | None) -> list[dict]:
+    """Erased beliefs with odysseus-sound evidence the module hasn't erased yet:
+    ``[{"belief_id", "fact_ids"}]`` (for ``belief_forget.retry_pending``)."""
+    out: dict[int, list[int]] = {}
+    with _connect() as db:
+        for r in db.execute("SELECT e.belief_id, e.source_id, e.payload FROM evidence e "
+                            "JOIN beliefs b ON b.id = e.belief_id WHERE b.owner = ? AND "
+                            "b.erased_at IS NOT NULL AND e.source = ?",
+                            (owner or "", MODULE_SOURCE)):
+            if _payload(r["payload"]).get("erase") != "done" and _int(r["source_id"]) > 0:
+                out.setdefault(r["belief_id"], []).append(_int(r["source_id"]))
+    return [{"belief_id": b, "fact_ids": sorted(ids)} for b, ids in sorted(out.items())]
+
+
 def correct(owner: str | None, belief_id: int, text: str, *,
             now: datetime | None = None) -> dict:
     """The owner corrects a belief: ``owner_text`` is what memory shows from now on; the
@@ -1160,6 +1324,7 @@ def correct(owner: str | None, belief_id: int, text: str, *,
         raise ValueError("a correction needs text")
 
     def apply(db, row, stamp, _today):
+        _not_erased(row)
         _set(db, row["id"], stamp, owner_text=text,
              owner_norm=normalize(text, row["subject"], row["about"]),
              status="confirmed", confirmed_by="owner", structured_at=None)
@@ -1171,6 +1336,7 @@ def restore(owner: str | None, belief_id: int, *, now: datetime | None = None) -
     """A rejected or stale belief goes back to tentative, then the rule applies (it may
     confirm it again). To keep an old belief for good, confirm it instead."""
     def apply(db, row, stamp, today):
+        _not_erased(row)
         if row["status"] not in ("rejected", "stale"):
             return
         _set(db, row["id"], stamp, status="tentative", confirmed_by=None)
@@ -1227,6 +1393,38 @@ def get_belief(owner: str | None, belief_id: int) -> dict:
             "SELECT at, kind, detail FROM events WHERE belief_id = ? ORDER BY id DESC LIMIT 20",
             (row["id"],))]
     return out
+
+
+def export_rows(owner: str | None) -> dict[str, list[dict]]:
+    """Everything the ledger holds for this owner, for the owner's export
+    (``src/belief_export.py``): ``beliefs`` (every status, each with its ``evidence`` and
+    all kept ``events``, oldest first), ``subjects`` and ``subject_sources``. Matching keys
+    (``norm``, ``owner_norm``) are internal and left out; an erased belief has no words."""
+    owner = owner or ""
+    with _connect() as db:
+        rows = db.execute(f"{_BELIEF_SELECT} WHERE b.owner = ? ORDER BY b.id",
+                          (owner,)).fetchall()
+        ids = [r["id"] for r in rows]
+        evidence = _evidence_rows(db, ids)
+        events: dict[int, list[dict]] = {i: [] for i in ids}
+        for e in _in_chunks(db, "SELECT e.belief_id, e.at, e.kind, e.detail FROM events e "
+                            "JOIN beliefs b ON b.id = e.belief_id WHERE b.owner = ? AND "
+                            "e.belief_id IN ({marks}) ORDER BY e.id", (owner,), ids):
+            events[e["belief_id"]].append({"at": e["at"], "kind": e["kind"],
+                                           "detail": e["detail"]})
+        subjects = [dict(r) for r in db.execute(
+            "SELECT * FROM subjects WHERE owner = ? ORDER BY id", (owner,))]
+        sources = [dict(r) for r in db.execute(
+            "SELECT * FROM subject_sources WHERE owner = ? ORDER BY subject_id, source",
+            (owner,))]
+    beliefs = []
+    for r in rows:
+        b = _belief_dict(r, evidence[r["id"]])
+        b["events"] = events[r["id"]]
+        beliefs.append(b)
+    for s in subjects:
+        s["aliases"] = _aliases(s.get("aliases"))
+    return {"beliefs": beliefs, "subjects": subjects, "subject_sources": sources}
 
 
 def stats(owner: str | None) -> dict[str, int]:

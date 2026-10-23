@@ -176,7 +176,7 @@ def test_migration_backfills_subjects_and_adds_columns(data):
     assert all(b["attribute"] is None and b["structured_at"] is None
                for b in ei.list_beliefs("alice"))
     with sqlite3.connect(data / "beliefs.db") as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == ei.SCHEMA_VERSION
+        assert db.execute("PRAGMA user_version").fetchone()[0] == ei.ERASE_VERSION
     ei.stats("alice")  # migrated once: opening again changes nothing
     assert len(ei.list_subjects("alice")) == 3
 

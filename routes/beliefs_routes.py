@@ -7,10 +7,15 @@
 * ``GET  /api/beliefs/{id}``: one belief with its evidence and events.
 * ``POST /api/beliefs/{id}/confirm``, ``POST /api/beliefs/{id}/restore``.
 * ``POST /api/beliefs/{id}/correct`` {text}: 400 on empty text.
-* ``POST /api/beliefs/{id}/forget`` {reason?}: rejected here, then the odysseus-sound
-  facts behind it are retired in the module (``module_facts.propagate_forget``).
-  Answers ``{"belief", "propagated": {"retired", "failed", "unsupported"}}``. The forget
-  never fails because the module is down: the belief is rejected locally first.
+* ``POST /api/beliefs/{id}/forget`` {reason?}: forgotten completely
+  (``src/belief_forget.py``, stage 4.2): rejected and erased here, the odysseus-sound
+  facts behind it erased in the module (``erase_fact``; ``retire_fact`` on an older
+  module). Answers ``{"belief", "propagated": {"erased", "retired", "failed",
+  "unsupported"}, "erased": {"memory", "insights", "remaining", "pending"}}``. Never fails
+  because the module is down: the module side is retried by the facts job. Also erases a
+  belief rejected before 4.2. Confirm, correct and restore answer 409 on an erased belief.
+* ``GET  /api/beliefs/export``: the owner's ledger and memories as one JSON download
+  (``src/belief_export.py``).
 * ``POST /api/beliefs/run``: the facts job for this owner now (one module call, at most
   ``RUN_TIMEOUT`` seconds); answers its counts line.
 
@@ -38,12 +43,13 @@ Another owner's id is a 404.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 from core.middleware import require_admin
@@ -93,6 +99,8 @@ def _found(fn, *args, **kwargs):
         return fn(*args, **kwargs)
     except ledger.BeliefNotFound as e:
         raise HTTPException(404, "belief not found") from e
+    except ledger.BeliefErased as e:  # Fork 4.2: an erased belief stays erased
+        raise HTTPException(409, str(e)) from e
 
 
 def _subject_call(fn, *args, **kwargs):
@@ -131,30 +139,21 @@ def module_caller() -> mf.CallTool | None:
     return mf.mcp_caller(manager, server_id) if server_id else None
 
 
-def _module_fact_count(evidence: list[dict]) -> int:
-    return len({str(e.get("source_id")) for e in evidence or []
-                if e.get("source") == mf.SOURCE})
-
-
 async def forget(owner: str, belief_id: int, reason: str = "") -> dict[str, Any]:
-    """Reject locally, then retire the module facts; propagation problems are counted,
-    never raised."""
-    evidence = _found(ledger.reject, owner, belief_id, reason)
-    belief = ledger.get_belief(owner, belief_id)
-    facts = _module_fact_count(evidence)
-    propagated = {"retired": 0, "failed": 0, "unsupported": 0}
-    if facts:
-        try:
-            call = module_caller()
-            if call is None:
-                propagated["unsupported"] = facts
-            else:
-                propagated = await asyncio.wait_for(
-                    mf.propagate_forget(owner, evidence, call=call), FORGET_TIMEOUT)
-        except Exception as e:  # noqa: BLE001 -- the forget stands; the page says so
-            logger.warning("belief %s forgotten here; module not updated: %s", belief_id, e)
-            propagated = {"retired": 0, "failed": facts, "unsupported": 0}
-    return {"belief": belief, "propagated": propagated}
+    """Forget completely (``src/belief_forget.py``): rejected and erased here, the facts
+    behind it erased in the module; module problems are counted, never raised."""
+    from src import belief_forget
+
+    return await _found_async(
+        belief_forget.forget(owner, belief_id, reason, call=module_caller(),
+                             timeout=FORGET_TIMEOUT))
+
+
+async def _found_async(coro):
+    try:
+        return await coro
+    except ledger.BeliefNotFound as e:
+        raise HTTPException(404, "belief not found") from e
 
 
 async def run_facts(owner: str) -> JSONResponse:
@@ -202,6 +201,22 @@ def setup_beliefs_routes() -> APIRouter:
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
         return {"beliefs": beliefs, "stats": ledger.stats(owner)}
+
+    # Export (4.2): one JSON download, built per request, never stored or sent elsewhere.
+    @router.get("/api/beliefs/export", dependencies=admin)
+    async def export(request: Request) -> Response:
+        from src import belief_export
+
+        try:
+            data = belief_export.build(_owner(request))
+        except RuntimeError as e:  # MemoryStoreUnreadable: not an export without memories
+            raise HTTPException(503, f"memory could not be read: {e}") from e
+        return Response(
+            content=json.dumps(data, ensure_ascii=False, indent=1),
+            media_type="application/json",
+            headers={"Content-Disposition":
+                     f'attachment; filename="{belief_export.filename()}"',
+                     "Cache-Control": "no-store"})
 
     # Subjects and contacts (2.1). Literal paths, declared before /{belief_id}.
     @router.get("/api/beliefs/subjects", dependencies=admin)
