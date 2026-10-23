@@ -102,7 +102,8 @@ def test_plans_window_status_and_order():
     cands = ii.plan_candidates("alice", TODAY, beliefs=beliefs)
     assert [c["ref"] for c in cands] == ["belief:9", "belief:2", "belief:1", "belief:4"]
     assert cands[1] == {"ref": "belief:2", "kind": "plan", "bucket": "undated",
-                        "title": "Decided to take the train to Berlin", "date": None,
+                        "title": "Take the train to Berlin",
+                        "text": "Decided to take the train to Berlin", "date": None,
                         "time": None, "attribute": "decision", "weight": 0}
     many = [_belief(i) for i in range(10, 20)]
     assert len(ii.plan_candidates("alice", TODAY, beliefs=many)) == 5
@@ -116,7 +117,41 @@ def test_plans_from_the_ledger(store):
     [b] = ledger.list_beliefs("alice")
     assert ledger.apply_structure("alice", b["id"], "plans", "visit Alice in Lisbon", now=NOW)
     [c] = ii.plan_candidates("alice", TODAY)
-    assert c["ref"] == f"belief:{b['id']}" and c["title"] == "Plans to visit Alice in Lisbon"
+    assert c["ref"] == f"belief:{b['id']}" and c["title"] == "Visit Alice in Lisbon"
+
+
+@pytest.mark.parametrize("text,value,title", [
+    (("The owner plans to slow down feature development for Odysseus after phase 4 to "
+      "focus on bug fixing."), None,
+     "Slow down feature development for Odysseus after phase 4 to focus on bug fixing"),
+    (("Shahyah plans to have Odysseus save notes as flat PNGs, transcribe them, and feed "
+      "them into the personal context system."), None,
+     "Have Odysseus save notes as flat PNGs, transcribe them, and feed them into the…"),
+    ("The owner decided to stabilise the base system before side projects.", None,
+     "Stabilise the base system before side projects"),
+    ("Plans to visit Alice in Lisbon", "visit Alice in Lisbon", "Visit Alice in Lisbon"),
+])
+def test_plan_titles_are_short_todo_phrases(text, value, title):
+    got = ii.plan_title(text, value)
+    assert got == title and len(got) <= ii.MAX_PLAN_TITLE
+
+
+def test_beliefs_that_are_not_plans_are_left_out():
+    beliefs = [_belief(1, text="Shahyah believes a separate server is needed for agentic "
+                                "tasks."),
+               _belief(2, text="Shahyah has been thinking of getting rid of his truck."),
+               _belief(3, text="Shahyah wants to sell the truck before winter.")]
+    cands = ii.plan_candidates("alice", TODAY, beliefs=beliefs)
+    assert [(c["ref"], c["title"]) for c in cands] == [
+        ("belief:3", "Sell the truck before winter")]
+
+
+def test_the_owners_correction_is_the_title_source():
+    b = {**_belief(1, text="Plans to repaint the kitchen"), "value": "repaint kitchen",
+         "owner_text": "Plans to repaint the kitchen blue",
+         "shown_text": "Plans to repaint the kitchen blue"}
+    [c] = ii.plan_candidates("alice", TODAY, beliefs=[b])
+    assert c["title"] == "Repaint the kitchen blue"
 
 
 def test_extra_candidates_fail_soft(store, monkeypatch):
