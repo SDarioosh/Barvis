@@ -3,8 +3,10 @@
 // links, and the owner's buttons: confirm, edit (correct), forget, restore. Subjects
 // (the owner, people, projects, things) can be renamed, given a kind, linked to an
 // Odysseus contact and merged; a subject opens to its summary and its beliefs grouped
-// by attribute. Data: routes/beliefs_routes.py. Forget also asks odysseus-sound to
-// retire the facts behind the belief; the toast says what the module did. The search
+// by attribute. Data: routes/beliefs_routes.py. Forget erases the belief for good
+// (src/belief_forget.py): odysseus-sound erases the facts behind it, the toast says what
+// the module did and where the words still are (a note). Download: GET
+// /api/beliefs/export. The search
 // box uses GET /api/beliefs/search (routes/belief_search_routes.py) and falls back to a
 // plain text match when that route isn't installed (404).
 
@@ -247,9 +249,18 @@ function statusChip(b) {
     return el('span', { className: 'bs-chip confirmed' },
       CONFIRMED_BY[b.confirmed_by] || 'Confirmed');
   }
+  if (b.erased_at) return el('span', { className: 'bs-chip rejected' }, 'Erased');
   const label = { tentative: 'Tentative', stale: 'Stale', rejected: 'Forgotten' }[b.status];
   return el('span', { className: `bs-chip ${b.status}` }, label || b.status);
 }
+
+// What an erased belief's evidence says about its source (src/evidence_intake.py).
+const ERASE_STATES = {
+  done: 'erased there',
+  retired: 'hidden there; its words stay until odysseus-sound is updated',
+  pending: 'not erased there yet (retried hourly)',
+  source: 'still written there: edit it yourself',
+};
 
 function sourceRow(e) {
   const name = SOURCE_NAMES[e.source] || e.source;
@@ -262,6 +273,8 @@ function sourceRow(e) {
     el('span', {}, said),
     span ? el('span', {}, span) : null,
     e.gone ? el('span', { className: 'bs-gone' }, 'no longer reported') : null,
+    ERASE_STATES[(e.payload || {}).erase]
+      ? el('span', { className: 'bs-gone' }, ERASE_STATES[e.payload.erase]) : null,
     href ? el('a', { href, target: '_blank', rel: 'noopener noreferrer',
                      title: 'Open where it came from (new tab)' },
               el('span', { html: ICONS.link }), 'Open') : null);
@@ -286,28 +299,42 @@ async function act(card, path, body, done) {
   }
 }
 
-function forgetMessage(p) {
+function forgetMessage(r) {
+  const p = r.propagated || {};
+  const e = r.erased || {};
+  const erased = p.erased || 0;
   const retired = p.retired || 0;
-  const failed = p.failed || 0;
-  const unsupported = p.unsupported || 0;
-  const missed = failed + unsupported;
-  if (!retired && !missed) return ['Forgotten.', false];
-  if (retired && !missed) return [`Forgotten; the module retired ${plural(retired, 'fact')}.`, false];
-  if (!retired && unsupported && !failed) {
-    return ['Forgotten here; the module could not be reached or cannot retire facts yet. ' +
-            'It stays forgotten here either way.', true];
+  const missed = (p.failed || 0) + (p.unsupported || 0);
+  const parts = ['Forgotten and erased here.'];
+  let warn = false;
+  if (erased) parts.push(`odysseus-sound erased ${plural(erased, 'fact')} from its transcripts.`);
+  if (retired) {
+    parts.push(`odysseus-sound is older: ${plural(retired, 'fact')} hidden there, the words ` +
+               'stay in its transcripts until it is updated.');
+    warn = true;
   }
-  if (!retired) return ['Forgotten here; the module could not retire it. It stays forgotten here.', true];
-  return [`Forgotten; the module retired ${plural(retired, 'fact')}, ` +
-          `${plural(missed, 'other')} could not be retired.`, true];
+  if (missed) {
+    parts.push(`odysseus-sound could not be reached for ${plural(missed, 'fact')}; ` +
+               'the hourly facts job tries again.');
+    warn = true;
+  }
+  const remaining = (e.remaining || []).length;
+  if (remaining) {
+    parts.push(`It is still written in ${plural(remaining, 'place')} you keep yourself ` +
+               '(see the card); edit it there.');
+    warn = true;
+  }
+  return [parts.join(' '), warn];
 }
 
+const FORGET_WARNING = 'Forget this for good? It leaves memory and is erased everywhere ' +
+  'Odysseus and odysseus-sound keep it: the transcript lines that said it read ' +
+  '"[forgotten]", summaries are rewritten without it. This cannot be undone.';
+
 function forget(b, card) {
-  const ok = window.confirm('Forget this? It leaves memory, and odysseus-sound is asked to ' +
-                            'retire the facts behind it (that part cannot be undone).');
-  if (!ok) return;
+  if (!window.confirm(FORGET_WARNING)) return;
   act(card, `/api/beliefs/${b.id}/forget`, {}, (r) => {
-    const [text, warn] = forgetMessage(r.propagated || {});
+    const [text, warn] = forgetMessage(r);
     toast(text, warn);
   });
 }
@@ -348,17 +375,20 @@ function actions(b, card, textNode) {
     row.append(button('confirm', 'Confirm',
       () => act(card, `/api/beliefs/${b.id}/confirm`, {}, () => toast('Restored and confirmed.')),
       'Restore and keep it for good'), forgetBtn());
-  } else if (b.status === 'rejected') {
+  } else if (b.status === 'rejected' && !b.erased_at) {
+    // forgotten before erasing existed: it can still be restored, or erased now
     row.append(button('restore', 'Restore',
       () => act(card, `/api/beliefs/${b.id}/restore`, {}, () => toast('Restored as tentative.')),
-      'Back to tentative; it is confirmed again once it is heard often enough'));
+      'Back to tentative; it is confirmed again once it is heard often enough'),
+    button('forget', 'Erase', () => forget(b, card),
+      'Erase its words everywhere (cannot be undone)'));
   }
   return row;
 }
 
 function beliefCard(b, why) {
   const card = el('div', { className: 'bs-card', id: `belief-${b.id}` });
-  const textNode = el('p', { className: 'bs-text' }, b.shown_text,
+  const textNode = el('p', { className: 'bs-text' }, b.erased_at ? 'Erased' : b.shown_text,
     b.owner_text ? el('span', { className: 'bs-tag', title: `Originally: ${b.text}` }, 'edited') : null);
   const facts = el('div', { className: 'bs-facts' },
     b.subject_kind ? kindIcon(b.subject_kind) : null,

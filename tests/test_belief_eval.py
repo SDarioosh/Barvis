@@ -153,7 +153,7 @@ def test_cleanup_removes_exactly_what_the_eval_seeded(tmp_path, monkeypatch, cap
     assert "--cleanup" in out and str(tmp_path) in out
     manifest = belief_eval.manifest_path(tmp_path, owner)
     recorded = belief_eval.json.loads(manifest.read_text())
-    assert recorded["owner"] == owner and len(recorded["belief_ids"]) == 16
+    assert recorded["owner"] == owner and len(recorded["belief_ids"]) == 17
     monkeypatch.setattr("src.constants.DATA_DIR", str(tmp_path))
     other("17", "Ana Silva has a red kayak")                  # after the eval
     # A later source backs one eval belief: cleanup must leave that one alone.
@@ -163,7 +163,7 @@ def test_cleanup_removes_exactly_what_the_eval_seeded(tmp_path, monkeypatch, cap
         seen_last="2026-10-20")], now=t0)
 
     assert belief_eval.main(["--cleanup", "--data-dir", str(tmp_path)]) == 0
-    assert "cleanup: 15 beliefs, 1 kept, 0 missing" in capsys.readouterr().out
+    assert "cleanup: 16 beliefs, 1 kept, 0 missing" in capsys.readouterr().out
     monkeypatch.setattr("src.constants.DATA_DIR", str(tmp_path))
     left = {b["text"] for b in ledger.list_beliefs(owner)}
     assert left == {"Ana Silva keeps bees", "Ana Silva has a red kayak", belief_eval.CELLO}
@@ -184,7 +184,7 @@ def test_cleanup_then_rerun_in_the_same_dir(tmp_path, capsys):
     assert belief_eval.main(["--data-dir", str(tmp_path), "--owner", "ann"]) == 2
     assert belief_eval.main(["--cleanup", "--data-dir", str(tmp_path), "--owner", "ann"]) == 0
     assert belief_eval.main(["--data-dir", str(tmp_path), "--owner", "ann"]) == 0
-    assert "score 74/74" in capsys.readouterr().out
+    assert "score 80/80" in capsys.readouterr().out
 
 
 def test_cleanup_needs_data_dir():

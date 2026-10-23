@@ -262,7 +262,14 @@ async def sync(owner: str | None, call: CallTool, *, now: datetime | None = None
         state.pop("text_only", None)
         state.update(stats, last_run=now.isoformat(timespec="seconds"))
         save_state(owner, state)
-        return stats
+    # erased beliefs whose facts the module hasn't erased yet (it was down or older)
+    from src import belief_forget
+
+    try:
+        stats["erased"] = await belief_forget.retry_pending(owner, call)
+    except Exception as e:  # noqa: BLE001 -- the sync stands; the next pass retries
+        logger.warning("erase retry failed: %s", e)
+    return stats
 
 
 def changed(stats: dict[str, int]) -> bool:
@@ -270,6 +277,7 @@ def changed(stats: dict[str, int]) -> bool:
     return any(stats.get(k) for k in (
         "beliefs_added", "evidence_added", "evidence_updated", "confirmed", "gone", "stale",
         "merged", "unconfirmed", "memory_added", "memory_updated", "memory_removed", "subjects_added",
+        "erased",
         "mapped", "aliases_added"))
 
 

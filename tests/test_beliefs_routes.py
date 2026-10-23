@@ -129,76 +129,158 @@ def test_correct_and_empty_text(client):
 
 
 def test_restore(client, monkeypatch):
-    use_module(monkeypatch, None)
+    """A belief rejected before 4.2 (not erased) can still be restored."""
     bid = ids()["Plays the cello"]
-    client.post(f"/api/beliefs/{bid}/forget")
+    ledger.reject("alice", bid)
     body = client.post(f"/api/beliefs/{bid}/restore").json()
     assert body["status"] == "tentative"
 
 
+def test_an_erased_belief_cant_come_back(client, monkeypatch):
+    use_module(monkeypatch, None)
+    bid = ids()["Plays the cello"]
+    client.post(f"/api/beliefs/{bid}/forget")
+    for action, body in (("restore", {}), ("confirm", {}), ("correct", {"text": "x"})):
+        r = client.post(f"/api/beliefs/{bid}/{action}", json=body)
+        assert r.status_code == 409, action
+
+
 # ------------------------------------------------------------------ forget
 class Module:
-    def __init__(self, answer=None, error=None):
-        self.answer, self.error, self.calls = answer, error, []
+    def __init__(self, answer=None, error=None, erase=True):
+        self.answer, self.error, self.erase, self.calls = answer, error, erase, []
 
     async def __call__(self, tool, args):
         self.calls.append((tool, args))
         if self.error:
             raise self.error
+        if tool == "erase_fact" and not self.erase:
+            raise RuntimeError("erase_fact: Unknown tool: erase_fact")
         return self.answer
 
 
-@pytest.mark.parametrize("answer", ["Fact #1 retired.", "No fact #1.",
-                                    "Fact #1 was already retired."])
-def test_forget_retires_the_module_fact(client, monkeypatch, answer):
-    """A fact id the module no longer knows (re-summarized) is gone anyway: retired."""
+REASON = "owner forgot it in Odysseus"
+
+
+@pytest.mark.parametrize("answer", ["Fact #1 erased: 1 transcript line(s) redacted.",
+                                    "No fact #1.", "Fact #1 was already erased."])
+def test_forget_erases_the_module_fact(client, monkeypatch, answer):
+    """A fact id the module no longer knows (re-summarized) is gone anyway: erased."""
     module = Module(answer)
     use_module(monkeypatch, module)
     bid = ids()["Prefers oat milk in coffee"]
     r = client.post(f"/api/beliefs/{bid}/forget", json={"reason": "wrong"})
     assert r.status_code == 200
     body = r.json()
-    assert body["propagated"] == {"retired": 1, "failed": 0, "unsupported": 0}
-    assert (body["belief"]["status"], body["belief"]["note"]) == ("rejected", "wrong")
-    assert module.calls == [("retire_fact", {"fact_id": 1,
-                                             "reason": "owner forgot it in Odysseus"})]
-    assert not body["belief"]["memory_id"]
+    assert body["propagated"] == {"erased": 1, "retired": 0, "failed": 0, "unsupported": 0}
+    assert body["erased"]["pending"] == 0 and body["erased"]["remaining"] == []
+    belief = body["belief"]
+    assert (belief["status"], belief["shown_text"], belief["note"]) == ("rejected", "", None)
+    assert belief["erased_at"] and belief["evidence"][0]["text"] == ""
+    assert belief["evidence"][0]["link"] == ""
+    assert module.calls == [("erase_fact", {"fact_id": 1, "reason": REASON})]
 
 
-@pytest.mark.parametrize("error", [RuntimeError("retire_fact: database is locked"),
+def test_an_older_module_only_retires(client, monkeypatch):
+    module = Module("Fact #1 retired.", erase=False)
+    use_module(monkeypatch, module)
+    bid = ids()["Prefers oat milk in coffee"]
+    body = client.post(f"/api/beliefs/{bid}/forget").json()
+    assert body["propagated"] == {"erased": 0, "retired": 1, "failed": 0, "unsupported": 0}
+    assert body["erased"]["pending"] == 1
+    assert [c[0] for c in module.calls] == ["erase_fact", "retire_fact"]
+    assert body["belief"]["evidence"][0]["payload"] == {"erase": "retired"}
+
+
+@pytest.mark.parametrize("error", [RuntimeError("erase_fact: database is locked"),
                                    ConnectionError("connection refused")])
 def test_forget_stands_when_the_module_fails(client, monkeypatch, error):
     use_module(monkeypatch, Module(error=error))
     bid = ids()["Prefers oat milk in coffee"]
     r = client.post(f"/api/beliefs/{bid}/forget")
     assert r.status_code == 200
-    assert r.json()["propagated"] == {"retired": 0, "failed": 1, "unsupported": 0}
-    assert ledger.get_belief("alice", bid)["status"] == "rejected"
+    assert r.json()["propagated"] == {"erased": 0, "retired": 0, "failed": 1, "unsupported": 0}
+    belief = ledger.get_belief("alice", bid)
+    assert belief["status"] == "rejected" and belief["erased_at"]
+    assert ledger.erase_pending("alice") == [{"belief_id": bid, "fact_ids": [1]}]
 
 
 def test_forget_without_the_module(client, monkeypatch):
     use_module(monkeypatch, None)
     bid = ids()["Prefers oat milk in coffee"]
     body = client.post(f"/api/beliefs/{bid}/forget").json()
-    assert body["propagated"] == {"retired": 0, "failed": 0, "unsupported": 1}
+    assert body["propagated"] == {"erased": 0, "retired": 0, "failed": 0, "unsupported": 1}
     assert body["belief"]["status"] == "rejected"
 
 
-def test_forget_with_a_missing_retire_tool(client, monkeypatch):
-    use_module(monkeypatch, Module(error=RuntimeError("retire_fact: Unknown tool: retire_fact")))
+def test_forget_with_neither_tool(client, monkeypatch):
+    use_module(monkeypatch, Module(error=RuntimeError("Unknown tool: erase_fact")))
     bid = ids()["Prefers oat milk in coffee"]
     body = client.post(f"/api/beliefs/{bid}/forget").json()
-    assert body["propagated"] == {"retired": 0, "failed": 0, "unsupported": 1}
+    assert body["propagated"] == {"erased": 0, "retired": 0, "failed": 0, "unsupported": 1}
 
 
 def test_forget_without_module_evidence_calls_nothing(client, monkeypatch):
-    module = Module("Fact #1 retired.")
+    module = Module("Fact #1 erased.")
     use_module(monkeypatch, module)
     ledger.submit("alice", [ev(7, "Keeps a sourdough starter", source="notes")], now=T0)
     bid = ids()["Keeps a sourdough starter"]
     body = client.post(f"/api/beliefs/{bid}/forget").json()
-    assert body["propagated"] == {"retired": 0, "failed": 0, "unsupported": 0}
+    assert body["propagated"] == {"erased": 0, "retired": 0, "failed": 0, "unsupported": 0}
     assert module.calls == []
+    # the note still holds the words: the answer says where
+    assert body["erased"]["remaining"] == [{"source": "notes",
+                                            "link": "http://h:8000/view/c7?sig=abc#t=70"}]
+
+
+def test_a_belief_forgotten_before_erasing_existed_can_be_erased(client, monkeypatch):
+    module = Module("Fact #2 erased.")
+    use_module(monkeypatch, module)
+    bid = ids()["Plays the cello"]
+    ledger.reject("alice", bid, "not true")  # the 1.4 forget
+    body = client.post(f"/api/beliefs/{bid}/forget").json()
+    assert body["belief"]["erased_at"] and body["propagated"]["erased"] == 1
+    assert all(e["detail"] == "" for e in body["belief"]["events"])
+    # erasing again calls nothing more
+    module.calls.clear()
+    client.post(f"/api/beliefs/{bid}/forget")
+    assert module.calls == []
+
+
+# ------------------------------------------------------------------ export
+def test_export_downloads_the_owners_ledger_and_memories(client, monkeypatch):
+    from src.constants import DATA_DIR  # noqa: F401 -- patched by the fixture
+    from src.memory import MemoryManager
+    import src.constants as constants
+
+    manager = MemoryManager(constants.DATA_DIR)
+    manager.save([{"id": "m1", "text": "Likes hiking", "owner": "alice"},
+                  {"id": "m2", "text": "Collects vintage maps", "owner": "bob"}])
+    r = client.get("/api/beliefs/export")
+    assert r.status_code == 200
+    assert r.headers["content-disposition"].startswith('attachment; filename="odysseus-memory-')
+    assert r.headers["cache-control"] == "no-store"
+    data = r.json()
+    assert (data["format"], data["version"], data["owner"]) == ("odysseus-memory-export", 1,
+                                                                 "alice")
+    assert {b["shown_text"] for b in data["beliefs"]} == {
+        "Prefers oat milk in coffee", "Plays the cello", "Lives in Lisbon with her dog Pixel"}
+    assert all(b["evidence"] and b["events"] for b in data["beliefs"])
+    assert all("norm" not in b for b in data["beliefs"])
+    assert data["beliefs"][0]["evidence"][0]["link"].startswith("http://h:8000/view/")
+    assert {s["display"] for s in data["subjects"]} >= {"Jenn"}
+    assert [m["id"] for m in data["memories"] if m["id"] == "m1"] == ["m1"]
+    assert "Collects vintage maps" not in r.text  # bob's
+    assert data["counts"]["beliefs"] == 3
+
+
+def test_export_of_an_erased_belief_has_no_words(client, monkeypatch):
+    use_module(monkeypatch, None)
+    bid = ids()["Plays the cello"]
+    client.post(f"/api/beliefs/{bid}/forget")
+    r = client.get("/api/beliefs/export")
+    assert "cello" not in r.text
+    assert [b["erased_at"] is not None for b in r.json()["beliefs"] if b["id"] == bid] == [True]
 
 
 # ------------------------------------------------------------------ run

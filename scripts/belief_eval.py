@@ -80,11 +80,12 @@ ROTTERDAM = "Lena Okafor moved to Rotterdam"
 TRAIL = "Priya Nair likes trail running"
 DEMO = "Project Heron's demo is on 4 November"
 LEAVE = "Sam Rivera is on parental leave until 15 October"
+ICELANDIC = "Tomas Berg is learning Icelandic"
 # What memory must hold at the end (shown texts of the confirmed beliefs).
 CONFIRMED = (PEANUTS, ROTTERDAM, BIRTHDAY_FIX, RUNS, VEGGIE,
              DAUGHTER, REVIEW, MEETINGS)
 ALL_TEXTS = (GYM, VEGGIE, CELLO, PEANUTS, LAUNCH, EMPLOYER, BIRTHDAY, MEETINGS, DAUGHTER,
-             RUNS, REVIEW, DELFT, ROTTERDAM, TRAIL, DEMO, LEAVE)
+             RUNS, REVIEW, DELFT, ROTTERDAM, TRAIL, DEMO, LEAVE, ICELANDIC)
 
 # One line per case: what it shows (the table groups checks by these names).
 CASES = {
@@ -99,6 +100,8 @@ CASES = {
     "variant": "casing/punctuation variant joins the belief; 3 sightings on 2 days: rule",
     "owner-confirmed": "owner-confirmed: stays confirmed when the module drops it and by age",
     "restored": "forgotten by mistake, restored: confirmed by its source again",
+    "erased": "forgotten for good (4.2): no words kept; said again under a new id, it "
+              "joins the erased belief without its words",
     "lost-a-source": "two-source belief loses one source: back to tentative",
     "seen-again": "gone, then reported again with a new sighting: confirmed again",
     "one-day": "two notes on one day: still tentative",
@@ -362,11 +365,37 @@ def scenario(r: Run) -> None:
     r.expect("seen-again", "10-08 reported again, new sighting", REVIEW, CONF_SRC)
     r.expect("variant", "10-08 third sighting, 3 days", RUNS, CONF_RULE)
 
-    # October 10: leave with an end date; October 21: the final pass.
+    # October 8: the owner forgets a confirmed fact for good (the review page's Forget,
+    # stage 4.2; the module side is src/belief_forget.py and its tests).
+    r.fact(9019, TOMAS, "person", ICELANDIC, "2026-10-02", "2026-10-08", 3, 2, True)
+    r.module_pass(at(10, 8, 1))
+    r.expect("erased", "10-08 module confirms it", ICELANDIC, CONF_SRC)
+    erased_id = r.belief(ICELANDIC)["id"]
+    ledger.reject(r.owner, erased_id, "private", now=at(10, 8, 12))
+    ledger.erase(r.owner, erased_id, {"9019": "erased"}, now=at(10, 8, 12))
+    gone = ledger.get_belief(r.owner, erased_id)
+    r.check("erased", "10-08 rejected, out of memory", "rejected/out",
+            f"{gone['status']}/{'mem' if erased_id in r.mirrored() else 'out'}")
+    r.check("erased", "10-08 no words in the belief, evidence or events", "",
+            "".join([gone["text"], gone["owner_text"] or "", gone["note"] or "",
+                     gone["subject"], *(e["text"] + e["link"] for e in gone["evidence"]),
+                     *(e["detail"] for e in gone["events"])]))
+    r.check("erased", "10-08 no belief shows its text", 0, len(r.find(ICELANDIC)))
+
+    # October 10: leave with an end date; the erased fact is said again in a new
+    # conversation (new module id); October 21: the final pass.
+    r.fact(9020, TOMAS, "person", ICELANDIC, "2026-10-10", "2026-10-10", 3, 2, True)
     r.fact(9018, ME, "owner", LEAVE, "2026-09-01", "2026-10-10", 3, 3, True,
            valid_until="2026-10-15")
     r.module_pass(at(10, 10))
     r.expect("valid-until", "10-10 before its end date", LEAVE, CONF_SRC)
+    again = ledger.get_belief(r.owner, erased_id)
+    r.check("erased", "10-10 said again: joins the erased belief, no words",
+            "9019:done,9020:pending", ",".join(
+                f"{e['source_id']}:{e['payload'].get('erase')}" for e in again["evidence"]
+                if not e["text"]))
+    r.check("erased", "10-10 still rejected, nothing new", "rejected/0",
+            f"{again['status']}/{len(r.find(ICELANDIC))}")
     r.module_pass(at(10, 21))
     final = {
         "said-once": (CELLO, TENT), "source-confirmed": (PEANUTS, CONF_SRC),

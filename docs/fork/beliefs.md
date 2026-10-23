@@ -1,7 +1,8 @@
 # Belief ledger: evidence in, confirmed beliefs out
 
 Stages 1.1 (evidence intake), 1.3 (the [review page](#review-page-13)), 1.4 (forgetting
-propagates) and 1.5 (expiry and decay) of
+propagates), 1.5 (expiry and decay) and 4.2 ([complete forget](#complete-forget-42) and
+[export](#export-42)) of
 [personal-context.md](personal-context.md#phase-1-one-intake-a-review-page-and-forgetting),
 and, of Phase 2, the hub side of 2.1 ([subjects and contacts](#subjects-and-contacts-21)),
 2.2 ([structure](#structure-22)) and 2.4 ([projects](#projects-24)).
@@ -157,6 +158,7 @@ ledger.reconcile_source(owner, "notes", present_ids={"note-42:3", ...})
 | `correct(owner, id, text)` | `owner_text = text`, `confirmed` by `owner`; memory shows the corrected text (same memory id and `uses`); evidence that says the corrected text later lands on this belief; clears `structured_at`, so the Belief Structure task structures it again |
 | `reject(owner, id, reason="")` | `rejected`, out of memory, `note = reason`; returns the evidence list so the caller can propagate the forget |
 | `restore(owner, id)` | `rejected`/`stale` → `tentative`, then the rule (may confirm it again); to keep an old belief for good, confirm it |
+| `erase(owner, id, outcomes=None)` | a rejected belief loses its words for good ([Complete forget](#complete-forget-42)); `confirm`, `correct` and `restore` raise `BeliefErased` (a `ValueError`) on it afterwards |
 | `list_beliefs(owner, status=None, subject=None, limit=500, *, subject_id=None, attribute=None)` | beliefs with their evidence (`status`: one or a list; `subject` case-insensitive on the source's name; `subject_id` one subject; `attribute` one of the [vocabulary](#structure-22)), by subject then most recently seen |
 | `get_belief(owner, id)` | one belief with evidence and its 20 newest events |
 | `stats(owner)` | counts per status, `total`, and `structured` (beliefs with `structured_at`) |
@@ -165,7 +167,7 @@ A belief dict has `id`, `owner`, `subject`, `about`, `text`, `owner_text`, `show
 `category`, `status`, `confirmed_by`, `first_seen`, `last_seen` ("not heard since"),
 `valid_until`, `memory_id`, `created_at`, `updated_at`, `note`, `subject_id`,
 `subject_display`, `subject_kind`, `contact_id` (of its subject), `attribute`, `value`,
-`valid_from`, `structured_at`, `link` and `source` (of
+`valid_from`, `structured_at`, `erased_at` (set once erased), `link` and `source` (of
 the citing evidence, see [Memory mirroring](#memory-mirroring)) and `evidence` (each: `id`, `source`, `source_id`, `subject`,
 `about`, `category`, `text`, `link`, `seen_first`, `seen_last`, `times`, `days`,
 `source_confirmed`, `gone`, `payload`, `updated_at`). Another owner's id raises
@@ -173,6 +175,9 @@ the citing evidence, see [Memory mirroring](#memory-mirroring)) and `evidence` (
 store is unreadable the decision is still saved and the next facts pass mirrors it.
 
 ### Forgetting propagates (1.4)
+
+Since 4.2 the review page's Forget erases ([Complete forget](#complete-forget-42)); this
+`retire_fact` path is what an older module still gets.
 
 `src.module_facts.propagate_forget(owner, belief_or_evidence, call=None)` calls the
 module tool `retire_fact {"fact_id": <id>, "reason": "owner forgot it in Odysseus"}` for
@@ -197,7 +202,8 @@ owner: another owner's belief id answers 404.
 | `POST /api/beliefs/{id}/confirm` | `confirm`: confirmed by the owner (also a stale belief: restored and kept for good) |
 | `POST /api/beliefs/{id}/correct` `{"text"}` | `correct`; 400 on empty text |
 | `POST /api/beliefs/{id}/restore` | `restore`: back to tentative, then the rule |
-| `POST /api/beliefs/{id}/forget` `{"reason"?}` | `reject`, then `propagate_forget`; answers `{"belief", "propagated": {"retired", "failed", "unsupported"}}` |
+| `POST /api/beliefs/{id}/forget` `{"reason"?}` | forget completely (`src/belief_forget.py`, [4.2](#complete-forget-42)): `reject`, `erase_fact` in the module, `erase` here, copies elsewhere in the hub; answers `{"belief", "propagated": {"erased", "retired", "failed", "unsupported"}, "erased": {"memory", "insights", "remaining", "pending"}}`. Also erases a belief rejected before 4.2. Confirm, correct and restore answer 409 on an erased belief |
+| `GET /api/beliefs/export` | the owner's ledger and memories as one JSON download ([Export](#export-42)) |
 | `GET /api/beliefs/subjects?kind=` | `{"subjects": [...], "stats"}` (`list_subjects`: counts per status, aliases, source person ids); `kind`: `person`, `project`, `thing` or `owner`; 400 for another kind |
 | `GET /api/beliefs/subjects/{id}` | `{"subject", "beliefs", "summary", "stats"}`: the subject, its beliefs of every status but rejected (with `attribute`, `value`, `valid_from`) and `subject_summary` |
 | `POST /api/beliefs/subjects/{id}/kind` `{"kind"}` | `set_subject_kind`: `person`, `project` or `thing` |
@@ -234,7 +240,15 @@ transcript links). Gone evidence is marked "no longer reported".
 | tentative | Confirm, Edit, Forget |
 | confirmed | Edit, Forget |
 | stale | Confirm (restores and keeps it), Forget |
-| rejected | Restore |
+| rejected | Restore, Erase (a belief forgotten before 4.2) |
+| rejected, erased | none: the card reads "Erased" |
+
+Forget (and Erase) asks first: "Forget this for good? … This cannot be undone." The toast
+says what the module did (erased, only hidden by an older module, not reached: retried
+hourly) and whether the words are still in a place the owner keeps (a note). An erased
+belief's evidence lines say per source "erased there", "hidden there; its words stay
+until odysseus-sound is updated", "not erased there yet (retried hourly)" or "still written
+there: edit it yourself". **Download** (top right) saves the [export](#export-42).
 
 Edit is an inline text field (Save / Cancel; Enter / Escape) that calls `correct`.
 **Sync now** calls `/api/beliefs/run` and reloads.
@@ -598,6 +612,67 @@ Lines that don't fit `max_chars` are skipped; "" when nothing matches.
   and subject edits use it (one click no longer re-reads and compares every mirrored
   belief); the jobs run the full sync.
 
+## Complete forget (4.2)
+
+Code: `src/belief_forget.py` (the order and the hub's copies), `erase` in
+`src/evidence_intake.py` (the ledger's copy); tests `tests/test_belief_forget.py`,
+`tests/test_beliefs_routes.py`; the eval case `erased` ([Measure](#measure-16)). The
+owner decided (2026-10-23): one Forget that always erases, with a confirmation, and no
+restore; later repeats are erased too; beliefs forgotten before 4.2 get an Erase button,
+nothing is erased automatically.
+
+`belief_forget.forget(owner, id, reason, call=...)`, in this order:
+
+| Step | Where | What |
+|---|---|---|
+| 1 | ledger | `reject`: rejected, out of memory at once (the mirrored entry and its vector) |
+| 2 | odysseus-sound | `erase_fact {"fact_id", "reason"}` per fact behind it (MCP 0.10.0): the transcript line that said it reads `[forgotten]` in every conversation that said it, the notes and digests are hidden and rewritten by the module's local model without it, search and embeddings are redone, kept audio of the line is deleted, later repeats linked "same" are erased too. A module without `erase_fact` gets `retire_fact` (the fact is hidden there, its words stay). "No fact #N." counts as done (re-summarized ids). Module calls share one timeout (30 s on the page) |
+| 3 | ledger | `erase`: `text`, `owner_text`, `note`, `subject`, `attribute`, `value`, `valid_from` cleared, `subject_id` null; `norm` and `owner_norm` become `erased:<sha256>`; every evidence row keeps no `text` and `subject`, and no `link` unless its source still holds the words (not odysseus-sound); `payload` is `{"erase": state}`; event details are cleared and an `erased` event added; the `belief_vectors` row is deleted. The write runs with `secure_delete` and the WAL is checkpointed after it, so the words leave `beliefs.db` and its `-wal` file |
+| 4 | memory | other memory entries of the owner with exactly its words (lowercased, punctuation and a `(source: …)` suffix dropped): a chat-extracted memory, a copy the owner made. Never fuzzy, never another owner's. Their vectors go too |
+| 5 | Today insight | stored insight files (`today_insight/<owner>/*.json`) drop items with ref `belief:<id>`, and any reason or headline that quotes its words. Today's insight is rebuilt on its own (its inputs changed) |
+
+Per evidence, `payload.erase` is `done` (the module erased it), `retired` (an older module
+only hid it), `pending` (the module wasn't reached, or the claim came back as a new fact)
+or `source` (another source, e.g. a note: the owner edits it there; its link stays so the
+page and the answer's `remaining` can say where). Every Module Facts pass ends with
+`retry_pending`: `erase_fact` again for module evidence of erased beliefs that isn't
+`done` (stats key `erased`), so a module that was down or older catches up.
+
+Staying forgotten: the hashed keys still match the same claim, so evidence that says it
+again from any source (a note, the module under a new fact id) joins the erased belief
+without its words (module evidence as `pending`, so the next pass erases it in the module
+too) and never reaches memory. Only exact matches after normalising, never fuzzy:
+a reworded claim is a new belief.
+
+"Complete" on the hub side means: no copy of the words in `beliefs.db` (belief, evidence,
+events, vector), in memory or its vectors, or in stored Today insights. Not touched, by
+design: the owner's chats (they may quote it; the owner deletes a chat themselves), the
+owner's own sources (notes: listed in `remaining`), and backups or copies made outside
+Odysseus. Erasing can't be undone.
+
+## Export (4.2)
+
+**Download** on `/beliefs` (`GET /api/beliefs/export`, `src/belief_export.py`; same admin
+auth and owner scope as the page) returns one JSON file, `odysseus-memory-<date>.json`,
+built per request and sent only to the owner's browser (`Cache-Control: no-store`; never
+stored on the server or sent elsewhere):
+
+```json
+{"format": "odysseus-memory-export", "version": 1, "exported_at": "…Z", "owner": "…",
+ "counts": {"beliefs", "evidence", "events", "subjects", "memories"},
+ "beliefs": [{"id", "text", "shown_text", "status", "…": "…", "evidence": [{"source",
+   "source_id", "text", "link", "…": "…"}], "events": [{"at", "kind", "detail"}]}],
+ "subjects": [{"id", "key", "display", "kind", "contact_id", "aliases", "…": "…"}],
+ "subject_sources": [{"subject_id", "source", "source_person_id", "name", "…": "…"}],
+ "memories": [{"id", "text", "category", "source", "…": "…"}]}
+```
+
+Beliefs of every status, each with its evidence (with links) and every kept event; the
+matching keys stay out. An erased belief appears without words. If memory can't be read
+the route answers 503 instead of an export without memories. There is no import back:
+upstream's memory import (`POST /api/memory/import`) asks the model to pull memories out
+of a document, it doesn't restore entries, so a round trip wouldn't be faithful.
+
 ## Consolidation (4.1)
 
 Code: `src/belief_consolidation.py`; test `tests/test_belief_consolidation.py`. Two parts.
@@ -756,7 +831,9 @@ venv/bin/python scripts/belief_eval.py --data-dir /tmp/belief-eval --keep
   `apply_decay`, one `sync_memory`); `notes` adds single sightings.
 - Cases: said once (tentative), source-confirmed (3 times on 2 days), two sources
   (conversation + note), gone upstream (stale on reconcile), forgotten (rejected; the
-  same fact under the same and a new module id stays rejected), corrected (memory shows
+  same fact under the same and a new module id stays rejected), erased (4.2: no words
+  in the belief, its evidence or events; said again under a new module id it joins the
+  erased belief without its words, as `pending`), corrected (memory shows
   the correction in the same memory; the original and the corrected text both join the
   belief), `valid_until` passed, decay (confirmed at day 179, stale at day 195, no flap
   when the module repeats the old sighting), text variant (casing, spaces, punctuation
@@ -770,7 +847,7 @@ venv/bin/python scripts/belief_eval.py --data-dir /tmp/belief-eval --keep
   memory is untouched; a second `sync_memory` writes nothing (`memory.json`
   byte-identical).
 - Output: one row per check (`case`, `step`, `expected`, `actual`, `ok`/`FAIL`, with
-  `status/confirmed_by/mem|out` for beliefs), then `cases: 18/18   checks: score 74/74`
+  `status/confirmed_by/mem|out` for beliefs), then `cases: 19/19   checks: score 80/80`
   and the details of any failure. Exit code 1 on any mismatch, 2 when the data dir already
   holds this eval's beliefs or evidence ids for the owner (run `--cleanup` first).
 - `--data-dir` (default: a temp dir) and `--owner` (default `eval-owner`) choose where and
