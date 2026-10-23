@@ -53,6 +53,13 @@ NEGATIONS = frozenset({
 # Words that don't change a claim when added or dropped.
 FILLER = frozenset({"a", "an", "the", "very", "really", "also", "still", "just", "quite",
                     "so", "too", "much", "actually"})
+# Also ignorable when a source rewords an item under the same id (``same_rewording``):
+# glue words of a rephrased sentence ("a bike with no computer on it" / "a bike that has
+# no computer"). Not tense or time words ("had", "was", "used"): those change a claim.
+REWORD_FILLER = FILLER | frozenset({
+    "that", "which", "who", "with", "has", "have", "is", "are", "be", "on", "in", "of",
+    "it", "its", "to", "for", "at", "there", "this", "and",
+})
 # Endings of one word's forms (after a shared stem of at least 3 letters): plural and
 # third person only, so a change of tense ("works at" / "worked at") stays apart.
 INFLECTIONS = frozenset({"", "s", "es"})
@@ -123,7 +130,7 @@ def same_word(a: str, b: str) -> bool:
     return n >= 3 and a[n:] in INFLECTIONS and b[n:] in INFLECTIONS
 
 
-def same_claim(a: str, b: str) -> bool:
+def same_claim(a: str, b: str, filler: frozenset = FILLER) -> bool:
     """Whether two matching keys (``beliefs.norm``) say the same thing in nearly the same
     words: the same negations and numbers, and every word that differs is a filler word
     (:data:`FILLER`) or the same word in another form (:func:`same_word`). A different
@@ -139,11 +146,17 @@ def same_claim(a: str, b: str) -> bool:
     for tag, i1, i2, j1, j2 in SequenceMatcher(None, wa, wb, autojunk=False).get_opcodes():
         if tag == "equal":
             continue
-        da = [w for w in wa[i1:i2] if w not in FILLER]
-        db = [w for w in wb[j1:j2] if w not in FILLER]
+        da = [w for w in wa[i1:i2] if w not in filler]
+        db = [w for w in wb[j1:j2] if w not in filler]
         if len(da) != len(db) or not all(same_word(x, y) for x, y in zip(da, db)):
             return False
     return True
+
+
+def same_rewording(a: str, b: str) -> bool:
+    """:func:`same_claim` with :data:`REWORD_FILLER`: for one item a source reworded under
+    its own id (an Athena re-summary), not for two items that merely look alike."""
+    return same_claim(a, b, REWORD_FILLER)
 
 
 def _structure_agrees(a: Mapping, b: Mapping) -> bool:

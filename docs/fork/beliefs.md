@@ -125,8 +125,14 @@ ledger.reconcile_source(owner, "notes", present_ids={"note-42:3", ...})
   the evidence; the belief's `first_seen`/`last_seen` are the min/max over its evidence.
 - When a source changes the text behind an id: if that evidence is the belief's only one
   and the owner hasn't decided on it, the belief follows (memory is updated in place).
-  Otherwise the evidence moves to the belief that matches the new text, or a new one.
-  A changed `subject` or `about` (a renamed speaker) follows the same way.
+  If the owner confirmed or dismissed it and the source only rewords it (same subject,
+  the same words apart from glue words such as "with", "that", "has", "on", "it"; the
+  same negations and numbers; `same_rewording` in `src/belief_consolidation.py`), the
+  evidence stays with the owner's decision: an Athena re-summary rewords facts under
+  their id, and this was a second copy of the fact in memory. Otherwise the evidence
+  moves to the belief that matches the new text, or a new one ("plays the cello" ->
+  "plays the viola" is a new claim). A changed `subject` or `about` (a renamed speaker)
+  follows the same way.
 - A source that lists everything it currently holds calls `reconcile_source` after
   `submit` with the ids it still has: the other ids are marked gone (event
   `retired_upstream`). A belief left without live evidence goes `stale` (and leaves
