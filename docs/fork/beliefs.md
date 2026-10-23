@@ -314,6 +314,33 @@ lacks `retire_fact` is counted (`failed`, `unsupported`) and not retried: the fa
 reported again, but it attaches to the rejected belief and stays out of memory. Code:
 `dismiss` in `src/belief_forget.py`; tests in `tests/test_beliefs_routes.py`.
 
+### Move to another person
+
+The owner reported (2026-10-23) a fact about someone else filed under the owner: the
+module heard that person's line as the owner's voice. Edit only changes the words; the
+belief stays under its subject. **Move** (on tentative and confirmed cards) picks a
+person, or types a new name, and has two steps:
+
+1. `move` in `src/evidence_intake.py`: the belief gets the new subject (`subject_id` or a
+   name: an existing subject or alias, else a new person; the owner's own words such as
+   "me" give the owner subject). Its `about`, matching keys and category follow the
+   subject (a person's belief is a `contact` memory). It is confirmed by the owner, so a
+   later sync keeps it there, and event `moved` records it. A fact the module later
+   re-attributes to that same subject (new subject and words, same fact id) stays with
+   the moved belief instead of splitting off as a new one.
+2. With "They said it" ticked (the default when a conversation is behind it),
+   `src/belief_move.py` fixes the line in odysseus-sound: `get_transcript` reads the line
+   at each link's `#t=` second and, when the old subject said it, `reassign_line` gives
+   it to the new person (under the name the module knows them by), so the module
+   re-summarizes that conversation. A line someone else said is left alone: the fact was
+   about the old subject because of its words. No module change; both tools are in the
+   contract.
+
+`POST /api/beliefs/{id}/move` {`subject_id` | `name`, `fix_line`} answers the belief plus
+`lines`: `{"reassigned", "kept", "not_found", "failed", "unsupported"}`. Module problems
+never undo the move (20 s budget); the toast says when a line still needs fixing by hand
+(ask in chat to reassign it). Tests: `tests/test_belief_move.py`.
+
 ## Subjects and contacts (2.1)
 
 Hub side of plan stage 2.1. Every belief belongs to one **subject**: the owner, a person, a

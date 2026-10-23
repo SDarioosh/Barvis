@@ -71,7 +71,7 @@ CATEGORIES = ("fact", "preference", "contact")
 STATUSES = ("tentative", "confirmed", "stale", "rejected")
 CONFIRMED_BY = ("source", "owner", "rule")
 EVENT_KINDS = ("added", "evidence", "confirmed", "stale", "rejected", "corrected",
-               "restored", "retired_upstream", "unconfirmed", "merged", "erased")
+               "restored", "retired_upstream", "unconfirmed", "merged", "erased", "moved")
 NORM_VERSION = 1  # PRAGMA user_version: matching keys of this version
 SCHEMA_VERSION = 2  # PRAGMA user_version: subjects and structure columns (Phase 2)
 ERASE_VERSION = 3  # PRAGMA user_version: ``erased_at`` (complete forget, stage 4.2)
@@ -1038,7 +1038,12 @@ def _attach(db: sqlite3.Connection, owner: str, ev: dict, stamp: str, cache: _Su
     # the source changed what it says
     if normalize(row["text"], row["subject"], row["about"]) != ev["norm"]:
         target = _match(db, owner, ev["norm"], exclude=belief_id)
-        if others or decided or target is not None:
+        # the source now gives it to the subject the owner moved it to (``move``): the
+        # same claim, it stays
+        agrees = (target is None and belief["confirmed_by"] == "owner"
+                  and (row["subject"], row["about"]) != (ev["subject"], ev["about"])
+                  and _subject_for(cache, ev, stamp) == belief["subject_id"])
+        if not agrees and (others or decided or target is not None):
             # a different claim now: move it to the belief it matches, or a new one
             if target is None:
                 target, added = _new_belief(db, owner, ev, stamp, cache), 1
@@ -1329,6 +1334,45 @@ def correct(owner: str | None, belief_id: int, text: str, *,
              owner_norm=normalize(text, row["subject"], row["about"]),
              status="confirmed", confirmed_by="owner", structured_at=None)
         _event(db, row["id"], "corrected", "by owner", stamp)
+    return _owner_action(owner, belief_id, now, apply)
+
+
+def move(owner: str | None, belief_id: int, *, subject_id: int | None = None,
+         name: str | None = None, now: datetime | None = None) -> dict:
+    """The owner says a belief is about someone else (a line given to the wrong voice):
+    it moves to ``subject_id``, or to the subject called ``name`` (created as a person
+    when there is none; the owner's names give the owner subject). Its ``about``, matching
+    keys and category follow the new subject, and it is confirmed by the owner, so the
+    source can't move it back (:func:`_attach`). Raises ValueError (no target),
+    :class:`SubjectNotFound`, :class:`BeliefErased`."""
+    if subject_id is None and not _clean_name(name):
+        raise ValueError("pick a subject or give a name")
+
+    def apply(db, row, stamp, _today):
+        _not_erased(row)
+        cache = _Subjects(db, row["owner"])
+        if subject_id is not None:
+            target = _subject(db, row["owner"], subject_id)
+        elif _is_owner_name(name):
+            target = cache.row(cache.owner_subject("", stamp))
+        else:
+            display = _clean_name(name)
+            found = cache.by_key.get(subject_key(display))
+            target = cache.row(found if found is not None
+                               else cache.create(display, "person", stamp))
+        if target["id"] == row["subject_id"]:
+            return
+        about = {"owner": "owner", "person": "person"}.get(target["kind"], "other")
+        shown = row["owner_text"] or row["text"]
+        fields: dict[str, Any] = dict(
+            subject_id=target["id"], subject=target["display"], about=about,
+            norm=normalize(row["text"], target["display"], about),
+            category=category_for(about, shown), status="confirmed",
+            confirmed_by="owner", structured_at=None)
+        if row["owner_text"]:
+            fields["owner_norm"] = normalize(row["owner_text"], target["display"], about)
+        _set(db, row["id"], stamp, **fields)
+        _event(db, row["id"], "moved", f"to {target['display']} by owner", stamp)
     return _owner_action(owner, belief_id, now, apply)
 
 
