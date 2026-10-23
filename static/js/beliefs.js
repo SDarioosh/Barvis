@@ -4,7 +4,7 @@
 // (the owner, people, projects, things) can be renamed, given a kind, linked to an
 // Odysseus contact and merged; a subject opens to its summary and its beliefs grouped
 // by attribute. Data: routes/beliefs_routes.py. Forget erases the belief for good
-// (src/belief_forget.py): odysseus-sound erases the facts behind it, the toast says what
+// (src/belief_forget.py): Athena erases the facts behind it, the toast says what
 // the module did and where the words still are (a note). Dismiss only rejects it (the
 // module retires the facts, transcripts keep their words; Restore undoes it). Download: GET
 // /api/beliefs/export. The search
@@ -260,7 +260,7 @@ function statusChip(b) {
 // What an erased belief's evidence says about its source (src/evidence_intake.py).
 const ERASE_STATES = {
   done: 'erased there',
-  retired: 'hidden there; its words stay until odysseus-sound is updated',
+  retired: 'hidden there; its words stay until Athena is updated',
   pending: 'not erased there yet (retried hourly)',
   source: 'still written there: edit it yourself',
 };
@@ -310,14 +310,14 @@ function forgetMessage(r) {
   const missed = (p.failed || 0) + (p.unsupported || 0);
   const parts = ['Forgotten and erased here.'];
   let warn = false;
-  if (erased) parts.push(`odysseus-sound erased ${plural(erased, 'fact')} from its transcripts.`);
+  if (erased) parts.push(`Athena erased ${plural(erased, 'fact')} from its transcripts.`);
   if (retired) {
-    parts.push(`odysseus-sound is older: ${plural(retired, 'fact')} hidden there, the words ` +
+    parts.push(`Athena is older: ${plural(retired, 'fact')} hidden there, the words ` +
                'stay in its transcripts until it is updated.');
     warn = true;
   }
   if (missed) {
-    parts.push(`odysseus-sound could not be reached for ${plural(missed, 'fact')}; ` +
+    parts.push(`Athena could not be reached for ${plural(missed, 'fact')}; ` +
                'the hourly facts job tries again.');
     warn = true;
   }
@@ -331,7 +331,7 @@ function forgetMessage(r) {
 }
 
 const FORGET_WARNING = 'Forget this for good? It leaves memory and is erased everywhere ' +
-  'Odysseus and odysseus-sound keep it: the transcript lines that said it read ' +
+  'Odysseus and Athena keep it: the transcript lines that said it read ' +
   '"[forgotten]", summaries are rewritten without it. This cannot be undone.';
 
 function forget(b, card) {
@@ -347,9 +347,9 @@ function dismissMessage(r) {
   const retired = p.retired || 0;
   const missed = (p.failed || 0) + (p.unsupported || 0);
   const parts = ['Dismissed: out of memory, transcripts untouched. Restore it from the Rejected tab.'];
-  if (retired) parts.push(`odysseus-sound won't offer ${retired === 1 ? 'it' : 'them'} again.`);
+  if (retired) parts.push(`Athena won't offer ${retired === 1 ? 'it' : 'them'} again.`);
   if (missed) {
-    parts.push(`odysseus-sound could not be reached for ${plural(missed, 'fact')}; ` +
+    parts.push(`Athena could not be reached for ${plural(missed, 'fact')}; ` +
                'if it comes back it stays dismissed.');
   }
   return [parts.join(' '), missed > 0];
@@ -392,13 +392,13 @@ function moveMessage(r, display) {
   const parts = [`Moved to ${display}; confirmed by you.`];
   if (!l) return [parts.join(' '), false];
   if (l.reassigned) {
-    parts.push(`odysseus-sound gave ${plural(l.reassigned, 'line')} to ${display} and ` +
+    parts.push(`Athena gave ${plural(l.reassigned, 'line')} to ${display} and ` +
                'is redoing that conversation\'s summary.');
   }
   if (l.kept) parts.push(`${plural(l.kept, 'line')} left as is (someone else said it).`);
   const missed = (l.failed || 0) + (l.unsupported || 0) + (l.not_found || 0);
   if (missed) {
-    parts.push(`${plural(missed, 'line')} could not be fixed in odysseus-sound; ` +
+    parts.push(`${plural(missed, 'line')} could not be fixed in Athena; ` +
                'open the transcript and ask in chat to reassign it.');
   }
   return [parts.join(' '), missed > 0];

@@ -3,7 +3,7 @@
 Personal-context plan stages 1.1 (evidence intake) and 1.5 (expiry and decay); the
 design is in ``docs/fork/beliefs.md``.
 
-* A **source** (the odysseus-sound facts job, later notes, chat ...) submits
+* A **source** (the Athena facts job, later notes, chat ...) submits
   :class:`Evidence`: what it observed, with its own id for it and a link to where it
   came from. :func:`submit` files each item under a **belief**: the one this source id
   already maps to, else a belief of the same owner with the same normalized text, else
@@ -98,7 +98,7 @@ PREFERENCE_WORDS = frozenset({
     "like", "likes", "prefer", "prefers", "love", "loves", "hate", "hates", "enjoy",
     "enjoys", "favorite", "favourite", "want", "wants", "dislike",
 })
-# Memory fields only a belief with odysseus-sound evidence carries (the Phase 0 shape).
+# Memory fields only a belief with Athena evidence carries (the Phase 0 shape).
 MODULE_FIELDS = ("module_fact_id", "times_said", "days", "first_said", "last_said")
 # Memory fields a mirrored entry carries only sometimes (removed when they no longer apply).
 OPTIONAL_FIELDS = (*MODULE_FIELDS, "contact_id")
@@ -250,7 +250,7 @@ class Evidence:
     sightings, distinct days); ``source_confirmed`` is the source's own verdict.
     ``valid_until`` (ISO date, optional) ends the belief on that day. ``person_id``
     (optional) is the source's stable id of the person the evidence is about (e.g.
-    odysseus-sound's ``list_people`` id): it files the belief under that person's subject
+    Athena's ``list_people`` id): it files the belief under that person's subject
     whatever name the source uses."""
 
     source: str
@@ -740,7 +740,7 @@ def _evidence_rows(db: sqlite3.Connection, belief_ids: Iterable[int]) -> dict[in
 
 def link_rank(e: Mapping) -> int:
     """How well an evidence's link serves as the belief's citation: 2 for an absolute
-    ``http(s)://`` link from odysseus-sound (the signed transcript link), 1 for any other
+    ``http(s)://`` link from Athena (the signed transcript link), 1 for any other
     absolute link, 0 for a relative one (e.g. a note's ``/#open=notes…``)."""
     link = str(e.get("link") or "").strip().lower()
     if not link.startswith(("http://", "https://")):
@@ -940,7 +940,7 @@ def _erased(db: sqlite3.Connection, belief_id: int) -> bool:
 
 def _erased_evidence(ev: dict, state: str) -> dict:
     """What evidence filed under an erased belief keeps: no words, a link only for a
-    source that still holds them (not odysseus-sound, which erases them itself)."""
+    source that still holds them (not Athena, which erases them itself)."""
     out = dict(ev, subject="", text="", payload=json.dumps({"erase": state}))
     if ev["source"] == MODULE_SOURCE:
         out["link"] = ""
@@ -1240,7 +1240,7 @@ def erase(owner: str | None, belief_id: int, outcomes: Mapping[str, str] | None 
     and structure are cleared, its matching keys become hashes (:func:`erased_key`, so the
     claim said again still finds it and stays out of memory), its evidence keeps no text
     (and no link, except evidence of a source that still holds the words), its events keep
-    no details, and its search vector is deleted. ``outcomes``: per odysseus-sound fact id,
+    no details, and its search vector is deleted. ``outcomes``: per Athena fact id,
     what the module did (``erased``, ``retired``, else not reached). Idempotent: run
     again, it updates the evidence states. Returns ``{"belief", "texts", "remaining",
     "pending"}``: ``texts`` the words it held (to find copies elsewhere; only on the first
@@ -1306,7 +1306,7 @@ def _checkpoint() -> None:
 
 
 def erase_pending(owner: str | None) -> list[dict]:
-    """Erased beliefs with odysseus-sound evidence the module hasn't erased yet:
+    """Erased beliefs with Athena evidence the module hasn't erased yet:
     ``[{"belief_id", "fact_ids"}]`` (for ``belief_forget.retry_pending``)."""
     out: dict[int, list[int]] = {}
     with _connect() as db:
@@ -1712,7 +1712,7 @@ def beliefs_for_contact(owner: str | None, contact_id: str,
 
 def sync_people(owner: str | None, source: str, people: Iterable[Mapping], *,
                 now: datetime | None = None, mirror: bool = True) -> dict[str, int]:
-    """A source's people (odysseus-sound's ``list_people`` JSON: ``id``, ``name``,
+    """A source's people (Athena's ``list_people`` JSON: ``id``, ``name``,
     ``aliases``, ``is_owner``) as subjects. Each id maps to a subject: the one it already
     maps to, the owner subject for ``is_owner``, else the subject whose name or alias
     matches, else a new ``person``. Names and aliases the subject doesn't have become

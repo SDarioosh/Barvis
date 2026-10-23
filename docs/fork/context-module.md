@@ -24,7 +24,7 @@ functions:
 Each upstream sync can break any of these without a merge conflict to warn us. The
 code also can't run, be tested or keep its data without a full Odysseus install.
 
-Moving it into a module, the way odysseus-sound is built, does three things:
+Moving it into a module, the way Athena is built, does three things:
 
 1. **Upstream syncs stop reaching it.** The module talks to Odysseus only through
    documented APIs, so the logic no longer depends on Odysseus internals.
@@ -45,7 +45,7 @@ and run.
 |---|---|
 | `src/evidence_intake.py` (ledger, subjects, confirm/decay, erase, move, export rows) | `context_server/ledger.py` |
 | `src/belief_consolidation.py`, `src/belief_structure.py`, `src/belief_search.py`, `src/belief_move.py`, the ledger part of `src/belief_forget.py` and `src/belief_export.py` | same names under `context_server/` |
-| `src/module_facts.py` (fact intake from odysseus-sound) | `context_server/sources/sound.py` |
+| `src/module_facts.py` (fact intake from Athena) | `context_server/sources/sound.py` |
 | `src/notes_evidence.py` | `context_server/sources/notes.py` |
 | `src/today_insight.py`, `src/insight_outcomes.py`, `src/insight_weights.py`, `src/insight_routines.py`, `src/insight_inputs.py`, `src/insight_trends.py`, `src/insight_push.py` | `context_server/insight/` |
 | `scripts/belief_eval.py`, `scripts/belief_eval_scale.py`, `scripts/insight_eval.py` | `eval/` |
@@ -66,10 +66,10 @@ and run.
 
 ## Module design
 
-Built like odysseus-sound and following the [module contract](modules.md).
+Built like Athena and following the [module contract](modules.md).
 
 - **Repo** `SDarioosh/odysseus-context`, Python 3.11, package `context_server`, ruff and
-  pytest, CI like odysseus-sound's.
+  pytest, CI like Athena's.
 - **MCP server** (stdio and Streamable HTTP, `BearerAuth`, `?access_token=` accepted),
   registered in Odysseus as server `context`.
 - **Config** from env, prefix `CONTEXT_` (`CONTEXT_DATA_DIR`, `CONTEXT_TOKEN`,
@@ -81,7 +81,7 @@ Built like odysseus-sound and following the [module contract](modules.md).
   today: sound facts (hourly), notes evidence (daily), belief structure, Today insight
   (every 15 min), outcome finalize, weights, routines, the daily push.
 - **Sources** (all over documented interfaces):
-  - odysseus-sound over its MCP server: `list_facts`, `list_people`, `list_action_items`,
+  - Athena over its MCP server: `list_facts`, `list_people`, `list_action_items`,
     `get_daily_digest`, `retire_fact`, `erase_fact`, `get_transcript`, `reassign_line`.
   - Odysseus over its token API, with a token holding `todos:read`, `calendar:read`,
     `memory:read`: `GET /api/codex/todos?format=json` (notes and checklists),
@@ -107,7 +107,7 @@ linked pair) and keeps production working.
 |---|---|---|---|
 | 1 | **Skeleton.** Repo, package, config, MCP server with `BearerAuth`, scheduler loop, local LLM and embeddings clients, CI, `seed_demo` with fictional notes/calendar/facts. | module | `ruff` and `pytest` green; server answers `list_beliefs` on an empty ledger. |
 | 2 | **Ledger.** Copy the ledger files and their tests in; replace each Odysseus import with an adapter (memory reads → hub API client, MCP calls → module client, DB models → plain dicts from the API). Sound and notes sources run on the module's scheduler. Ledger tools. | module | All moved tests pass without Odysseus installed; `belief_eval` 18/18 and `belief_eval_scale` numbers equal to the hub's on the same seed. |
-| 3 | **Insight.** Copy the insight files and tests; calendar and notes from the hub API, digest and action items from odysseus-sound. Insight tools. | module | Moved tests pass; `insight_eval` on fictional data matches the hub's output for the same inputs. |
+| 3 | **Insight.** Copy the insight files and tests; calendar and notes from the hub API, digest and action items from Athena. Insight tools. | module | Moved tests pass; `insight_eval` on fictional data matches the hub's output for the same inputs. |
 | 4 | **Migration script.** `context-server migrate --from <odysseus DATA_DIR>` copies `beliefs.db` and the insight/state files (read-only on the source; refuses if the target exists). | module | Round-trip test on a fictional ledger; counts printed, no content. |
 | 5 | **Hub cutover behind a switch.** `src/context_module.py` (client), `src/context_mirror.py` (memory mirror); proxies in the existing routes; chat hook calls the client. `FORK_CONTEXT_BACKEND=local` (default, today's code) or `module`. With `module`, the four hub built-in tasks (Module Facts, Notes Evidence, Belief Structure, Today Insight) pause and Context Mirror runs. `modules_setup.py` registers server `context`. | hub | Sandbox: both settings give the same `/today`, `/beliefs` and chat answers on the seed; focused tests pass; Server verification on the test instance. |
 | 6 | **Owner runs `module` on the test instance**, then production via `scripts/fork_deploy.sh`, with `local` as the rollback for a few weeks. | owner | Owner's sign-off. |
@@ -120,7 +120,7 @@ insight goes into the module only; the in-hub copy is frozen.
 ## Deployment and sandbox
 
 - `scripts/fork_deploy.sh` already runs each module's deploy command first
-  ([deploy.md](deploy.md#update-production)); the module ships one like odysseus-sound's
+  ([deploy.md](deploy.md#update-production)); the module ships one like Athena's
   `server/scripts/deploy.sh` (background service, survives reboot, binds `127.0.0.1`).
 - [sandbox.md](sandbox.md) gains a step to start `context-server mcp --http` with the
   small CPU model and the seed data.
@@ -138,20 +138,20 @@ insight goes into the module only; the in-hub copy is frozen.
   The switch pauses the hub jobs; a test checks that `module` mode never writes
   `DATA_DIR/beliefs.db`.
 - **Forget must stay complete.** Erase still spans the hub's memory (mirror), the ledger
-  (module) and odysseus-sound (`erase_fact`). The mirror deletes the memory on the next
+  (module) and Athena (`erase_fact`). The mirror deletes the memory on the next
   pass, and `forget_belief`'s result tells the hub route to delete it right away, so the
   owner never sees it come back.
 - **Another service to secure.** Its token, its port and its data directory need the
-  same care as odysseus-sound's.
+  same care as Athena's.
 
 ## Open questions for the owner
 
 1. **Go or not.** Is this worth ~7 PRs now, or after the eval reaches 15/20?
 2. **License.** The moved files were written for the fork (created by fork commits, not
    copied from upstream). As their author you can license the module as you like, as
-   odysseus-sound is. Confirm that, and pick the module's license.
+   Athena is. Confirm that, and pick the module's license.
 3. **One owner or several.** `beliefs.db` is keyed by owner today. Keep that (the hub
-   passes the owner on each call), or make the module single-owner like odysseus-sound?
+   passes the owner on each call), or make the module single-owner like Athena?
 4. **GPU sharing.** Which of the three options under Risks?
 5. **Name.** `odysseus-context` (MCP server `context`), or another name? Note that
    `/context` is already the slash skill that offers every trusted module's reads.

@@ -1,13 +1,13 @@
 """Fork: move a belief to the person it is really about, and fix the line at its source.
 
-A fact can land under the wrong person because odysseus-sound gave the line that said it
+A fact can land under the wrong person because Athena gave the line that said it
 to the wrong voice (someone else's line heard as the owner's). Editing the text doesn't
 help: the belief stays under its subject. **Move** on ``/beliefs`` does two things:
 
 1. The ledger moves the belief (``evidence_intake.move``): new subject, confirmed by the
    owner. A later sync can't move it back, and a fact the module re-attributes to the
    same person stays with it.
-2. odysseus-sound fixes the line (:func:`fix_lines`): for each fact behind the belief,
+2. Athena fixes the line (:func:`fix_lines`): for each fact behind the belief,
    ``get_transcript`` reads the line at the link's ``#t=`` second and, when that line is
    the old subject's, ``reassign_line`` gives it to the new person; the module then
    re-summarizes that conversation. A line someone else said is left alone (the fact was
@@ -39,7 +39,7 @@ _MISSING = re.compile(r"unknown tool|tool not found|no such tool|"
 
 
 def source_lines(evidence: Iterable[dict]) -> list[tuple[str, int]]:
-    """(conversation id, second) of each odysseus-sound fact behind a belief, from its
+    """(conversation id, second) of each Athena fact behind a belief, from its
     transcript link; erased evidence has no link and is left out."""
     out: list[tuple[str, int]] = []
     for e in evidence:
@@ -61,7 +61,7 @@ def names_of(subject: dict | None) -> set[str]:
 
 
 def module_name(subject: dict) -> str:
-    """The name odysseus-sound knows this subject by, else its display name."""
+    """The name Athena knows this subject by, else its display name."""
     for s in subject.get("sources") or []:
         if s.get("source") == mf.SOURCE and str(s.get("name") or "").strip():
             return str(s["name"]).strip()

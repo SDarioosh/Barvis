@@ -1,4 +1,4 @@
-// Fork: the odysseus-sound Conversations view and the Today view as Odysseus windows.
+// Fork: the Athena Conversations view and the Today view as Odysseus windows.
 // Loaded by one hook in static/index.html. The sidebar entries stay plain links to the
 // standalone pages (/modules/sound, /today), which still work on their own; here a
 // normal click opens the view in a tool window instead, so the chat and other windows
