@@ -488,11 +488,21 @@ candidates after the 30 rule-ordered ones (each part fails soft):
   (`about` = person); newest first. Ref `belief:<belief id>`, bucket `undated`. The
   attribute is set by the Belief Structure task, so in practice these are beliefs that
   were confirmed once.
+  Only sentences that say a plan or decision count (`PLAN_WORDS`: "plans to", "decided
+  to", "wants to", "will" …): "believes a separate server is needed" or "has been
+  thinking of selling the truck" is left out. The row's title is a short to-do phrase
+  (`plan_title`): the structured value ("Visit Alice in Lisbon"; not when the owner
+  corrected the text), else the sentence from after its plan verb ("The owner plans to
+  slow down …" -> "Slow down …"), at most 80 characters cut at a word. The whole
+  sentence rides along as `text`.
 
 The prompt lists them under `OPEN LOOPS (things the person said they would do for
 someone; labels L…)` and `PLANS THIS WEEK (labels P…)`, each block only when it has
 rows; the system prompt says loops fit `coming_up` and plans fit `also`. `resolve_ref`
 accepts `L1`/`P1` and the exact refs; `validate` keeps `person` and `link` on loop rows.
+`validate` empties a `why` that only restates its row (`repeats_title`: ≥ 70 % of its
+words are in the title or a plan's `text`, a shortened word counting), and the system
+prompt asks for an empty `why` rather than a restated title.
 Refs the owner marked "not today" are left out like the others.
 
 ### Trends and the insight eval

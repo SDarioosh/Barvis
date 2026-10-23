@@ -185,6 +185,34 @@ def test_validate_caps_sections_at_five():
     assert len(out["focus"]) == 5 and out["coming_up"] == [] and out["also"] == []
 
 
+def test_validate_drops_a_reason_that_only_restates_the_title():
+    cands = [{"ref": "belief:1", "title": "Slow down feature development for Odysseus after "
+                                          "phase 4 to focus on bug fixing"},
+             {"ref": "belief:2", "title": "Have Odysseus save notes as flat PNGs, transcribe "
+                                          "them, and feed them into the…",
+              "text": "Shahyah plans to have Odysseus save notes as flat PNGs, transcribe "
+                      "them, and feed them into the personal context system."},
+             {"ref": "event:e1", "title": "Dentist"}]
+    answer = {"headline": "h",
+              "coming_up": [{"ref": "event:e1", "why": "12:00, bring the insurance card"}],
+              "also": [{"ref": "belief:1", "why": "Slow feature dev after phase 4; focus on "
+                                                  "bug fixing for Odysseus."},
+                       {"ref": "belief:2", "why": "Save notes as PNGs and transcribe; feeds "
+                                                  "into personal context system."}]}
+    out = ti.validate(answer, cands)
+    assert [r["why"] for r in out["also"]] == ["", ""]
+    assert out["coming_up"][0]["why"] == "12:00, bring the insurance card"
+
+
+@pytest.mark.parametrize("why,title,repeats", [
+    ("Due Friday; Mira needs it for the board", "Send the Q4 deck", False),
+    ("Send the deck", "Send the Q4 deck", True),
+    ("", "Send the Q4 deck", False),
+])
+def test_repeats_title(why, title, repeats):
+    assert ti.repeats_title(why, title) is repeats
+
+
 def test_parse_answer():
     assert ti.parse_answer("not json at all") is None
     assert ti.parse_answer('{"focus": []}') is None  # no headline

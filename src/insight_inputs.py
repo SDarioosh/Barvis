@@ -15,7 +15,12 @@ and events; the prompt labels them ``L1…`` (loops) and ``P1…`` (plans).
 * **Plans**: the owner's beliefs with attribute ``plans`` or ``decision``
   (``src/evidence_intake.py``; the attribute is set by the Belief Structure task),
   status tentative or confirmed, first seen in the last ``PLAN_DAYS`` days, not about
-  another person. At most ``MAX_PLANS``, newest first. Ref ``belief:<belief id>``.
+  another person, whose sentence says a plan or decision (:data:`PLAN_WORDS`: "plans to",
+  "decided to", "wants to" …; "believes X is needed" or "has been thinking of" is not
+  one). At most ``MAX_PLANS``, newest first. Ref ``belief:<belief id>``. The title is a
+  short to-do phrase (:func:`plan_title`): the structured value ("Visit Alice in
+  Lisbon"), else the sentence without its subject and plan verb, at most
+  ``MAX_PLAN_TITLE`` characters.
 
 Each part fails soft: an error leaves that part out.
 
@@ -38,6 +43,11 @@ PLAN_DAYS = 7
 PLAN_ATTRIBUTES = ("plans", "decision")
 PLAN_STATUSES = ("tentative", "confirmed")
 MAX_TITLE = 200
+MAX_PLAN_TITLE = 80
+# the sentence of a plan or decision: "<subject> plans to …", "… decided to …"
+PLAN_WORDS = re.compile(
+    r"\b(?:plans?|planning|intends?|intending|wants?|wanted|decided|is\s+going|are\s+going|"
+    r"will|aims?)\s+(?:to\s+|that\s+)?", re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------- loops
@@ -143,6 +153,30 @@ def loop_candidates(owner: str | None, today: Date, rows: Iterable[dict], *,
 
 
 # ---------------------------------------------------------------------------- plans
+def _clip_words(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    cut = text[:limit - 1].rsplit(" ", 1)[0].rstrip(" ,;:-")
+    return cut + "…"
+
+
+def plan_title(text: str, value: Any = None) -> str:
+    """A plan belief as a short to-do phrase: its structured value ("visit Alice in
+    Lisbon" -> "Visit Alice in Lisbon"), else its sentence from the plan verb on ("The
+    owner plans to slow down …" -> "Slow down …"), at most ``MAX_PLAN_TITLE``
+    characters (cut at a word, with "…")."""
+    phrase = re.sub(r"\s+", " ", str(value or "")).strip()
+    if not phrase:
+        phrase = text
+        m = PLAN_WORDS.search(text)
+        if m and m.start() <= 40:  # the subject comes first: "The owner", "Shahyah"
+            phrase = text[m.end():]
+    phrase = phrase.strip().rstrip(".!")
+    if not phrase:
+        return _clip_words(text, MAX_PLAN_TITLE)
+    return _clip_words(phrase[:1].upper() + phrase[1:], MAX_PLAN_TITLE)
+
+
 def plan_candidates(owner: str | None, today: Date, *, beliefs: list[dict] | None = None,
                     limit: int = MAX_PLANS) -> list[dict]:
     if beliefs is None:
@@ -159,11 +193,12 @@ def plan_candidates(owner: str | None, today: Date, *, beliefs: list[dict] | Non
             continue
         text = re.sub(r"\s+", " ", str(b.get("shown_text") or b.get("owner_text")
                                        or b.get("text") or "")).strip()
-        if text:
+        if text and PLAN_WORDS.search(text):
             picked.append((first, int(b.get("id") or 0), b, text))
     picked.sort(key=lambda p: (p[0], p[1]), reverse=True)
     return [{"ref": f"belief:{b['id']}", "kind": "plan", "bucket": "undated",
-             "title": text[:MAX_TITLE], "date": None, "time": None,
+             "title": plan_title(text, None if b.get("owner_text") else b.get("value")),
+             "text": text[:MAX_TITLE], "date": None, "time": None,
              "attribute": b["attribute"], "weight": 0}
             for _, _, b, text in picked[:limit]]
 
