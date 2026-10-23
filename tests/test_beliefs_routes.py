@@ -247,6 +247,67 @@ def test_a_belief_forgotten_before_erasing_existed_can_be_erased(client, monkeyp
     assert module.calls == []
 
 
+# ------------------------------------------------------------------ dismiss
+def test_dismiss_retires_the_module_fact_and_erases_nothing(client, monkeypatch):
+    module = Module("Fact #2 retired.")
+    use_module(monkeypatch, module)
+    bid = ids()["Plays the cello"]
+    r = client.post(f"/api/beliefs/{bid}/dismiss", json={"reason": "only true that day"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["propagated"] == {"retired": 1, "failed": 0, "unsupported": 0}
+    belief = body["belief"]
+    assert (belief["status"], belief["shown_text"], belief["note"]) == \
+        ("rejected", "Plays the cello", "only true that day")
+    assert not belief["erased_at"]
+    assert belief["evidence"][0]["text"] == "Plays the cello"
+    assert belief["evidence"][0]["link"]
+    assert module.calls == [("retire_fact", {"fact_id": 2, "reason": REASON})]
+    assert ledger.erase_pending("alice") == []
+    # Restore undoes it
+    assert client.post(f"/api/beliefs/{bid}/restore").json()["status"] == "tentative"
+
+
+def test_dismiss_a_confirmed_belief_leaves_memory(client, monkeypatch):
+    use_module(monkeypatch, Module("Fact #1 retired."))
+    bid = ids()["Prefers oat milk in coffee"]
+    assert ledger.get_belief("alice", bid)["memory_id"]
+    body = client.post(f"/api/beliefs/{bid}/dismiss").json()
+    assert body["belief"]["status"] == "rejected"
+    assert not body["belief"]["memory_id"]
+
+
+@pytest.mark.parametrize("module,expected", [
+    (None, {"retired": 0, "failed": 0, "unsupported": 1}),
+    (Module(error=ConnectionError("connection refused")),
+     {"retired": 0, "failed": 1, "unsupported": 0}),
+    (Module(error=RuntimeError("Unknown tool: retire_fact")),
+     {"retired": 0, "failed": 0, "unsupported": 1}),
+])
+def test_dismiss_stands_without_the_module(client, monkeypatch, module, expected):
+    use_module(monkeypatch, module)
+    bid = ids()["Plays the cello"]
+    r = client.post(f"/api/beliefs/{bid}/dismiss")
+    assert r.status_code == 200
+    assert r.json()["propagated"] == expected
+    belief = ledger.get_belief("alice", bid)
+    assert belief["status"] == "rejected" and not belief["erased_at"]
+
+
+def test_dismiss_errors(client, monkeypatch):
+    use_module(monkeypatch, None)
+    bobs = ids("bob")["Collects vintage maps"]
+    assert client.post(f"/api/beliefs/{bobs}/dismiss").status_code == 404
+    assert ledger.get_belief("bob", bobs)["status"] == "tentative"
+    bid = ids()["Plays the cello"]
+    client.post(f"/api/beliefs/{bid}/forget")
+    assert client.post(f"/api/beliefs/{bid}/dismiss").status_code == 409
+    # a dismissed belief can still be erased
+    other = ids()["Lives in Lisbon with her dog Pixel"]
+    client.post(f"/api/beliefs/{other}/dismiss")
+    assert client.post(f"/api/beliefs/{other}/forget").json()["belief"]["erased_at"]
+
+
 # ------------------------------------------------------------------ export
 def test_export_downloads_the_owners_ledger_and_memories(client, monkeypatch):
     from src.constants import DATA_DIR  # noqa: F401 -- patched by the fixture
