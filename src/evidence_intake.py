@@ -984,6 +984,15 @@ def _note_person(cache: _Subjects, belief_id: int, ev: dict, stamp: str) -> None
         cache.add_alias(row["subject_id"], ev["subject"], stamp)
 
 
+def _reworded(row: Mapping, ev: dict) -> bool:
+    """The source says the same thing about the same subject in other glue words."""
+    from src.belief_consolidation import same_rewording
+
+    return ((row["subject"], row["about"]) == (ev["subject"], ev["about"])
+            and same_rewording(normalize(row["text"], row["subject"], row["about"]),
+                               ev["norm"]))
+
+
 def _attach(db: sqlite3.Connection, owner: str, ev: dict, stamp: str, cache: _Subjects
             ) -> tuple[str, set[int], int, bool]:
     """File one item. Returns (count key, beliefs touched, beliefs added, changed)."""
@@ -1038,10 +1047,12 @@ def _attach(db: sqlite3.Connection, owner: str, ev: dict, stamp: str, cache: _Su
     # the source changed what it says
     if normalize(row["text"], row["subject"], row["about"]) != ev["norm"]:
         target = _match(db, owner, ev["norm"], exclude=belief_id)
-        # the source now gives it to the subject the owner moved it to (``move``): the
-        # same claim, it stays
-        agrees = (target is None and belief["confirmed_by"] == "owner"
-                  and (row["subject"], row["about"]) != (ev["subject"], ev["about"])
+        # the same claim, it stays with the owner's decision: the source now gives it to
+        # the subject the owner moved it to (``move``), or rewords it in nearly the same
+        # words about the same subject (an Athena re-summary; "cello" -> "viola" splits)
+        moved = (belief["confirmed_by"] == "owner"
+                 and (row["subject"], row["about"]) != (ev["subject"], ev["about"]))
+        agrees = (target is None and decided and (moved or _reworded(row, ev))
                   and _subject_for(cache, ev, stamp) == belief["subject_id"])
         if not agrees and (others or decided or target is not None):
             # a different claim now: move it to the belief it matches, or a new one
