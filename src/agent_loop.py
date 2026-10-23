@@ -26020,7 +26020,7 @@ async def stream_agent_loop(
                 if round_num == 1
                 else _round_compaction_state
             ),
-            # Fork: keep the turn's thinking switch for the primary model (tests/test_empty_reply_recovery.py)
+            # Fork: keep the turn's thinking switch for the primary model (tests/test_agent_thinking_switch.py)
             "thinking_mode": _route_state.get("thinking_mode"),
         }
         if round_num == 1 and not _approved_result_injected:
@@ -37372,16 +37372,6 @@ async def stream_agent_loop(
     ):
         full_response = f"```bash\n$ pwd; whoami; uname -srm\n{_tui_bash_block_output}\n```"
         yield f'data: {json.dumps({"type": "final_response", "content": full_response})}\n\n'
-
-    # Fork: answer a tool-free reply that was only thinking (src/empty_reply_recovery.py)
-    from src.empty_reply_recovery import recover_thinking_only_reply
-    _fork_thinking_answer = await recover_thinking_only_reply(
-        full_response, round_reasoning, tool_events, messages,
-        url=endpoint_url, model=model, headers=headers, max_tokens=max_tokens,
-    )
-    if _fork_thinking_answer:
-        full_response = _fork_thinking_answer
-        yield f'data: {json.dumps({"type": "final_response", "content": full_response, "fallback": "thinking_only_recovery"})}\n\n'
 
     # If the response is completely empty and no tools were executed,
     # yield a fallback message so the user is not left hanging.
