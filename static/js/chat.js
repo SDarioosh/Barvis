@@ -552,7 +552,9 @@ import { invalidateSettings } from './appConfig.js';
     popup.appendChild(skillsRow);
 
     if (d.thinking_supported) {
-    const thinkingOn = d.thinking_mode === 'on';
+    const thinkingOn = d.thinking_mode === 'on'
+      // Fork: an untouched chat shows Agent mode's default, on (src/thinking_defaults.py)
+      || (d.thinking_agent_default && !d.thinking_explicit && (Storage.loadToggleState().mode || 'chat') === 'agent');
     const thinkingRow = document.createElement('div');
     thinkingRow.className = 'chat-context-toggle-row';
     thinkingRow.innerHTML = `<div class="chat-context-toggle-copy"><span>Thinking</span><span class="chat-context-toggle-state">${thinkingOn ? 'On' : 'Off'}</span></div>`;
@@ -566,7 +568,8 @@ import { invalidateSettings } from './appConfig.js';
       event.stopPropagation();
       thinkingToggle.disabled = true;
       const next = !thinkingToggle.classList.contains('active');
-      if (await _saveChatGenerationSettings({ thinking_mode: next ? 'on' : 'off' })) {
+      if (await _saveChatGenerationSettings({ thinking_mode: next ? 'on' : 'off', thinking_explicit: true })) {
+        _contextHeaderData = { ..._contextHeaderData, thinking_explicit: true }; // Fork: (src/thinking_defaults.py)
         thinkingToggle.classList.toggle('active', next);
         thinkingToggle.setAttribute('aria-checked', next ? 'true' : 'false');
         thinkingRow.querySelector('.chat-context-toggle-state').textContent = next ? 'On' : 'Off';

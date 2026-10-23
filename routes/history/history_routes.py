@@ -905,6 +905,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
             from src.context_compactor import auto_compact_threshold_percent
             from src.model_context import estimate_tokens, get_context_length
             from src.model_profiles import supports_user_thinking_toggle
+            from src.thinking_defaults import context_fields as thinking_context_fields  # Fork: (src/thinking_defaults.py)
 
             messages = session.get_context_messages()
             used = int(estimate_tokens(messages))
@@ -941,6 +942,8 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
                 "skill_injection_enabled": getattr(session, "skill_injection_enabled", True) is not False,
                 "thinking_mode": (getattr(session, "thinking_mode", "") or "off") if thinking_supported else "off",
                 "thinking_supported": thinking_supported,
+                # Fork: the toggle shows Agent mode's default (src/thinking_defaults.py)
+                **thinking_context_fields(session_id),
                 "temperature_override": getattr(session, "temperature_override", None),
                 "max_tokens_override": getattr(session, "max_tokens_override", None),
             }
@@ -1102,6 +1105,9 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
                 raise HTTPException(404, "Session not found")
             row.thinking_mode, row.temperature_override, row.max_tokens_override = mode, temperature, max_tokens
             db.commit()
+            if body.get("thinking_explicit"):  # Fork: the toggle's choice beats the mode default (src/thinking_defaults.py)
+                from src.thinking_defaults import record_choice
+                record_choice(session_id)
             session.thinking_mode, session.temperature_override, session.max_tokens_override = mode, temperature, max_tokens
             resp_effort = mode[7:] if mode.startswith("effort:") else ("default" if mode in {"", "off"} else None)
             return {

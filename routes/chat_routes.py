@@ -2782,6 +2782,9 @@ def setup_chat_routes(
             # unconditional assignment made `thinking_mode=off` impossible
             # for an existing session and silently changed evaluation/model
             # contracts.
+            if thinking_mode is None:  # Fork: Agent mode thinks by default (src/thinking_defaults.py)
+                from src.thinking_defaults import turn_default
+                thinking_mode = turn_default(session, str(form_data.get("mode", "")), session_mode)
             if thinking_mode is None and session_mode in {"on", "off"}:
                 thinking_mode = session_mode
             from src.model_profiles import supports_user_thinking_toggle
