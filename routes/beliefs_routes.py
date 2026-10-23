@@ -18,6 +18,13 @@
   (``belief_forget.dismiss``): rejected here, ``retire_fact`` in the module (the
   transcript keeps its words). Answers ``{"belief", "propagated": {"retired", "failed",
   "unsupported"}}``; Restore brings it back. 409 on an erased belief.
+* ``POST /api/beliefs/{id}/move`` {subject_id? | name?, fix_line=true}: the belief is
+  about someone else (``src/belief_move.py``): it moves to that subject (``name``: one
+  with that name, else a new person) and is confirmed by the owner; with ``fix_line``
+  odysseus-sound gives the line that said it to that person (``reassign_line``) when the
+  old subject said it. Answers the belief plus ``lines`` (``{"reassigned", "kept",
+  "not_found", "failed", "unsupported"}`` or null). 400 with no target, 404 for an
+  unknown belief or subject, 409 on an erased belief.
 * ``GET  /api/beliefs/export``: the owner's ledger and memories as one JSON download
   (``src/belief_export.py``).
 * ``POST /api/beliefs/run``: the facts job for this owner now (one module call, at most
@@ -70,6 +77,12 @@ DEFAULT_STATUSES = ("tentative", "confirmed", "stale")
 
 class Correction(BaseModel):
     text: str = ""
+
+
+class Move(BaseModel):
+    subject_id: int | None = None
+    name: str = ""
+    fix_line: bool = True
 
 
 class Forget(BaseModel):
@@ -321,6 +334,19 @@ def setup_beliefs_routes() -> APIRouter:
         _found(ledger.get_belief, owner, belief_id)  # 404 before 400
         try:
             return _found(ledger.correct, owner, belief_id, body.text)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+
+    @router.post("/api/beliefs/{belief_id:int}/move", dependencies=admin)
+    async def move_one(request: Request, belief_id: int, body: Move) -> dict[str, Any]:
+        from src import belief_move
+
+        try:
+            return await _found_async(belief_move.move(
+                _owner(request), belief_id, subject_id=body.subject_id, name=body.name,
+                fix_line=body.fix_line, call=module_caller() if body.fix_line else None))
+        except ledger.SubjectNotFound as e:
+            raise HTTPException(404, "subject not found") from e
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
 
