@@ -78,6 +78,15 @@ _Last updated: 2026-10-22_
    belief ledger through Notes Evidence. Plan, model options and open questions:
    [handwritten-notes.md](handwritten-notes.md).
 
+10. **Auto/Ask choice syncs across devices** (planned, not built). The message box's
+    Auto/Ask button (SDarioosh/odysseus-expanded#76) keeps each chat's choice in the
+    browser and in server memory only, so the same chat opened on another device (Mac,
+    phone) starts on the default until clicked, and a server restart forgets it until
+    the next message. Next: store the choice with the chat (the session record) so it
+    follows the chat everywhere; the button reads it when a chat opens. Needs a small
+    hook in upstream's session storage, or a fork table keyed by session id
+    (`src/auto_mode.py`).
+
 ## Personal context system
 
 The phased plan for taking in the owner's data, confirming beliefs and using them (Today insight first) is in [personal-context.md](personal-context.md).
