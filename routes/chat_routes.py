@@ -3587,6 +3587,9 @@ def setup_chat_routes(
         # Fork: read-only actions of the personal-store tools on every turn (src/personal_read_grants.py)
         from src.personal_read_grants import with_personal_store_reads
         _request_authority = with_personal_store_reads(_request_authority)
+        # Fork: the calculator on every turn while auto mode is on (src/auto_mode.py)
+        from src.auto_mode import with_calculator_grant
+        _request_authority = with_calculator_grant(_request_authority)
         if exact_tool_approval is not None:
             from src.agent_runtime.authority import RequestAuthority
             _request_authority = (
@@ -3732,6 +3735,9 @@ def setup_chat_routes(
             # Fork: a slash-invoked skill pins its requires_toolsets for this message (src/skill_invocation.py)
             from src.skill_invocation import pin_skill_contract
             _turn_contract = pin_skill_contract(_turn_contract, message=message, owner=_user, schemas=_contract_schemas, policy=_contract_policy)
+            # Fork: offer the calculator next to the turn's tools in auto mode (src/auto_mode.py)
+            from src.auto_mode import with_calculator_offer
+            _turn_contract = with_calculator_offer(_turn_contract)
             _request_authority = _request_authority.restrict(_contract_policy)
             # Resolution already applies user, owner, and global policy. An
             # admitted tool must not later be rejected by the stale
