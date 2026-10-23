@@ -90,3 +90,47 @@ def test_failed_recovery_keeps_upstream_behaviour(monkeypatch):
     events, calls = _run(monkeypatch, THINKING_ONLY, answer=RuntimeError("down"))
     assert len(calls) == 1
     assert not [e for e in events if e.get("fallback") == "thinking_only_recovery"]
+
+
+def _sent_thinking_modes(monkeypatch, **loop_kwargs):
+    """The thinking_mode each model request is sent with, after the route's per-model kwargs."""
+    _patch_common(monkeypatch)
+    sent = []
+
+    async def _no_compaction(*args, **kwargs):
+        return args[3], 0, False
+
+    async def _fake_stream(candidates, messages, **kwargs):
+        mode = kwargs.get("thinking_mode")
+        factory = kwargs.get("candidate_request_factory")
+        if factory is not None:
+            url, model, headers = candidates[0]
+            request = factory(0, url, model, headers)
+            if hasattr(request, "__await__"):
+                request = await request
+            mode = {**kwargs, **((request or {}).get("kwargs") or {})}.get("thinking_mode")
+        sent.append(mode)
+        yield "data: " + json.dumps({"delta": "Open Settings."}) + "\n\n"
+        yield "data: [DONE]\n\n"
+
+    monkeypatch.setattr(al, "maybe_compact", _no_compaction, raising=False)
+    monkeypatch.setattr(al, "stream_llm_with_fallback", _fake_stream, raising=False)
+    _collect(al.stream_agent_loop(
+        "http://x/v1", "qwen3.6-35b",
+        [{"role": "user", "content": QUESTION}],
+        max_rounds=5,
+        owner="admin",
+        **loop_kwargs,
+    ))
+    return sent
+
+
+def test_thinking_off_reaches_the_primary_model(monkeypatch):
+    # Agent mode dropped "Thinking: Off": the primary model's request kwargs
+    # carried thinking_mode=None, so llama-server never got enable_thinking=false
+    # and Qwen3.6 thought anyway.
+    assert _sent_thinking_modes(monkeypatch, thinking_mode="off") == ["off"]
+
+
+def test_thinking_on_reaches_the_primary_model(monkeypatch):
+    assert _sent_thinking_modes(monkeypatch, thinking_mode="on") == ["on"]

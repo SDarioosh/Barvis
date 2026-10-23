@@ -26020,6 +26020,8 @@ async def stream_agent_loop(
                 if round_num == 1
                 else _round_compaction_state
             ),
+            # Fork: keep the turn's thinking switch for the primary model (tests/test_empty_reply_recovery.py)
+            "thinking_mode": _route_state.get("thinking_mode"),
         }
         if round_num == 1 and not _approved_result_injected:
             _active_route_state["request_messages"] = _initial_route_request_messages
