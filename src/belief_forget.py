@@ -20,7 +20,12 @@ Not touched: the owner's chats (they may quote it) and sources the owner writes
 (notes): the answer lists where the words still are (``remaining``) so the owner can
 edit them. Erasing can't be undone; an erased belief can't be restored.
 
-Docs: ``docs/fork/beliefs.md#complete-forget-42``.
+Dismiss (:func:`dismiss`) is the lighter choice for a belief that is not worth keeping
+but was really said (e.g. "was focused today"): rejected here and ``retire_fact`` in the
+module, so it leaves memory and is not offered again, but nothing is erased and it can be
+restored.
+
+Docs: ``docs/fork/beliefs.md#complete-forget-42``, ``docs/fork/beliefs.md#dismiss``.
 """
 
 from __future__ import annotations
@@ -189,6 +194,31 @@ async def forget(owner: str | None, belief_id: int, reason: str = "", *,
     return {"belief": result["belief"], "propagated": counts,
             "erased": {"memory": memory, "insights": insights,
                        "remaining": result["remaining"], "pending": result["pending"]}}
+
+
+async def dismiss(owner: str | None, belief_id: int, reason: str = "", *,
+                  call: mf.CallTool | None = None, timeout: float = MODULE_TIMEOUT
+                  ) -> dict[str, Any]:
+    """Dismiss a belief: rejected here (out of memory, later repeats stay rejected) and
+    each odysseus-sound fact behind it retired there (``retire_fact``: hidden, its
+    transcript words kept). Nothing is erased; Restore brings it back. Never fails because
+    of the module. Raises ``BeliefNotFound``, ``BeliefErased``. Returns ``{"belief",
+    "propagated": {"retired", "failed", "unsupported"}}``."""
+    belief = ledger.get_belief(owner, belief_id)
+    if belief.get("erased_at"):
+        raise ledger.BeliefErased("this belief was erased; there is nothing to dismiss")
+    evidence = ledger.reject(owner, belief_id, reason)
+    ids = _fact_ids(evidence)
+    counts = {"retired": 0, "failed": 0, "unsupported": 0}
+    if ids and call is None:
+        counts["unsupported"] = len(ids)
+    elif ids:
+        try:
+            counts = await asyncio.wait_for(mf.propagate_forget(owner, evidence, call), timeout)
+        except Exception as e:  # noqa: BLE001 -- the dismissal stands; the page says so
+            logger.warning("belief %s dismissed; module not updated: %s", belief_id, e)
+            counts = {"retired": 0, "failed": len(ids), "unsupported": 0}
+    return {"belief": ledger.get_belief(owner, belief_id), "propagated": counts}
 
 
 async def retry_pending(owner: str | None, call: mf.CallTool) -> int:

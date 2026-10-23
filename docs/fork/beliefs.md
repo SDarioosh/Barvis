@@ -203,6 +203,7 @@ owner: another owner's belief id answers 404.
 | `POST /api/beliefs/{id}/correct` `{"text"}` | `correct`; 400 on empty text |
 | `POST /api/beliefs/{id}/restore` | `restore`: back to tentative, then the rule |
 | `POST /api/beliefs/{id}/forget` `{"reason"?}` | forget completely (`src/belief_forget.py`, [4.2](#complete-forget-42)): `reject`, `erase_fact` in the module, `erase` here, copies elsewhere in the hub; answers `{"belief", "propagated": {"erased", "retired", "failed", "unsupported"}, "erased": {"memory", "insights", "remaining", "pending"}}`. Also erases a belief rejected before 4.2. Confirm, correct and restore answer 409 on an erased belief |
+| `POST /api/beliefs/{id}/dismiss` `{"reason"?}` | [dismiss](#dismiss) (`belief_forget.dismiss`): `reject` here, `retire_fact` in the module, nothing erased; answers `{"belief", "propagated": {"retired", "failed", "unsupported"}}`. 409 on an erased belief |
 | `GET /api/beliefs/export` | the owner's ledger and memories as one JSON download ([Export](#export-42)) |
 | `GET /api/beliefs/subjects?kind=` | `{"subjects": [...], "stats"}` (`list_subjects`: counts per status, aliases, source person ids); `kind`: `person`, `project`, `thing` or `owner`; 400 for another kind |
 | `GET /api/beliefs/subjects/{id}` | `{"subject", "beliefs", "summary", "stats"}`: the subject, its beliefs of every status but rejected (with `attribute`, `value`, `valid_from`) and `subject_summary` |
@@ -237,10 +238,10 @@ transcript links). Gone evidence is marked "no longer reported".
 
 | Status | Buttons |
 |---|---|
-| tentative | Confirm, Edit, Forget |
-| confirmed | Edit, Forget |
-| stale | Confirm (restores and keeps it), Forget |
-| rejected | Restore, Erase (a belief forgotten before 4.2) |
+| tentative | Confirm, Edit, Dismiss, Forget |
+| confirmed | Edit, Dismiss, Forget |
+| stale | Confirm (restores and keeps it), Dismiss, Forget |
+| rejected | Restore, Erase (a dismissed belief, or one forgotten before 4.2); the chip reads "Dismissed" |
 | rejected, erased | none: the card reads "Erased" |
 
 Forget (and Erase) asks first: "Forget this for good? … This cannot be undone." The toast
@@ -293,6 +294,25 @@ makes no module call.
 the ledger holds and answers `No fact #N.` That is a normal answer, not an error, so
 `propagate_forget` counts it as `retired`: the fact is gone from the module anyway.
 `Fact #N was already retired.` counts the same way.
+
+### Dismiss
+
+The owner decided (2026-10-23) that Forget, which erases the transcript lines too, is too
+strong for a belief that is only not worth keeping: something really said but true for a
+day ("Shahyah was very focused today"). **Dismiss** handles those, with no confirmation
+prompt because it can be undone:
+
+1. `reject` here: rejected, out of memory at once, and later evidence for it stays rejected.
+2. `propagate_forget` ([1.4](#forgetting-propagates-14)): `retire_fact` for each
+   odysseus-sound fact behind it, so the module stops reporting it and a repeat linked
+   "same" doesn't come back as a new fact. The transcript, summary and links keep their
+   words. Module calls share the page's 30 s timeout.
+
+Nothing is erased. The belief shows on the Rejected tab ("Dismissed"), where Restore
+brings it back as tentative and Erase forgets it completely. A module that is down or
+lacks `retire_fact` is counted (`failed`, `unsupported`) and not retried: the fact may be
+reported again, but it attaches to the rejected belief and stays out of memory. Code:
+`dismiss` in `src/belief_forget.py`; tests in `tests/test_beliefs_routes.py`.
 
 ## Subjects and contacts (2.1)
 

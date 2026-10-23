@@ -1,11 +1,12 @@
 // Fork: the belief review page, "What I know about you" — the belief ledger
 // (src/evidence_intake.py) by status or by subject, each belief with its sources and
-// links, and the owner's buttons: confirm, edit (correct), forget, restore. Subjects
+// links, and the owner's buttons: confirm, edit (correct), dismiss, forget, restore. Subjects
 // (the owner, people, projects, things) can be renamed, given a kind, linked to an
 // Odysseus contact and merged; a subject opens to its summary and its beliefs grouped
 // by attribute. Data: routes/beliefs_routes.py. Forget erases the belief for good
 // (src/belief_forget.py): odysseus-sound erases the facts behind it, the toast says what
-// the module did and where the words still are (a note). Download: GET
+// the module did and where the words still are (a note). Dismiss only rejects it (the
+// module retires the facts, transcripts keep their words; Restore undoes it). Download: GET
 // /api/beliefs/export. The search
 // box uses GET /api/beliefs/search (routes/belief_search_routes.py) and falls back to a
 // plain text match when that route isn't installed (404).
@@ -23,7 +24,7 @@ const EMPTY = {
   tentative: 'Nothing tentative. Beliefs arrive from your recorded conversations and, when enabled, your notes.',
   confirmed: 'Nothing confirmed yet. Confirm a tentative belief here, or it confirms itself once it is heard often enough.',
   stale: 'Nothing stale. A belief goes stale when no source reports it any more or it has not been heard for a long time.',
-  rejected: 'Nothing forgotten.',
+  rejected: 'Nothing dismissed or forgotten.',
 };
 
 const CONFIRMED_BY = {
@@ -60,6 +61,8 @@ const ICONS = {
   edit: svg('<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>'),
   forget: svg('<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>' +
               '<path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>'),
+  dismiss: svg('<circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/>' +
+               '<line x1="9" y1="9" x2="15" y2="15"/>'),
   restore: svg('<polyline points="1 4 1 10 7 10"/><path d="M3.5 15a9 9 0 1 0 2.1-9.4L1 10"/>'),
   link: svg('<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>' +
             '<polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>'),
@@ -250,7 +253,7 @@ function statusChip(b) {
       CONFIRMED_BY[b.confirmed_by] || 'Confirmed');
   }
   if (b.erased_at) return el('span', { className: 'bs-chip rejected' }, 'Erased');
-  const label = { tentative: 'Tentative', stale: 'Stale', rejected: 'Forgotten' }[b.status];
+  const label = { tentative: 'Tentative', stale: 'Stale', rejected: 'Dismissed' }[b.status];
   return el('span', { className: `bs-chip ${b.status}` }, label || b.status);
 }
 
@@ -339,6 +342,26 @@ function forget(b, card) {
   });
 }
 
+function dismissMessage(r) {
+  const p = r.propagated || {};
+  const retired = p.retired || 0;
+  const missed = (p.failed || 0) + (p.unsupported || 0);
+  const parts = ['Dismissed: out of memory, transcripts untouched. Restore it from the Rejected tab.'];
+  if (retired) parts.push(`odysseus-sound won't offer ${retired === 1 ? 'it' : 'them'} again.`);
+  if (missed) {
+    parts.push(`odysseus-sound could not be reached for ${plural(missed, 'fact')}; ` +
+               'if it comes back it stays dismissed.');
+  }
+  return [parts.join(' '), missed > 0];
+}
+
+function dismiss(b, card) {
+  act(card, `/api/beliefs/${b.id}/dismiss`, {}, (r) => {
+    const [text, warn] = dismissMessage(r);
+    toast(text, warn);
+  });
+}
+
 function editMode(b, card, textNode) {
   const input = el('input', { type: 'text', className: 'bs-filter', value: b.shown_text,
                               'aria-label': 'Corrected text', maxlength: '500' });
@@ -368,15 +391,18 @@ function actions(b, card, textNode) {
   const confirm = (label) => button('confirm', label,
     () => act(card, `/api/beliefs/${b.id}/confirm`, {}, () => toast('Confirmed; it is in memory now.')));
   const edit = () => button('edit', 'Edit', () => editMode(b, card, textNode));
-  const forgetBtn = () => button('forget', 'Forget', () => forget(b, card));
-  if (b.status === 'tentative') row.append(confirm('Confirm'), edit(), forgetBtn());
-  else if (b.status === 'confirmed') row.append(edit(), forgetBtn());
+  const forgetBtn = () => button('forget', 'Forget', () => forget(b, card),
+    'Erase it everywhere, including the transcript lines that said it (cannot be undone)');
+  const dismissBtn = () => button('dismiss', 'Dismiss', () => dismiss(b, card),
+    'Not worth remembering: out of memory, transcripts untouched (can be restored)');
+  if (b.status === 'tentative') row.append(confirm('Confirm'), edit(), dismissBtn(), forgetBtn());
+  else if (b.status === 'confirmed') row.append(edit(), dismissBtn(), forgetBtn());
   else if (b.status === 'stale') {
     row.append(button('confirm', 'Confirm',
       () => act(card, `/api/beliefs/${b.id}/confirm`, {}, () => toast('Restored and confirmed.')),
-      'Restore and keep it for good'), forgetBtn());
+      'Restore and keep it for good'), dismissBtn(), forgetBtn());
   } else if (b.status === 'rejected' && !b.erased_at) {
-    // forgotten before erasing existed: it can still be restored, or erased now
+    // dismissed (or forgotten before erasing existed): it can be restored, or erased now
     row.append(button('restore', 'Restore',
       () => act(card, `/api/beliefs/${b.id}/restore`, {}, () => toast('Restored as tentative.')),
       'Back to tentative; it is confirmed again once it is heard often enough'),

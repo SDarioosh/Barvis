@@ -14,6 +14,10 @@
   "unsupported"}, "erased": {"memory", "insights", "remaining", "pending"}}``. Never fails
   because the module is down: the module side is retried by the facts job. Also erases a
   belief rejected before 4.2. Confirm, correct and restore answer 409 on an erased belief.
+* ``POST /api/beliefs/{id}/dismiss`` {reason?}: not worth keeping, nothing erased
+  (``belief_forget.dismiss``): rejected here, ``retire_fact`` in the module (the
+  transcript keeps its words). Answers ``{"belief", "propagated": {"retired", "failed",
+  "unsupported"}}``; Restore brings it back. 409 on an erased belief.
 * ``GET  /api/beliefs/export``: the owner's ledger and memories as one JSON download
   (``src/belief_export.py``).
 * ``POST /api/beliefs/run``: the facts job for this owner now (one module call, at most
@@ -149,11 +153,23 @@ async def forget(owner: str, belief_id: int, reason: str = "") -> dict[str, Any]
                              timeout=FORGET_TIMEOUT))
 
 
+async def dismiss(owner: str, belief_id: int, reason: str = "") -> dict[str, Any]:
+    """Dismiss (``src/belief_forget.py``): rejected here, the facts behind it retired in
+    the module; nothing erased."""
+    from src import belief_forget
+
+    return await _found_async(
+        belief_forget.dismiss(owner, belief_id, reason, call=module_caller(),
+                              timeout=FORGET_TIMEOUT))
+
+
 async def _found_async(coro):
     try:
         return await coro
     except ledger.BeliefNotFound as e:
         raise HTTPException(404, "belief not found") from e
+    except ledger.BeliefErased as e:
+        raise HTTPException(409, str(e)) from e
 
 
 async def run_facts(owner: str) -> JSONResponse:
@@ -312,5 +328,10 @@ def setup_beliefs_routes() -> APIRouter:
     async def forget_one(request: Request, belief_id: int,
                          body: Forget | None = None) -> dict[str, Any]:
         return await forget(_owner(request), belief_id, (body.reason if body else ""))
+
+    @router.post("/api/beliefs/{belief_id:int}/dismiss", dependencies=admin)
+    async def dismiss_one(request: Request, belief_id: int,
+                          body: Forget | None = None) -> dict[str, Any]:
+        return await dismiss(_owner(request), belief_id, (body.reason if body else ""))
 
     return router
