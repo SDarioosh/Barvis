@@ -91,6 +91,8 @@ _Last updated: 2026-10-22_
 
 The phased plan for taking in the owner's data, confirming beliefs and using them (Today insight first) is in [personal-context.md](personal-context.md).
 
+Proposed (not decided): move the belief ledger and the Today insight into their own module, `odysseus-context`, so upstream syncs can't break them and a future front end only needs new pages: [context-module.md](context-module.md).
+
 ## Future modules (placeholders)
 
 No repos exist yet. Each would follow [modules.md](modules.md).
