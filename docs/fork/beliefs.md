@@ -13,11 +13,11 @@ Code: `src/evidence_intake.py` (the ledger), `src/module_facts.py` (its first so
 `tests/test_notes_evidence.py`, `tests/test_subjects.py` and
 `tests/test_belief_structure.py`.
 
-Phase 0 copied odysseus-sound's confirmed facts straight into Odysseus memory. Now a
+Phase 0 copied Athena's confirmed facts straight into Odysseus memory. Now a
 **belief ledger** sits between the sources and memory:
 
 ```
-source (odysseus-sound, notes, chat …) ── Evidence ──▶ ledger (beliefs.db) ── confirmed ──▶ Odysseus memory
+source (Athena, notes, chat …) ── Evidence ──▶ ledger (beliefs.db) ── confirmed ──▶ Odysseus memory
                                                         ▲
                                     owner: confirm / correct / forget / restore
 ```
@@ -63,7 +63,7 @@ only (a full index there, almost all NULLs, was replaced on open), and
 `confirmation_for(belief, evidence_rows, settings)` counts only **live** evidence (not
 gone). A belief is confirmed when:
 
-1. **(a)** any evidence has `source_confirmed`: the source's own threshold (odysseus-sound:
+1. **(a)** any evidence has `source_confirmed`: the source's own threshold (Athena:
    said in ≥ 3 conversations on ≥ 2 days), or
 2. **(b)** at least `BELIEF_CONFIRM_SOURCES` (2) distinct sources report it (a fact said in
    a conversation and written in a note confirms twice), or
@@ -181,7 +181,7 @@ Since 4.2 the review page's Forget erases ([Complete forget](#complete-forget-42
 
 `src.module_facts.propagate_forget(owner, belief_or_evidence, call=None)` calls the
 module tool `retire_fact {"fact_id": <id>, "reason": "owner forgot it in Odysseus"}` for
-each odysseus-sound evidence of a forgotten belief, through the connected module MCP
+each Athena evidence of a forgotten belief, through the connected module MCP
 server (or `call`). It returns `{"retired", "failed", "unsupported"}`. A module without
 `retire_fact` is tolerated (logged once per owner); the fact then keeps coming back from
 the module, attaches to the rejected belief and stays out of memory. The review page
@@ -233,7 +233,7 @@ icon, a status chip with how it was confirmed (by its source, by the rule, by yo
 attribute and value when structured ("Lives in: Lisbon (since …)"), category, first and
 last seen
 ("not heard since" for stale ones), and one line per evidence: source name, times ×
-days, the dates and a link that opens in a new tab (odysseus-sound's are signed
+days, the dates and a link that opens in a new tab (Athena's are signed
 transcript links). Gone evidence is marked "no longer reported".
 
 | Status | Buttons |
@@ -248,7 +248,7 @@ Forget (and Erase) asks first: "Forget this for good? … This cannot be undone.
 says what the module did (erased, only hidden by an older module, not reached: retried
 hourly) and whether the words are still in a place the owner keeps (a note). An erased
 belief's evidence lines say per source "erased there", "hidden there; its words stay
-until odysseus-sound is updated", "not erased there yet (retried hourly)" or "still written
+until Athena is updated", "not erased there yet (retried hourly)" or "still written
 there: edit it yourself". **Download** (top right) saves the [export](#export-42).
 
 Edit is an inline text field (Save / Cancel; Enter / Escape) that calls `correct`.
@@ -282,12 +282,12 @@ structured value) and says so.
 
 **What Forget does.** After a confirmation prompt, the belief is rejected here first
 (out of memory at once, and it stays rejected whatever arrives later). Then each
-odysseus-sound fact behind it is retired in the module with `retire_fact`. The toast
+Athena fact behind it is retired in the module with `retire_fact`. The toast
 reports the `propagated` counts: "Forgotten; the module retired 1 fact", or "Forgotten
 here; the module could not be reached or cannot retire facts yet" (`unsupported`: the
 module isn't connected or lacks `retire_fact`), or "could not retire it" (`failed`: the
 call failed, timed out after 30 s, or raised). Forgetting never fails because of the
-module: the local rejection always stands. A belief with no odysseus-sound evidence
+module: the local rejection always stands. A belief with no Athena evidence
 makes no module call.
 
 **The "No fact" case.** After a re-summary the module may no longer know the fact id
@@ -304,7 +304,7 @@ prompt because it can be undone:
 
 1. `reject` here: rejected, out of memory at once, and later evidence for it stays rejected.
 2. `propagate_forget` ([1.4](#forgetting-propagates-14)): `retire_fact` for each
-   odysseus-sound fact behind it, so the module stops reporting it and a repeat linked
+   Athena fact behind it, so the module stops reporting it and a repeat linked
    "same" doesn't come back as a new fact. The transcript, summary and links keep their
    words. Module calls share the page's 30 s timeout.
 
@@ -329,7 +329,7 @@ person, or types a new name, and has two steps:
    re-attributes to that same subject (new subject and words, same fact id) stays with
    the moved belief instead of splitting off as a new one.
 2. With "They said it" ticked (the default when a conversation is behind it),
-   `src/belief_move.py` fixes the line in odysseus-sound: `get_transcript` reads the line
+   `src/belief_move.py` fixes the line in Athena: `get_transcript` reads the line
    at each link's `#t=` second and, when the old subject said it, `reassign_line` gives
    it to the new person (under the name the module knows them by), so the module
    re-summarizes that conversation. A line someone else said is left alone: the fact was
@@ -374,7 +374,7 @@ belief's `subject` column keeps the source's name; `subject_id` is the subject.
 columns on first open, and every belief is filed under a subject from its `subject` and
 `about` (steps 1, 3, 4 above). Lossless: no text, status or evidence changes.
 
-**People from odysseus-sound.** The facts job calls `list_people {"format": "json"}`
+**People from Athena.** The facts job calls `list_people {"format": "json"}`
 (`{"people": [{"id", "name", "aliases", "is_owner", …}]}` or a bare list) and
 `sync_people(owner, "odysseus-sound", people)`:
 
@@ -609,7 +609,7 @@ Lines that don't fit `max_chars` are skipped; "" when nothing matches.
   never with words about what was said or happened (said, told, asked, mentioned,
   promised, recommended, latest, a meeting, a conversation, a voice note, a month or
   weekday, last week …): those questions must reach the module's tools, so none of
-  odysseus-sound's 21 bakeoff questions gets the block (tested). "What is <person>
+  Athena's 21 bakeoff questions gets the block (tested). "What is <person>
   allergic to?" is such a bakeoff question and is left to the module; the yes/no form
   ("Is Priya allergic to nuts?") and "allergies" get the block. Without a ledger file the
   gate returns at once and creates nothing.
@@ -639,7 +639,7 @@ Lines that don't fit `max_chars` are skipped; "" when nothing matches.
   `belief_id`, `owner`, `subject`, `about`, `link`, `first_seen`, `last_seen`,
   `synced_at`, `subject_id`, `subject_kind` (`owner`, `person`, `project`, `thing`), and
   `contact_id` while the subject is linked to a contact (removed when unlinked). The text
-  doesn't change; a subject change updates the entry in place. A belief with odysseus-sound evidence also keeps the Phase 0 fields
+  doesn't change; a subject change updates the entry in place. A belief with Athena evidence also keeps the Phase 0 fields
   `module_fact_id`, `times_said`, `days`, `first_said`, `last_said`.
 - Updated in place (memory id and `uses` kept); copies of beliefs that are no longer
   confirmed, duplicates and copies of unknown beliefs are deleted; nothing is written
@@ -673,8 +673,8 @@ nothing is erased automatically.
 | Step | Where | What |
 |---|---|---|
 | 1 | ledger | `reject`: rejected, out of memory at once (the mirrored entry and its vector) |
-| 2 | odysseus-sound | `erase_fact {"fact_id", "reason"}` per fact behind it (MCP 0.10.0): the transcript line that said it reads `[forgotten]` in every conversation that said it, the notes and digests are hidden and rewritten by the module's local model without it, search and embeddings are redone, kept audio of the line is deleted, later repeats linked "same" are erased too. A module without `erase_fact` gets `retire_fact` (the fact is hidden there, its words stay). "No fact #N." counts as done (re-summarized ids). Module calls share one timeout (30 s on the page) |
-| 3 | ledger | `erase`: `text`, `owner_text`, `note`, `subject`, `attribute`, `value`, `valid_from` cleared, `subject_id` null; `norm` and `owner_norm` become `erased:<sha256>`; every evidence row keeps no `text` and `subject`, and no `link` unless its source still holds the words (not odysseus-sound); `payload` is `{"erase": state}`; event details are cleared and an `erased` event added; the `belief_vectors` row is deleted. The write runs with `secure_delete` and the WAL is checkpointed after it, so the words leave `beliefs.db` and its `-wal` file |
+| 2 | Athena | `erase_fact {"fact_id", "reason"}` per fact behind it (MCP 0.10.0): the transcript line that said it reads `[forgotten]` in every conversation that said it, the notes and digests are hidden and rewritten by the module's local model without it, search and embeddings are redone, kept audio of the line is deleted, later repeats linked "same" are erased too. A module without `erase_fact` gets `retire_fact` (the fact is hidden there, its words stay). "No fact #N." counts as done (re-summarized ids). Module calls share one timeout (30 s on the page) |
+| 3 | ledger | `erase`: `text`, `owner_text`, `note`, `subject`, `attribute`, `value`, `valid_from` cleared, `subject_id` null; `norm` and `owner_norm` become `erased:<sha256>`; every evidence row keeps no `text` and `subject`, and no `link` unless its source still holds the words (not Athena); `payload` is `{"erase": state}`; event details are cleared and an `erased` event added; the `belief_vectors` row is deleted. The write runs with `secure_delete` and the WAL is checkpointed after it, so the words leave `beliefs.db` and its `-wal` file |
 | 4 | memory | other memory entries of the owner with exactly its words (lowercased, punctuation and a `(source: …)` suffix dropped): a chat-extracted memory, a copy the owner made. Never fuzzy, never another owner's. Their vectors go too |
 | 5 | Today insight | stored insight files (`today_insight/<owner>/*.json`) drop items with ref `belief:<id>`, and any reason or headline that quotes its words. Today's insight is rebuilt on its own (its inputs changed) |
 
@@ -774,7 +774,7 @@ one week and "… on long flight" the next under two fact ids, or two notes sayi
   the pass plans 0 merges: 0.1 s for `medium` (3000 beliefs), 0.4 s for `large`
   (10 000).
 
-## The odysseus-sound facts job
+## The Athena facts job
 
 The built-in task **Module Facts** (hourly, silent) now calls `list_facts {"format":
 "json", "limit": 1000}` (every current fact, not only confirmed ones) and submits each as
@@ -797,7 +797,7 @@ is not logged in Activity.
 
 | Source | `source` | Task | Setting | Default |
 |---|---|---|---|---|
-| odysseus-sound facts | `odysseus-sound` | Module Facts (hourly) | `MODULE_FACTS_SYNC` | on |
+| Athena facts | `odysseus-sound` | Module Facts (hourly) | `MODULE_FACTS_SYNC` | on |
 | The owner's notes | `notes` | Notes Evidence (daily, 03:00) | `EVIDENCE_NOTES` | off |
 
 ### Notes (1.2)
@@ -904,7 +904,7 @@ venv/bin/python scripts/belief_eval.py --data-dir /tmp/belief-eval --keep
   `ODYSSEUS_DATA_DIR=/tmp/belief-eval`.
 
 `--chat` (optional, not scored, the only non-deterministic part) then asks a running
-Odysseus "What do you know about Priya Nair?" with odysseus-sound's bakeoff client, and
+Odysseus "What do you know about Priya Nair?" with Athena's bakeoff client, and
 prints whether the answer has each expected fact (peanut allergy, the corrected
 birthday, the design review) and its link, and whether it still gives the old birthday.
 Dates match in either order and any case ("21 May", "21st of May", "May 21st",

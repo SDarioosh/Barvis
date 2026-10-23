@@ -6,7 +6,7 @@ Two parts:
 
 * **Upstream's tidy leaves sourced memories alone.** A memory entry that mirrors a
   belief (``belief_id``) or is a Phase 0 copy of a module fact (``module_fact_id`` from
-  odysseus-sound) carries provenance: a source, an id and a link that the ledger keeps
+  Athena) carries provenance: a source, an id and a link that the ledger keeps
   in step. Upstream's Memory Tidy task and its memory audit (the Tidy button, and the
   automatic audit after chat extraction) know only text: they could merge such an entry
   with an unrelated memory, rewrite it without its link, or delete it, and the next
@@ -62,7 +62,7 @@ _WORD = re.compile(r"[a-z0-9]+")
 # ------------------------------------------------------------- upstream's tidy
 def is_sourced(entry: Mapping) -> bool:
     """Whether a memory entry carries provenance the ledger keeps: a mirrored belief
-    (``belief_id``) or a Phase 0 copy of an odysseus-sound fact (``module_fact_id``)."""
+    (``belief_id``) or a Phase 0 copy of an Athena fact (``module_fact_id``)."""
     if not isinstance(entry, Mapping):
         return False
     if entry.get("belief_id") is not None:

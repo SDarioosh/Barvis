@@ -1,6 +1,6 @@
-"""Fork: odysseus-sound's facts as evidence for the belief ledger, and so into memory.
+"""Fork: Athena's facts as evidence for the belief ledger, and so into memory.
 
-A built-in scheduled task ("Module Facts", hourly) reads every current fact odysseus-sound
+A built-in scheduled task ("Module Facts", hourly) reads every current fact Athena
 holds (``list_facts {"format": "json", "limit": 1000}``) through the module's MCP server
 and submits each one to the belief ledger (``src/evidence_intake.py``) as evidence from
 source ``odysseus-sound`` with the module fact id as source id. The ledger decides what is
@@ -27,7 +27,7 @@ that answers ``list_people`` with text, or has no such tool, is tolerated (logge
 facts then match subjects by name.
 
 :func:`propagate_forget` carries the owner's "forget" back to the module: it calls the
-module's ``retire_fact`` for each odysseus-sound fact behind a rejected belief, so the
+module's ``retire_fact`` for each Athena fact behind a rejected belief, so the
 fact is not submitted again (an older module without the tool is tolerated; the ledger
 keeps the belief rejected either way).
 
@@ -74,7 +74,7 @@ HOUSEKEEPING_DEFAULT = {
     ACTION: {"name": TASK_NAME, "schedule": "cron", "scheduled_time": None,
              "cron_expression": "0 * * * *"},
 }
-INFO = ("Feed odysseus-sound's facts into the belief ledger as evidence (with their "
+INFO = ("Feed Athena's facts into the belief ledger as evidence (with their "
         "transcript links) and keep Odysseus memory in step with the confirmed beliefs: "
         "new ones added, changed ones updated, retracted or expired ones removed. Reads "
         "them through the module's MCP tools.")
@@ -232,7 +232,7 @@ async def sync(owner: str | None, call: CallTool, *, now: datetime | None = None
         state = load_state(owner)
         if rows is None:
             if not state.get("text_only"):
-                logger.info("odysseus-sound answered list_facts with text; facts not synced "
+                logger.info("Athena answered list_facts with text; facts not synced "
                             "(update the module)")
                 state["text_only"] = True
                 save_state(owner, state)
@@ -242,7 +242,7 @@ async def sync(owner: str | None, call: CallTool, *, now: datetime | None = None
         stats = {"facts": len(rows)}
         if people is None:
             if not state.get("people_text_only"):
-                logger.info("odysseus-sound has no list_people JSON; facts match subjects "
+                logger.info("Athena has no list_people JSON; facts match subjects "
                             "by name (update the module)")
                 state["people_text_only"] = True
         else:
@@ -309,7 +309,7 @@ async def action_sync_facts(owner: str, **kwargs) -> tuple[str, bool]:
     except RuntimeError as e:  # a failed tool call, or MemoryStoreUnreadable
         return f"Facts sync failed: {e}", False
     if stats is None:
-        raise TaskNoop("odysseus-sound answered list_facts with text; nothing synced")
+        raise TaskNoop("Athena answered list_facts with text; nothing synced")
     if not changed(stats):
         raise TaskNoop(summary(stats))
     return summary(stats), True
@@ -327,7 +327,7 @@ async def propagate_forget(owner: str | None, belief: dict | Iterable[dict],
     """Retire the module facts behind a belief the owner forgot.
 
     ``belief`` is a belief dict (``evidence_intake.get_belief``) or its evidence list
-    (what ``evidence_intake.reject`` returns). For each odysseus-sound evidence it calls
+    (what ``evidence_intake.reject`` returns). For each Athena evidence it calls
     ``retire_fact {"fact_id": <id>, "reason": "owner forgot it in Odysseus"}`` through
     the module's MCP server (``call``, else the connected module server). A module
     without that tool is tolerated (logged once per owner). Returns counts: ``retired``,
@@ -373,7 +373,7 @@ async def _note_retire_support(owner: str | None, supported: bool) -> None:
                 save_state(owner, state)
             return
         if not state.get("no_retire_fact"):
-            logger.info("odysseus-sound has no retire_fact tool; a forgotten fact stays "
+            logger.info("Athena has no retire_fact tool; a forgotten fact stays "
                         "in the module (update the module). Odysseus keeps it rejected.")
             state["no_retire_fact"] = True
             save_state(owner, state)

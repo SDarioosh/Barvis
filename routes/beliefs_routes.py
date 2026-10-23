@@ -8,7 +8,7 @@
 * ``POST /api/beliefs/{id}/confirm``, ``POST /api/beliefs/{id}/restore``.
 * ``POST /api/beliefs/{id}/correct`` {text}: 400 on empty text.
 * ``POST /api/beliefs/{id}/forget`` {reason?}: forgotten completely
-  (``src/belief_forget.py``, stage 4.2): rejected and erased here, the odysseus-sound
+  (``src/belief_forget.py``, stage 4.2): rejected and erased here, the Athena
   facts behind it erased in the module (``erase_fact``; ``retire_fact`` on an older
   module). Answers ``{"belief", "propagated": {"erased", "retired", "failed",
   "unsupported"}, "erased": {"memory", "insights", "remaining", "pending"}}``. Never fails
@@ -21,7 +21,7 @@
 * ``POST /api/beliefs/{id}/move`` {subject_id? | name?, fix_line=true}: the belief is
   about someone else (``src/belief_move.py``): it moves to that subject (``name``: one
   with that name, else a new person) and is confirmed by the owner; with ``fix_line``
-  odysseus-sound gives the line that said it to that person (``reassign_line``) when the
+  Athena gives the line that said it to that person (``reassign_line``) when the
   old subject said it. Answers the belief plus ``lines`` (``{"reassigned", "kept",
   "not_found", "failed", "unsupported"}`` or null). 400 with no target, 404 for an
   unknown belief or subject, 409 on an erased belief.
@@ -147,7 +147,7 @@ async def owner_contacts(owner: str) -> list[dict]:
 
 
 def module_caller() -> mf.CallTool | None:
-    """A ``list_facts``/``retire_fact`` caller for the connected odysseus-sound MCP
+    """A ``list_facts``/``retire_fact`` caller for the connected Athena MCP
     server, or None when it isn't connected."""
     from src.tool_utils import get_mcp_manager
 
@@ -191,17 +191,17 @@ async def run_facts(owner: str) -> JSONResponse:
     call = module_caller()
     if call is None:
         return JSONResponse(status_code=503, content={
-            "error": f"The odysseus-sound MCP server ({mf.server_key()!r}) is not connected."})
+            "error": f"The Athena MCP server ({mf.server_key()!r}) is not connected."})
     try:
         stats = await asyncio.wait_for(mf.sync(owner, call), RUN_TIMEOUT)
     except asyncio.TimeoutError:
         return JSONResponse(status_code=504, content={
-            "error": f"odysseus-sound didn't answer within {int(RUN_TIMEOUT)} s"})
+            "error": f"Athena didn't answer within {int(RUN_TIMEOUT)} s"})
     except RuntimeError as e:  # a failed tool call, or MemoryStoreUnreadable
         logger.warning("facts sync from the review page failed: %s", e)
         return JSONResponse(status_code=502, content={"error": f"Facts sync failed: {e}"})
     if stats is None:
-        return JSONResponse(content={"summary": "odysseus-sound answered with text; "
+        return JSONResponse(content={"summary": "Athena answered with text; "
                                                 "nothing synced (update the module)",
                                      "stats": None})
     return JSONResponse(content={"summary": mf.summary(stats), "stats": stats})
