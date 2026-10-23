@@ -2643,6 +2643,11 @@ def setup_chat_routes(
         # shell disabled).
         auto_escalated = False
         _tool_intent = _classify_tool_intent(message) if isinstance(message, str) else None
+        # Fork: chat-mode how/why questions are answered, not run (src/chat_mode_scope.py)
+        from src.chat_mode_scope import keep_chat_for_question
+        if chat_mode == "chat" and keep_chat_for_question(message, _tool_intent):
+            logger.info("chat stays chat: %s matched a how/why question", _tool_intent.reason)
+            _tool_intent = None
         # The opt-in trained-tools route owns its complete conversation loop.
         # Do not make each follow-up earn Agent mode again through the legacy
         # lexical intent classifier: that recreated the same per-turn RAG gate
