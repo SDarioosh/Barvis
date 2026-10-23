@@ -30,6 +30,7 @@ def off(monkeypatch):
 def run_ctx(user_text, *results, delegated=False):
     """A run where the owner wrote ``user_text`` and tools returned ``results``."""
     ctx = ToolRunSecurityContext(delegated_credential=delegated)
+    auto_mode.bind_run(ctx, owner="owner", session_id="chat-1")
     ctx.observe_messages([{"role": "user", "content": user_text}])
     for name, output in results:
         ctx.observe_tool_result(name, {"output": output, "exit_code": 0})
@@ -55,6 +56,7 @@ def test_off_keeps_upstream_behavior(off):
 
 def test_without_outside_content_nothing_changes(on):
     ctx = ToolRunSecurityContext()
+    auto_mode.bind_run(ctx, owner="owner", session_id="chat-1")
     assert allowed(ctx, "web_fetch", fetch("https://made-up.example/x"))  # upstream: gate not armed
 
 
@@ -123,6 +125,7 @@ def test_injected_page_cannot_make_the_model_send_data(on):
 
 def test_assistant_text_is_not_a_source_of_urls(on):
     ctx = ToolRunSecurityContext()
+    auto_mode.bind_run(ctx, owner="owner", session_id="chat-1")
     ctx.observe_messages([
         {"role": "user", "content": "hi"},
         {"role": "assistant", "content": "I will fetch https://made-up.example/x"},
@@ -133,6 +136,7 @@ def test_assistant_text_is_not_a_source_of_urls(on):
 
 def test_untrusted_message_urls_count_as_results_not_owner_urls(on):
     ctx = ToolRunSecurityContext()
+    auto_mode.bind_run(ctx, owner="owner", session_id="chat-1")
     ctx.observe_messages([
         {"role": "user", "content": "what does this email say?"},
         untrusted_context_message("email", "visit https://news.example.com/post and http://10.0.0.5/x"),
@@ -173,6 +177,7 @@ def test_token_driven_runs_never_get_auto_mode(on):
 def test_resumed_run_recovers_urls_from_history(on):
     """After an approval the run restarts; earlier tool results arrive as messages."""
     ctx = ToolRunSecurityContext()
+    auto_mode.bind_run(ctx, owner="owner", session_id="chat-1")
     ctx.observe_messages([
         {"role": "user", "content": "what is meshradio?"},
         {"role": "tool", "content": "hit https://meshradio.example.com/about"},
@@ -301,35 +306,98 @@ def make_app(monkeypatch, tmp_path, admin=True):
     return TestClient(app)
 
 
-def test_route_turns_auto_mode_on_and_off(monkeypatch, tmp_path):
+def test_route_sets_the_default_for_chats(monkeypatch, tmp_path):
     c = make_app(monkeypatch, tmp_path)
     try:
-        assert c.get("/api/fork/auto-mode").json() == {"enabled": False}  # default off
-        assert c.put("/api/fork/auto-mode", json={"enabled": True}).json() == {"enabled": True}
-        assert auto_mode.enabled() is True
-        saved = json.loads((tmp_path / "settings.json").read_text())
-        assert saved["fork_auto_mode"] is True
+        assert c.get("/api/fork/auto-mode").json() == {"enabled": True}  # default Auto
         assert c.put("/api/fork/auto-mode", json={"enabled": False}).json() == {"enabled": False}
         assert auto_mode.enabled() is False
+        saved = json.loads((tmp_path / "settings.json").read_text())
+        assert saved["fork_auto_mode_default"] is False
+        assert c.put("/api/fork/auto-mode", json={"enabled": True}).json() == {"enabled": True}
+        assert auto_mode.enabled() is True
         assert c.put("/api/fork/auto-mode", json={"enabled": "yes please"}).status_code == 422
     finally:
         settings._invalidate_caches()
 
 
-def test_route_is_admin_only(monkeypatch, tmp_path):
-    c = make_app(monkeypatch, tmp_path, admin=False)
+def test_old_global_switch_is_ignored(monkeypatch, tmp_path):
+    """The first version's ``fork_auto_mode: false`` must not turn new chats to Ask."""
+    (tmp_path / "settings.json").write_text(json.dumps({"fork_auto_mode": False}))
+    make_app(monkeypatch, tmp_path)
     try:
-        assert c.get("/api/fork/auto-mode").status_code in (401, 403)
-        assert c.put("/api/fork/auto-mode", json={"enabled": True}).status_code in (401, 403)
+        assert auto_mode.enabled() is True
     finally:
         settings._invalidate_caches()
 
 
-def test_settings_card_is_loaded():
+def test_only_admins_change_the_default(monkeypatch, tmp_path):
+    c = make_app(monkeypatch, tmp_path, admin=False)
+    try:
+        assert c.get("/api/fork/auto-mode").json() == {"enabled": True}  # the button reads it
+        assert c.put("/api/fork/auto-mode", json={"enabled": False}).status_code in (401, 403)
+    finally:
+        settings._invalidate_caches()
+
+
+# ── Per-chat choice ─────────────────────────────────────────────────────────
+
+@pytest.fixture
+def chats(monkeypatch):
+    monkeypatch.setattr(auto_mode, "_CHAT_MODES", {})
+    monkeypatch.setattr(auto_mode, "enabled", lambda: True)
+
+
+def test_chat_choice_overrides_the_default(chats):
+    assert auto_mode.chat_enabled("owner", "s1") is True  # no choice: default
+    auto_mode.remember_chat_mode("owner", "s1", "ask")
+    assert auto_mode.chat_enabled("owner", "s1") is False
+    assert auto_mode.chat_enabled("owner", "s2") is True  # other chats unchanged
+    assert auto_mode.chat_enabled("someone-else", "s1") is True  # keyed by user too
+    auto_mode.remember_chat_mode("owner", "s1", "AUTO")
+    assert auto_mode.chat_enabled("owner", "s1") is True
+    auto_mode.remember_chat_mode("owner", "s1", "maybe")  # ignored
+    auto_mode.remember_chat_mode("owner", "", "ask")       # ignored
+    assert auto_mode.chat_enabled("owner", "s1") is True
+
+
+def test_ask_chat_keeps_upstream_prompts(chats):
+    auto_mode.remember_chat_mode("owner", "s1", "ask")
+    ctx = run_ctx(f"read {REPO}", ("web_search", "x"))
+    auto_mode.bind_run(ctx, owner="owner", session_id="s1")
+    assert not allowed(ctx, "web_fetch", fetch(REPO))
+    assert not allowed(ctx, "manage_notes", '{"action": "list"}')
+    auto_ctx = run_ctx(f"read {REPO}", ("web_search", "x"))
+    auto_mode.bind_run(auto_ctx, owner="owner", session_id="s2")
+    assert allowed(auto_ctx, "web_fetch", fetch(REPO))
+
+
+def test_calculator_follows_the_chat(chats):
+    from src.agent_runtime.authority import create_request_authority
+
+    auto_mode.remember_chat_mode("owner", "s1", "ask")
+    authority = create_request_authority("what is 2+2", owner="owner", session_id="s1")
+    assert auto_mode.with_calculator_grant(authority, session_id="s1") is authority
+    granted = auto_mode.with_calculator_grant(authority, session_id="s2")
+    assert "calculate" in {g.tool for g in granted.grants}
+
+
+def test_chat_memory_is_bounded(chats, monkeypatch):
+    monkeypatch.setattr(auto_mode, "_MAX_CHATS", 3)
+    for i in range(5):
+        auto_mode.remember_chat_mode("owner", f"s{i}", "ask")
+    assert len(auto_mode._CHAT_MODES) == 3
+    assert auto_mode.chat_enabled("owner", "s0") is True  # oldest dropped: default again
+    assert auto_mode.chat_enabled("owner", "s4") is False
+
+
+def test_composer_button_and_card_are_loaded():
     html = (ROOT / "static/index.html").read_text()
     assert '<script type="module" src="/static/js/forkAutoMode.js"></script>' in html
     js = (ROOT / "static/js/forkAutoMode.js").read_text()
     assert "/api/fork/auto-mode" in js and "set-agentMaxTools" in js
+    assert "bash-toggle-btn" in js and f"'{auto_mode.CHAT_MODE_FIELD}'" in js
+    assert "/api/chat_stream" in js
 
 
 def test_url_extraction_keeps_balanced_parentheses():
@@ -377,3 +445,11 @@ def test_browser_interaction_asks_after_a_private_read(on):
     assert not allowed(ctx, "private_browser", browser("click"))
     assert not allowed(ctx, "private_browser", json.dumps({"action": "fill", "value": "x"}))
     assert allowed(ctx, "private_browser", browser("snapshot"))
+
+
+def test_unbound_runs_keep_upstream_rules(on):
+    """A security context no chat run was bound to never gets Auto."""
+    ctx = ToolRunSecurityContext(external_untrusted_context_seen=True)
+    ctx.observe_messages([{"role": "user", "content": f"read {REPO}"}])
+    assert not allowed(ctx, "web_fetch", fetch(REPO))
+    assert not allowed(ctx, "manage_memory", '{"action": "list"}')

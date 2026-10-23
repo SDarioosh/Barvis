@@ -21221,6 +21221,9 @@ async def stream_agent_loop(
         ),
         delegated_credential=bool(delegated_credential),
     )
+    # Fork: this chat's Auto/Ask choice for the approval gate (src/auto_mode.py)
+    from src.auto_mode import bind_run as _fork_bind_auto_mode
+    _fork_bind_auto_mode(run_security, owner=owner, session_id=session_id)
     _has_tui_host_bridge = _tui_host_bridge_is_usable(client_runtime_context)
     if (
         _has_tui_host_bridge
