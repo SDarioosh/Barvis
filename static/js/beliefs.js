@@ -386,6 +386,71 @@ function editMode(b, card, textNode) {
   input.select();
 }
 
+// What the module did with the line behind a moved belief (src/belief_move.py).
+function moveMessage(r, display) {
+  const l = r.lines;
+  const parts = [`Moved to ${display}; confirmed by you.`];
+  if (!l) return [parts.join(' '), false];
+  if (l.reassigned) {
+    parts.push(`odysseus-sound gave ${plural(l.reassigned, 'line')} to ${display} and ` +
+               'is redoing that conversation\'s summary.');
+  }
+  if (l.kept) parts.push(`${plural(l.kept, 'line')} left as is (someone else said it).`);
+  const missed = (l.failed || 0) + (l.unsupported || 0) + (l.not_found || 0);
+  if (missed) {
+    parts.push(`${plural(missed, 'line')} could not be fixed in odysseus-sound; ` +
+               'open the transcript and ask in chat to reassign it.');
+  }
+  return [parts.join(' '), missed > 0];
+}
+
+async function movePanel(b, card) {
+  const panel = togglePanel(card, 'move');
+  if (!panel) return;
+  panel.append(el('div', { className: 'bs-status' }, 'Loading subjects…'));
+  let all;
+  try {
+    const data = await api('/api/beliefs/subjects');
+    all = Array.isArray(data.subjects) ? data.subjects : [];
+  } catch (e) {
+    panel.replaceChildren(el('div', { className: 'bs-status error' },
+      `Couldn't load your subjects: ${e.message}`), closeButton(panel));
+    return;
+  }
+  const others = all.filter((o) => o.id !== b.subject_id && (o.kind === 'person' || o.kind === 'owner'));
+  const select = el('select', { className: 'bs-select', 'aria-label': 'Move to' },
+    el('option', { value: '' }, others.length ? 'Move to…' : 'No other people yet'),
+    ...others.map((o) => el('option', { value: String(o.id) }, o.display)));
+  const input = el('input', { type: 'text', className: 'bs-filter', placeholder: 'or a new name',
+                              'aria-label': 'New person', maxlength: '120' });
+  const fromSound = (b.evidence || []).some((e) => e.source === 'odysseus-sound' && e.link);
+  const fix = el('input', { type: 'checkbox', checked: true, id: `fix-${b.id}` });
+  const go = () => {
+    const name = input.value.trim();
+    const target = others.find((o) => String(o.id) === select.value);
+    if (!name && !target) {
+      toast('Pick a person or type a name.', true);
+      return;
+    }
+    const body = name ? { name } : { subject_id: target.id };
+    body.fix_line = fromSound && fix.checked;
+    act(card, `/api/beliefs/${b.id}/move`, body, (r) => {
+      const [text, warn] = moveMessage(r, r.subject_display || name || target.display);
+      toast(text, warn);
+    });
+  };
+  input.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') go();
+    if (ev.key === 'Escape') panel.remove();
+  });
+  panel.replaceChildren(
+    el('p', { className: 'bs-meta' }, 'Who is this really about? The belief moves there.'),
+    el('div', { className: 'bs-row' }, select, input, button('kind_person', 'Move', go), closeButton(panel)),
+    fromSound ? el('label', { className: 'bs-meta', for: `fix-${b.id}` }, fix,
+      ' They said it: give the line to them in the transcript too') : null);
+  select.focus();
+}
+
 function actions(b, card, textNode) {
   const row = el('div', { className: 'bs-row bs-actions' });
   const confirm = (label) => button('confirm', label,
@@ -395,8 +460,10 @@ function actions(b, card, textNode) {
     'Erase it everywhere, including the transcript lines that said it (cannot be undone)');
   const dismissBtn = () => button('dismiss', 'Dismiss', () => dismiss(b, card),
     'Not worth remembering: out of memory, transcripts untouched (can be restored)');
-  if (b.status === 'tentative') row.append(confirm('Confirm'), edit(), dismissBtn(), forgetBtn());
-  else if (b.status === 'confirmed') row.append(edit(), dismissBtn(), forgetBtn());
+  const moveBtn = () => button('kind_person', 'Move', () => movePanel(b, card),
+    'It is about someone else (for example a line heard as the wrong voice)');
+  if (b.status === 'tentative') row.append(confirm('Confirm'), edit(), moveBtn(), dismissBtn(), forgetBtn());
+  else if (b.status === 'confirmed') row.append(edit(), moveBtn(), dismissBtn(), forgetBtn());
   else if (b.status === 'stale') {
     row.append(button('confirm', 'Confirm',
       () => act(card, `/api/beliefs/${b.id}/confirm`, {}, () => toast('Restored and confirmed.')),
