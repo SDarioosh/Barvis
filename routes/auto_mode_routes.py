@@ -1,11 +1,13 @@
-"""Fork: the auto mode switch for Settings → Tools (admin session).
+"""Fork: the default for the composer's Auto/Ask button.
 
-* ``GET /api/fork/auto-mode``: ``{"enabled": bool}``.
-* ``PUT /api/fork/auto-mode`` ``{"enabled": bool}``: turn it on or off; applies
-  from the next tool call on.
+* ``GET /api/fork/auto-mode``: ``{"enabled": bool}``, the default for chats that
+  haven't chosen (any signed-in user; the button shows it on a new chat).
+* ``PUT /api/fork/auto-mode`` ``{"enabled": bool}``: change the default (admin,
+  Settings → Tools).
 
-What auto mode allows is in ``src/auto_mode.py``. The value is stored as the
-``fork_auto_mode`` key in the normal settings file.
+Each chat's own choice is sent with its messages (``fork_tool_mode``); what Auto
+allows is in ``src/auto_mode.py``. The default is stored as the
+``fork_auto_mode_default`` key in the normal settings file (absent: Auto).
 """
 
 from __future__ import annotations
@@ -24,7 +26,7 @@ class AutoModePut(BaseModel):
 def setup_auto_mode_routes() -> APIRouter:
     router = APIRouter(tags=["fork-auto-mode"])
 
-    @router.get("/api/fork/auto-mode", dependencies=[Depends(require_admin)])
+    @router.get("/api/fork/auto-mode")
     async def get_auto_mode():
         return {"enabled": auto_mode.enabled()}
 

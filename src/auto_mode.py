@@ -8,8 +8,9 @@ because the model picks the URL and a URL can carry data. So "look up this
 site" asked for approval on the second step, and so did reading the owner's
 own notes after a search.
 
-With auto mode on (Settings → Tools → Auto mode, admin only, off by default),
-the gate lets these through without asking:
+Each chat has an Auto/Ask button in the composer (``static/js/forkAutoMode.js``);
+a chat that never chose follows the default in Settings → Tools (Auto unless the
+admin picked Ask). In Auto the gate lets these through without asking:
 
 * tools whose only effects are reads (web reads, workspace reads, the owner's
   own stores, asking the user), as classified in ``src/tool_capabilities.py``;
@@ -33,8 +34,9 @@ Policy, per-tool disables and request authority still apply before the gate.
 
 Hooks: ``src/tool_capabilities.py`` (gate, URL tracking, calculator
 capability), ``src/tool_types.py`` and ``src/agent_tools/__init__.py``
-(calculator tool), ``routes/chat_routes.py`` (calculator grant and offer),
-``app.py`` (setting route), ``static/index.html`` (settings card).
+(calculator tool), ``routes/chat_routes.py`` (the chat's choice, calculator
+grant and offer), ``src/agent_loop.py`` (binds the choice to the run),
+``app.py`` (default route), ``static/index.html`` (button and settings card).
 """
 
 from __future__ import annotations
@@ -52,19 +54,22 @@ from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
 
-SETTING_KEY = "fork_auto_mode"
+# Default for chats that don't say (new chats, API callers). The first version
+# stored a global on/off as ``fork_auto_mode`` (default off); that key is ignored.
+SETTING_KEY = "fork_auto_mode_default"
 CALCULATOR_TOOL = "calculate"
+CHAT_MODE_FIELD = "fork_tool_mode"  # "auto" or "ask", sent by the composer button
 
 # ── Setting ─────────────────────────────────────────────────────────────────
 
 
 def enabled() -> bool:
-    """Auto mode is on only when the admin turned it on (default off)."""
+    """The default for chats: auto unless the admin chose "ask"."""
     try:
         from src.settings import get_setting
-        return get_setting(SETTING_KEY, False) is True
+        return get_setting(SETTING_KEY, True) is not False
     except Exception:
-        return False
+        return True
 
 
 def set_enabled(value: bool) -> bool:
@@ -73,6 +78,49 @@ def set_enabled(value: bool) -> bool:
     settings[SETTING_KEY] = bool(value)
     save_settings(settings)
     return bool(value)
+
+
+# ── Per-chat choice ─────────────────────────────────────────────────────────
+# The composer's Auto/Ask button sends ``fork_tool_mode`` with every message of
+# a chat (approvals included), so the latest choice is kept in memory per
+# (user, chat); after a restart the next message brings it back.
+
+_CHAT_MODES: dict[tuple[str, str], bool] = {}
+_MAX_CHATS = 5000
+
+
+def remember_chat_mode(owner: Any, session_id: Any, value: Any) -> None:
+    mode = str(value or "").strip().lower()
+    if not session_id or mode not in {"auto", "ask"}:
+        return
+    key = (str(owner or ""), str(session_id))
+    _CHAT_MODES.pop(key, None)
+    _CHAT_MODES[key] = mode == "auto"
+    while len(_CHAT_MODES) > _MAX_CHATS:
+        _CHAT_MODES.pop(next(iter(_CHAT_MODES)))
+
+
+def chat_enabled(owner: Any = None, session_id: Any = None) -> bool:
+    """Auto mode for this chat: its own choice, else the default."""
+    if session_id:
+        choice = _CHAT_MODES.get((str(owner or ""), str(session_id)))
+        if choice is not None:
+            return choice
+    return enabled()
+
+
+def bind_run(ctx, *, owner: Any = None, session_id: Any = None) -> None:
+    """Fix the run's mode when the agent loop builds its security context."""
+    try:
+        object.__setattr__(ctx, "_fork_auto_mode", chat_enabled(owner, session_id))
+    except (AttributeError, TypeError):
+        pass
+
+
+def run_enabled(ctx) -> bool:
+    """Only runs the agent loop bound to a chat get Auto; any other use of the
+    gate (previews, direct callers, upstream's own tests) keeps upstream's rules."""
+    return getattr(ctx, "_fork_auto_mode", None) is True
 
 
 # ── URLs seen in the run ────────────────────────────────────────────────────
@@ -325,7 +373,7 @@ def gate_decision(ctx, tool_name: Any, content: Any = None) -> tuple[bool, str |
     """
     if not isinstance(tool_name, str) or getattr(ctx, "delegated_credential", False):
         return None
-    if not enabled():
+    if not run_enabled(ctx):
         return None
     from src.tool_capabilities import ToolEffect, capabilities_for_action
 
@@ -522,14 +570,14 @@ async def calculator_tool(content: str, ctx: dict | None = None) -> dict:
     return result
 
 
-def calculator_available() -> bool:
-    """The calculator is offered while auto mode is on."""
-    return enabled()
+def calculator_available(owner: Any = None, session_id: Any = None) -> bool:
+    """The calculator is offered while auto mode is on for the chat."""
+    return chat_enabled(owner, session_id)
 
 
-def with_calculator_grant(authority):
+def with_calculator_grant(authority, *, session_id: Any = None):
     """Request authority with a ``calculate`` grant added (auto mode only)."""
-    if authority is None or not calculator_available():
+    if authority is None or not calculator_available(getattr(authority, "owner", None), session_id):
         return authority
     from src.agent_runtime.authority import OperationGrant, canonical_tool
 
@@ -550,9 +598,9 @@ def with_calculator_grant(authority):
                    backend_resources=backends)
 
 
-def with_calculator_offer(contract):
+def with_calculator_offer(contract, *, owner: Any = None, session_id: Any = None):
     """Turn contract that also offers ``calculate`` when it offers any tool."""
-    if contract is None or not calculator_available():
+    if contract is None or not calculator_available(owner, session_id):
         return contract
     if CALCULATOR_TOOL in contract.offered or not contract.offered:
         return contract
