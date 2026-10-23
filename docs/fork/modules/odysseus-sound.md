@@ -267,7 +267,8 @@ what is confirmed. The built-in task **Module Facts** (`src/module_facts.py`, ho
 posts nothing to chat) calls `list_facts` with `{"format": "json", "limit": 1000}` (every
 current fact; 1000 is the JSON mode's cap, so no fact is cut off and mistaken for
 retired), which returns `{"facts": [{"id", "subject", "about" (owner/person/other),
-"fact", "times_said", "days", "first_said", "last_said", "link", "confirmed"}]}`.
+"fact", "times_said", "days", "first_said", "last_said", "link", "confirmed",
+"valid_until"}]}` (`valid_until`: MCP 0.11.0, additive).
 
 - **Evidence per fact**: source `odysseus-sound`, source id = the fact id, the fact text,
   the signed transcript link, `first_said`/`last_said` as seen dates, `times_said`/`days`
@@ -275,6 +276,11 @@ retired), which returns `{"facts": [{"id", "subject", "about" (owner/person/othe
   verdict. A module that doesn't send `confirmed` per row yet gets one more call,
   `{"confirmed": true, "format": "json", "limit": 1000}`, whose ids are the confirmed
   set.
+- **Facts about one occasion end**: the row's `valid_until` (the last day a fact like
+  "has a meeting with the Meshtastic team on Tuesday at 11 a.m." is worth keeping; null
+  for lasting facts) travels as `Evidence.valid_until`. The belief goes `stale` the day
+  after and leaves memory, even while the module still returns the fact. A module older
+  than 0.11.0 sends none: nothing ends early.
 - **Confirmed beliefs become memories**: confirmed by the module's flag, by a second
   source saying the same thing (`BELIEF_CONFIRM_SOURCES`), by enough sightings on enough
   days, or by the owner. One memory per belief, for the task's owner: text = the fact
