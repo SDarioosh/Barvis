@@ -283,6 +283,27 @@ Questions 1, 4, 16, 22 with `/sound` after the change: 3/4. Question 4 (dentist)
 fails on `main` in this sandbox (0/1, the model only calls `list_action_items`), so it
 isn't caused by this change.
 
+### Complete forget (4.2), 2026-10-23
+
+Same stack (Qwen3-4B, `seed_demo.py`, 10 conversations), Odysseus on this fork's 4.2
+branch with `modules_setup.py --trim`, questions 1, 9, 16 on the same day:
+
+| odysseus-sound | tools | score | Q1 | Q9 | Q16 |
+|---|---|---|---|---|---|
+| `main` (MCP 0.9.0) | 14 | 1/3 | no tool call | pass | `list_facts`, no answer |
+| 4.2 branch (MCP 0.10.0, `erase_fact`) | 15 | 2/3 | pass (`search_transcripts`) | pass | `list_facts` + `search_conversations`, no answer |
+
+The new tool is only called on Forget; the difference is small-model noise (Q1 varied
+between runs before too). End to end on the same stack: Forget on the fictional belief
+"Jonas is allergic to peanuts" answered `propagated.erased = 1`; in the module the line
+"No thanks, I'm allergic to peanuts, remember?" read `[forgotten]`, the conversation's
+notes were hidden, both full-text indexes had no "peanut" match, and within a minute
+the worker's model rewrote the notes (only the key point "Jonas is allergic to peanuts
+and declined the satay" was dropped, the rest kept word for word). The erased line's
+words were no longer in `convo.db*`, nor "peanut" anywhere in `beliefs.db*`; the export
+had no "peanut"; the next facts run reported the fact gone and the belief stayed
+rejected and erased.
+
 ## Findings from the first sandbox run
 
 These are real bugs, not sandbox quirks. 1–3 and 5 are bugs in Odysseus or the fork (tracked in
