@@ -152,6 +152,13 @@ prioritizing side projects…") gives suggestions, not four to-dos.
 | `auto` | all filed (the behaviour of 2026-10-20) | suggestions |
 | `off` | not filed; "new action item" pushes only (the behaviour before filing) | pushes only |
 
+What counts as a spoken command is the module's: Athena catches to-do, list and note
+commands in code even when its model lists no item, with fillers or "can you" before
+them, several in one sentence, and lists said line by line ("Make a to-do list. Get
+eggs. Fix the car."); a comma list for a named list ("add eggs, milk and bread to my
+shopping list") is one line each. Phrasings: Athena's `server/README.md`; its
+`server/eval/voice_commands.py` checks ~100 fictional voice notes against these rules.
+
 An item is **explicit** when the module says so: `list_action_items format=json` rows
 carry `explicit` (true when the item has a due date or time, a `list_name`, kind
 `reminder` or `event`, or the voice note used a command word). With an older module
@@ -200,7 +207,11 @@ Where a filed item goes:
   moved elsewhere) the empty list is archived at once, unless it is pinned. Tapping **Add to to-dos** on such a
   suggestion puts it there too.
 - **Notes.** Voice notes only, and only on an explicit command ("create a note",
-  "make a note", "note that", "add to my … notes"); a plain statement makes no note.
+  "make a note", "note that", "note:", "note to self", "new note:", "add to my notes:",
+  "add to my … notes"); a plain statement makes no note. Named notes may also be said
+  without the word "notes" right after the command ("make a note in voice recorder that
+  the case needs to be 3 mm bigger" → a line in "Voice recorder notes"; "… under car,
+  …", "add to my car note: …").
   A note with a `list_name` (`hardware`) is added as a line to the open note titled
   with that name, with or without "notes" ("Hardware notes", "hardware"); if there is
   none, Odysseus creates "Hardware notes". The same line isn't added twice. Once filed
